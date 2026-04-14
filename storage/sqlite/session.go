@@ -255,15 +255,17 @@ func (s *SessionService) PurgeOldMessages(tenantID int64, keepCount int) (int64,
 	return rows, nil
 }
 
-// PurgeNewerThan deletes all messages for a tenant with created_at at or after the given timestamp.
+// PurgeNewerThan deletes all messages for a tenant with created_at after the given timestamp.
 // Used by Ctrl+K rewind to truncate DB history to match UI truncation.
+// Uses strict ">" (not ">=") so the selected rewind message is preserved in the DB
+// as a safety net — on restart the user sees one extra message rather than a blank session.
 func (s *SessionService) PurgeNewerThan(tenantID int64, cutoff time.Time) (int64, error) {
 	if cutoff.IsZero() {
 		return 0, nil
 	}
 	conn := s.db.Conn()
 	result, err := conn.Exec(
-		"DELETE FROM session_messages WHERE tenant_id = ? AND created_at >= ?",
+		"DELETE FROM session_messages WHERE tenant_id = ? AND created_at > ?",
 		tenantID, cutoff,
 	)
 	if err != nil {
@@ -274,7 +276,7 @@ func (s *SessionService) PurgeNewerThan(tenantID int64, cutoff time.Time) (int64
 		"tenant_id": tenantID,
 		"purged":    rows,
 		"cutoff":    cutoff.Format(time.RFC3339),
-	}).Info("Session messages purged (newer than or equal)")
+	}).Info("Session messages purged (newer than)")
 	return rows, nil
 }
 

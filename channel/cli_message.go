@@ -1018,7 +1018,7 @@ func (m *cliModel) renderProgressBlock() string {
 		// SubAgent tree
 		if len(m.progress.SubAgents) > 0 {
 			var treeSB strings.Builder
-			m.renderSubAgentTree(&treeSB, m.progress.SubAgents, 1, innerWidth)
+			m.renderSubAgentTree(&treeSB, m.progress.SubAgents, "", innerWidth)
 			if treeSB.Len() > 0 {
 				sb.WriteString("\n")
 				sb.WriteString(treeSB.String())
@@ -1055,26 +1055,19 @@ func (m *cliModel) renderProgressBlock() string {
 // renderSubAgentTree renders nested sub-agents with indentation.
 // Only renders running/pending agents — completed or errored ones are already
 // captured in the tool summary and shouldn't linger in the progress panel.
-func (m *cliModel) renderSubAgentTree(sb *strings.Builder, agents []CLISubAgent, depth int, maxWidth int) {
+//
+// Uses a prefix-based approach instead of depth-based: each level appends
+// "│   " or "    " to the prefix depending on whether the parent was the last
+// sibling. This avoids spurious vertical lines after a └── branch.
+func (m *cliModel) renderSubAgentTree(sb *strings.Builder, agents []CLISubAgent, prefix string, maxWidth int) {
 	for i, sa := range agents {
 		if sa.Status == "done" || sa.Status == "error" {
 			continue
 		}
-		// §22 树状连接线
-		prefix := ""
-		if depth == 1 {
-			if i == len(agents)-1 {
-				prefix = "└── "
-			} else {
-				prefix = "├── "
-			}
-		} else {
-			indent := strings.Repeat("│   ", depth-1)
-			if i == len(agents)-1 {
-				prefix = indent + "└── "
-			} else {
-				prefix = indent + "├── "
-			}
+		isLast := i == len(agents)-1
+		connector := "└── "
+		if !isLast {
+			connector = "├── "
 		}
 		icon := m.ticker.viewFrames(waveFrames)
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color(RoleColor(sa.Role)))
@@ -1083,7 +1076,7 @@ func (m *cliModel) renderSubAgentTree(sb *strings.Builder, agents []CLISubAgent,
 			icon = "✗"
 			style = m.styles.ProgressError
 		}
-		line := fmt.Sprintf("%s%s %s", prefix, icon, sa.Role)
+		line := fmt.Sprintf("%s%s%s %s", prefix, connector, icon, sa.Role)
 		if sa.Desc != "" {
 			// Truncate Desc separately to account for prefix+icon+role overhead.
 			overhead := lipgloss.Width(line) + 2 // +2 for ": "
@@ -1096,7 +1089,13 @@ func (m *cliModel) renderSubAgentTree(sb *strings.Builder, agents []CLISubAgent,
 		sb.WriteString(style.Render(line))
 		sb.WriteString("\n")
 		if len(sa.Children) > 0 {
-			m.renderSubAgentTree(sb, sa.Children, depth+1, maxWidth)
+			childPrefix := prefix
+			if isLast {
+				childPrefix += "    "
+			} else {
+				childPrefix += "│   "
+			}
+			m.renderSubAgentTree(sb, sa.Children, childPrefix, maxWidth)
 		}
 	}
 }

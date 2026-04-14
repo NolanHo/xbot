@@ -364,18 +364,19 @@ func (m *cliModel) applyRewind() {
 	cutIdx := item.MsgIndex
 	m.messages = m.messages[:cutIdx]
 
-	// Truncate DB session messages (async, by timestamp)
+	// Truncate DB session messages (synchronous, by timestamp).
+	// Must be synchronous — Ctrl+Z calls os.Exit(0) which kills all goroutines.
+	// If we used async (go func()), the DELETE might not complete before exit,
+	// leaving the DB in an inconsistent state with modernc.org/sqlite WAL.
 	if m.trimHistoryFn == nil {
 		log.Warn("Rewind: trimHistoryFn is nil, DB messages will NOT be truncated")
 	} else if cutoff.IsZero() {
 		log.Warn("Rewind: cutoff timestamp is zero, DB messages will NOT be truncated")
 	} else {
 		log.WithFields(log.Fields{"cutIdx": cutIdx, "cutoff": cutoff, "totalMsgs": len(m.messages)}).Info("Rewind: truncating DB messages")
-		go func() {
-			if err := m.trimHistoryFn(cutoff); err != nil {
-				log.WithError(err).Warn("Failed to trim session history after rewind")
-			}
-		}()
+		if err := m.trimHistoryFn(cutoff); err != nil {
+			log.WithError(err).Warn("Failed to trim session history after rewind")
+		}
 	}
 
 	// File rollback via checkpoint hook

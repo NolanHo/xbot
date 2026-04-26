@@ -11,13 +11,13 @@ import (
 )
 
 const (
-	// FeishuGroupName 飞书工具组名称
+	// FeishuGroupName is the Feishu tool group name
 	FeishuGroupName = "Feishu"
-	// FeishuGroupInstructions 飞书工具组使用说明
+	// FeishuGroupInstructions are the Feishu tool group usage instructions
 	FeishuGroupInstructions = `Feishu (飞书) integration tools for Wiki, Bitable, Docs, and file operations.`
 )
 
-// FeishuToolBase 飞书工具基类，实现 ToolGroupProvider 和 ChannelProvider 接口
+// FeishuToolBase is the Feishu tool base class, implementing ToolGroupProvider and ChannelProvider interfaces
 type FeishuToolBase struct{}
 
 func (b FeishuToolBase) GroupName() string           { return FeishuGroupName }
@@ -87,14 +87,14 @@ func (m *FeishuMCP) GetClient(ctx context.Context, channel, chatID string) (*Cli
 		}
 	}
 
-	// 如果没有域名，尝试获取并更新 Token（兼容旧数据）
+	// If no domain, try to fetch and update Token (compatible with old data)
 	if tenantDomain == "" && m.larkClient != nil {
 		domain, err := m.fetchTenantDomain(ctx)
 		if err != nil {
 			log.WithError(err).Warn("Failed to fetch tenant domain")
 		} else if domain != "" {
 			tenantDomain = domain
-			// 更新 Token 中的域名
+			// Update domain in Token
 			if token.Raw == nil {
 				token.Raw = make(map[string]any)
 			}
@@ -114,7 +114,7 @@ func (m *FeishuMCP) GetClient(ctx context.Context, channel, chatID string) (*Cli
 	}, nil
 }
 
-// fetchTenantDomain 获取租户域名 using the app's tenant_access_token
+// fetchTenantDomain fetches the tenant domain using the app's tenant_access_token
 // Returns empty string if domain is not set (some tenants don't have custom domains)
 func (m *FeishuMCP) fetchTenantDomain(ctx context.Context) (string, error) {
 	resp, err := m.larkClient.Tenant.Tenant.Query(ctx)

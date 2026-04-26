@@ -365,7 +365,7 @@ func (m *MemoryMiddleware) Process(mc *MessageContext) error {
 	return nil
 }
 
-// SenderInfoMiddleware 注入Sender info到系统提示词
+// SenderInfoMiddleware injects Sender info into the system prompt
 type SenderInfoMiddleware struct{}
 
 func NewSenderInfoMiddleware() *SenderInfoMiddleware {

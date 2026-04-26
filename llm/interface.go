@@ -22,7 +22,7 @@ type StreamingLLM interface {
 	// model: model name
 	// messages: message list
 	// tools: tool definition list
-	// thinkingMode: 思考模式 ("", "enabled", "disabled")
+	// thinkingMode: thinking mode ("", "enabled", "disabled")
 	// The channel is closed on completion or error
 	GenerateStream(ctx context.Context, model string, messages []ChatMessage, tools []ToolDefinition, thinkingMode string) (<-chan StreamEvent, error)
 }

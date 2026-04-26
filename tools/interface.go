@@ -563,7 +563,7 @@ func (r *Registry) GetToolSchemas(sessionKey string, toolNames []string) []ToolS
 }
 
 // GetToolSchemasForChannel returns tool schema info available for the specified channel
-// channel 为空时不进行Channel filter
+// No channel filter when channel is empty
 func (r *Registry) GetToolSchemasForChannel(sessionKey string, toolNames []string, channel string) []ToolSchema {
 	nameSet := make(map[string]bool, len(toolNames))
 	matchAll := len(toolNames) == 0
@@ -606,7 +606,7 @@ func (r *Registry) GetToolSchemasForChannel(sessionKey string, toolNames []strin
 				if !matchAll && !nameSet[tool.Name()] {
 					continue
 				}
-				// 会话 MCP 工具暂不做Channel filter（MCP 工具通常是通用的）
+				// Session MCP tools skip channel filtering for now (MCP tools are generally universal)
 				if p, ok := tool.(mcpSchemaProvider); ok {
 					schemas = append(schemas, ToolSchema{
 						ToolName:    tool.Name(),

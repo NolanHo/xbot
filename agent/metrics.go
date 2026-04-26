@@ -252,7 +252,7 @@ func (m *AgentMetrics) Snapshot() MetricsSnapshot {
 }
 
 // FormatMarkdown formats MetricsSnapshot as Feishu markdown card text.
-// 按能力维度分组为四段：Runtime Overview、Task Execution Effectiveness、Memory Quality、Compression efficiency、Four-Layer Defense Effectiveness。
+// Grouped by capability dimension into four sections: Runtime Overview, Task Execution Effectiveness, Memory Quality, Compression efficiency, Four-Layer Defense Effectiveness.
 func (s MetricsSnapshot) FormatMarkdown() string {
 	var sb strings.Builder
 

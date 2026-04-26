@@ -19,11 +19,11 @@ const (
 	dockerSlowTimeout = 120 * time.Second
 	dockerPullTimeout = 5 * time.Minute
 
-	// MaxSandboxFileSize 是文件读写的最大大小（500MB）。
+	// MaxSandboxFileSize is the max file size for read/write operations (500MB).
 	MaxSandboxFileSize int64 = 500 * 1024 * 1024
 )
 
-// DockerExecutor 通过 docker exec 在容器内执行操作。
+// DockerExecutor executes operations inside a container via docker exec.
 type DockerExecutor struct {
 	ContainerName string
 	Image         string
@@ -31,7 +31,7 @@ type DockerExecutor struct {
 	CtrWorkspace  string // 容器内 workspace 路径（默认 /workspace）
 }
 
-// NewDockerExecutor 创建一个 DockerExecutor。
+// NewDockerExecutor creates a new DockerExecutor.
 func NewDockerExecutor(userID, image, hostWorkspace string) (*DockerExecutor, error) {
 	if err := CheckDockerAvailable(); err != nil {
 		return nil, err

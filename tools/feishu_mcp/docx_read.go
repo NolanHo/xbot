@@ -247,7 +247,7 @@ func (t *DocxListBlocksTool) Execute(ctx *tools.ToolContext, input string) (*too
 	childMap := make(map[string]struct{})
 	i := 0
 	for _, block := range allItems {
-		// 神秘飞书把文档也当作block返回
+		// Feishu also returns the document itself as a block
 		if block.BlockId == nil || *block.BlockId == args.DocumentID {
 			continue
 		}

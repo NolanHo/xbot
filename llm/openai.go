@@ -810,7 +810,7 @@ func (o *OpenAILLM) Generate(ctx context.Context, model string, messages []ChatM
 	return resp, nil
 }
 
-// GenerateStream produces a streaming response LLM 响应
+// GenerateStream produces a streaming LLM response
 func (o *OpenAILLM) GenerateStream(ctx context.Context, model string, messages []ChatMessage, tools []ToolDefinition, thinkingMode string) (<-chan StreamEvent, error) {
 	// Use default model if none specified
 	if model == "" {

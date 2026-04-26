@@ -148,16 +148,16 @@ func cleanBlockForDescendant(block *docxv1.Block) {
 		}
 	}
 	if IsMermaidCode(block) {
-		// Mermaid 图表需要特殊处理：飞书文档不原生支持 Mermaid 代码块渲染，
-		// 因此将 code block 转换为 AddOns 组件，使用飞书的 Mermaid 插件来渲染。
-		// 具体做法：清空原始 Code 字段，设置 BlockType 为 AddOns，
-		// 并将 Mermaid 源码作为 record 数据传递给 Mermaid 组件（codeChart 视图）。
+		// Mermaid diagrams need special handling: Feishu docs don't natively support Mermaid code block rendering;
+		// so code blocks are converted to AddOns components rendered by the Feishu Mermaid plugin.
+		// Specifically: clear the original Code field, set BlockType to AddOns,
+		// and pass Mermaid source code as record data to the Mermaid component (codeChart view).
 		content := GetTextContent(block.Code)
 		block.Code = nil
 		block.AddOns = docxv1.NewAddOnsBuilder().ComponentTypeId(MermaidAddOnsComponentTypeID).Record(
 			fmt.Sprintf(`{"data":%s,"theme":"default","view":"codeChart"}`, strconv.Quote(content)),
 		).Build()
-		// 确保 BlockType 已初始化，避免 nil pointer panic
+		// Ensure BlockType is initialized to avoid nil pointer panic
 		if block.BlockType == nil {
 			block.BlockType = new(int)
 		}

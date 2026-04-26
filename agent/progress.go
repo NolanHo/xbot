@@ -329,7 +329,7 @@ func isStatusEmojiLine(line string) bool {
 // isPlausibleAgentRole checks if a name looks like a SubAgent role name rather than a tool name.
 // SubAgent role name characteristics:
 //   - All lowercase English + hyphens/underscores, e.g. "crown-prince", "ministry-works", "explore"
-//   - Chinese role names, e.g. "刑部", "工部", "中书省"
+//   - Chinese role names, e.g. "XingBu" (Justice), "GongBu" (Engineering), "ZhongShu" (Policy)
 //
 // Tool name characteristics: capitalized English, e.g. "Shell", "Read", "FileCreate", "SubAgent".
 // Also excludes paths (containing /) and other non-role-name patterns.
@@ -709,8 +709,8 @@ func renderChildrenTree(children []childAgentStatus, baseIndent string, currentD
 //	> 🔄 crown-prince: ⏳ Shell(go test) ...           （Tool execution）
 //	> ✅ crown-prince                                   (completed)
 //	> 🔄 crown-prince: Dispatching                           (has child agents, multi-line)
-//	> 　🔄 Shangshu: Dispatching to two ministries                                ├── 子Agent（depth=3）
-//	> 　　🔄 Gongbu: ⚡ Shell(ls)                          │   └── 孙Agent（depth=4）
+//	> 　🔄 Shangshu: Dispatching to two ministries                                ├── Sub-agent (depth=3)
+//	> 　　🔄 Gongbu: ⚡ Shell(ls)                          │   └── Sub-sub-agent (depth=4)
 func formatSubAgentProgress(detail SubAgentProgressDetail) string {
 	const maxContentRunes = 50
 

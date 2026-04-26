@@ -1780,7 +1780,7 @@ func (m *cliModel) viewSettingsPanel() string {
 	var sb strings.Builder
 	sb.WriteString(s.PanelHeader.Render(m.locale.PanelSettingsTitle))
 	sb.WriteString("\n")
-	// 表头下方精致Divider，区分Title与内容
+	// Elegant divider below header, separating title from content
 	sb.WriteString(s.SettingsDivider.Render("┈" + strings.Repeat("┈", 30)))
 	sb.WriteString("\n")
 

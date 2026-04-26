@@ -15,10 +15,10 @@ import (
 	"xbot/internal/cmdbuilder"
 )
 
-// maxDownloadSize 是下载操作的最大文件大小（100MB）。
+// maxDownloadSize is the max file size for download operations (100MB).
 const maxDownloadSize = 100 * 1024 * 1024
 
-// httpClient 是下载操作的专用 HTTP 客户端。
+// httpClient is the dedicated HTTP client for download operations.
 var httpClient = &http.Client{Timeout: 0} // uses context timeout
 
 // NativeExecutor executes operations using native os.* APIs.

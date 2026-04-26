@@ -250,7 +250,7 @@ func (r *RetryLLM) perAttemptCtx(parent context.Context) (context.Context, conte
 	return ctx, cancel
 }
 
-// Generate produces an LLM response，失败时按配置重试
+// Generate produces an LLM response, retrying on failure per config
 func (r *RetryLLM) Generate(ctx context.Context, model string, messages []ChatMessage, tools []ToolDefinition, thinkingMode string) (*LLMResponse, error) {
 	release := r.acquire(ctx)
 	defer release()
@@ -263,7 +263,7 @@ func (r *RetryLLM) Generate(ctx context.Context, model string, messages []ChatMe
 	})
 }
 
-// ListModels returns the available model list（直接转发，不重试）
+// ListModels returns the available model list (forwarded directly, no retry)
 func (r *RetryLLM) ListModels() []string {
 	return r.inner.ListModels()
 }

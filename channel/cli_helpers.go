@@ -913,7 +913,7 @@ func fmtTokens(n int64) string {
 	if n >= 10_000 {
 		return fmt.Sprintf("%.1fK", float64(n)/1_000)
 	}
-	return fmt.Sprintf("%d", n)
+	return strconv.FormatInt(n, 10)
 }
 
 // handleUserCommand manages web users from TUI.

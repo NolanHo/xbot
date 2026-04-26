@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -86,7 +87,7 @@ func (s *ObservationMaskStore) SetBaseDir(dir string) {
 	defer s.mu.Unlock()
 	s.baseDir = dir
 	if s.tenantID != 0 {
-		s.storeDir = filepath.Join(dir, fmt.Sprintf("%d", s.tenantID))
+		s.storeDir = filepath.Join(dir, strconv.FormatInt(int64(s.tenantID), 10))
 	} else {
 		s.storeDir = ""
 	}
@@ -110,7 +111,7 @@ func (s *ObservationMaskStore) SetTenantID(tenantID int64) {
 	if tenantID == 0 {
 		s.storeDir = ""
 	} else {
-		s.storeDir = filepath.Join(s.baseDir, fmt.Sprintf("%d", tenantID))
+		s.storeDir = filepath.Join(s.baseDir, strconv.FormatInt(int64(tenantID), 10))
 	}
 	s.entries = nil
 	s.totalChars = 0

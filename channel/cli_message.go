@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"xbot/bus"
@@ -1361,14 +1362,14 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 			var statusIcons string
 			if errorCount > 0 {
 				statusIcons = s.ProgressError.Render("✗") +
-					s.TextMutedSt.Render(fmt.Sprintf("%d", errorCount))
+					s.TextMutedSt.Render(strconv.Itoa(errorCount))
 			}
 			if successCount > 0 && errorCount > 0 {
 				statusIcons += " "
 			}
 			if successCount > 0 {
 				statusIcons += s.ProgressDone.Render("✓") +
-					s.TextMutedSt.Render(fmt.Sprintf("%d", successCount))
+					s.TextMutedSt.Render(strconv.Itoa(successCount))
 			}
 			toolSb.WriteString(toolHeaderStyle.Render(fmt.Sprintf("Tools %d calls · %s", totalTools, elapsedStr)))
 			if statusIcons != "" {

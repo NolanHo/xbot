@@ -205,7 +205,7 @@ func detectProjectContextInSandbox(ctx *ToolContext, dir string) string {
 	// Also check for .git directory
 	checks = append(checks, "test -d .git && echo '.git:Git'")
 
-	cmd := fmt.Sprintf("cd '%s' && (%s)", strings.ReplaceAll(dir, "'", "'\\''"),
+	cmd := fmt.Sprintf("cd '%s' && (%s)", shellEscape(dir),
 		strings.Join(checks, "; "))
 	output, err := RunInSandboxWithShell(ctx, cmd)
 	if err != nil {

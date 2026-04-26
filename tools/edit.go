@@ -283,7 +283,7 @@ func resolveSandboxPath(ctx *ToolContext, userPath string) string {
 
 // sandboxReadFile 通过 cat 读取沙箱内文件内容（保留原始内容，不做 TrimSpace）
 func sandboxReadFile(ctx *ToolContext, path string) (string, error) {
-	cmd := fmt.Sprintf("cat '%s'", strings.ReplaceAll(path, "'", "'\\''"))
+	cmd := fmt.Sprintf("cat '%s'", shellEscape(path))
 	content, err := RunInSandboxRawWithShell(ctx, cmd)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file %s: %v", path, err)
@@ -294,7 +294,7 @@ func sandboxReadFile(ctx *ToolContext, path string) (string, error) {
 // sandboxWriteFile 将内容 base64 编码后写入沙箱内文件（彻底避免 shell 转义问题）
 func sandboxWriteFile(ctx *ToolContext, path, content string) error {
 	encoded := base64.StdEncoding.EncodeToString([]byte(content))
-	safePath := strings.ReplaceAll(path, "'", "'\\''")
+	safePath := shellEscape(path)
 	cmd := fmt.Sprintf("echo '%s' | base64 -d > '%s'", encoded, safePath)
 	_, err := RunInSandboxWithShell(ctx, cmd)
 	if err != nil {
@@ -306,9 +306,9 @@ func sandboxWriteFile(ctx *ToolContext, path, content string) error {
 // sandboxWriteNewFile 创建新文件并写入内容（含 mkdir -p），通过 base64 避免转义
 func sandboxWriteNewFile(ctx *ToolContext, path, content string) error {
 	encoded := base64.StdEncoding.EncodeToString([]byte(content))
-	safePath := strings.ReplaceAll(path, "'", "'\\''")
+	safePath := shellEscape(path)
 	cmd := fmt.Sprintf("mkdir -p '%s' && echo '%s' | base64 -d > '%s'",
-		strings.ReplaceAll(filepath.Dir(path), "'", "'\\''"), encoded, safePath)
+		shellEscape(filepath.Dir(path)), encoded, safePath)
 	_, err := RunInSandboxWithShell(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %v", path, err)

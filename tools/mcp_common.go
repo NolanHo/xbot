@@ -293,7 +293,7 @@ func resolveXbotBinDir(configPath string) string {
 // shellQuoteCmd 将 command + args 转为 shell 安全的单行字符串（用单引号包裹）
 func shellQuoteCmd(command string, args []string) string {
 	quote := func(s string) string {
-		return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+		return "'" + shellEscape(s) + "'"
 	}
 	parts := []string{quote(command)}
 	for _, a := range args {

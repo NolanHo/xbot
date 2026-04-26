@@ -62,6 +62,12 @@ type sendEntry struct {
 	err  chan error
 }
 
+// Sync polling parameters for waiting on remote file synchronization.
+const (
+	syncPollInterval = 500 * time.Millisecond // interval between sync status polls
+	syncPollCount    = 60                     // total iterations (30s at 500ms)
+)
+
 // Remote sandbox timeout constants.
 const (
 	remoteExecDefaultTimeout = 60 * time.Second // default timeout for remote exec operations
@@ -168,6 +174,7 @@ func (rs *RemoteSandbox) handleWebSocket(w http.ResponseWriter, r *http.Request)
 		pingPeriod = 30 * time.Second
 		writeWait  = 10 * time.Second
 	)
+
 	conn.SetReadDeadline(time.Now().Add(pongWait))
 	// Reset read deadline when we receive a pong (response to our pings).
 	// Do NOT set SetPingHandler — the default auto-replies pong to the runner's pings.
@@ -1284,9 +1291,9 @@ func (rs *RemoteSandbox) EnsureSynced(ctx context.Context, userID string) {
 	// If sync is already in progress, wait for it
 	if rs.syncing[userID] {
 		rs.syncMu.Unlock()
-		// Poll every 500ms, up to 30s
-		for i := 0; i < 60; i++ {
-			time.Sleep(500 * time.Millisecond)
+		// Poll for sync completion
+		for i := 0; i < syncPollCount; i++ {
+			time.Sleep(syncPollInterval)
 			rs.syncMu.Lock()
 			if rs.synced[userID] {
 				rs.syncMu.Unlock()

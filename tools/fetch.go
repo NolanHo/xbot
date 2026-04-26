@@ -17,6 +17,12 @@ import (
 	"xbot/llm"
 )
 
+// Fetch tool token limits.
+const (
+	fetchDefaultMaxTokens = 4096  // default max output tokens for fetch results
+	fetchAbsMaxTokens     = 30000 // absolute maximum output tokens for fetch results
+)
+
 // FetchTool web page fetching tool
 type FetchTool struct {
 	// Note: httpClient removed — each request now creates a fresh transport with DNS rebinding protection.
@@ -80,10 +86,10 @@ func (t *FetchTool) Execute(ctx *ToolContext, input string) (*ToolResult, error)
 
 	// Set default max_tokens
 	if params.MaxTokens <= 0 {
-		params.MaxTokens = 4096
+		params.MaxTokens = fetchDefaultMaxTokens
 	}
-	if params.MaxTokens > 30000 {
-		params.MaxTokens = 30000
+	if params.MaxTokens > fetchAbsMaxTokens {
+		params.MaxTokens = fetchAbsMaxTokens
 	}
 
 	// make HTTP request

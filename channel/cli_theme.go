@@ -633,8 +633,8 @@ func hslToHex(h int, s, l float64) string {
 // hslToRGB converts HSL to RGB (0-255 each).
 func hslToRGB(h int, s, l float64) (uint8, uint8, uint8) {
 	hf := float64(h) / 60.0
-	c := (1 - abs(2*l-1)) * s
-	x := c * (1 - abs(math.Mod(hf, 2)-1))
+	c := (1 - math.Abs(2*l-1)) * s
+	x := c * (1 - math.Abs(math.Mod(hf, 2)-1))
 	var r1, g1, b1 float64
 	switch {
 	case hf < 1:
@@ -655,11 +655,4 @@ func hslToRGB(h int, s, l float64) (uint8, uint8, uint8) {
 	g := uint8((g1 + m) * 255)
 	b := uint8((b1 + m) * 255)
 	return r, g, b
-}
-
-func abs(x float64) float64 {
-	if x < 0 {
-		return -x
-	}
-	return x
 }

@@ -41,7 +41,18 @@ const (
 	webOfflineMsgBufSize = 50
 	webSessionCookieName = "xbot_session"
 	webSessionMaxAge     = 30 * 24 * time.Hour // 30 days
-	maxBodySize          = 1 << 20             // 1MB maximum request body size
+
+	// HTTP server timeouts
+	webReadTimeout  = 10 * time.Second
+	webWriteTimeout = 60 * time.Second
+	webIdleTimeout  = 120 * time.Second
+
+	// WebSocket timeouts
+	webWSReadTimeout   = 120 * time.Second // Expected pong interval × 4
+	webWSWriteTimeout  = 5 * time.Second   // Per-message write deadline
+	webWSHeartbeatTick = 30 * time.Second  // Heartbeat check interval
+	webWSCloseTimeout  = 2 * time.Second   // Graceful close timeout
+	maxBodySize        = 1 << 20           // 1MB maximum request body size
 )
 
 // limitBodySize wraps a handler to limit request body size.
@@ -835,9 +846,9 @@ func (wc *WebChannel) Start() error {
 	wc.server = &http.Server{
 		Addr:         addr,
 		Handler:      wc.securityHeadersMiddleware(mux),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadTimeout:  webReadTimeout,
+		WriteTimeout: webWriteTimeout,
+		IdleTimeout:  webIdleTimeout,
 	}
 
 	log.WithFields(log.Fields{
@@ -865,7 +876,7 @@ func (wc *WebChannel) Stop() {
 
 	if wc.server != nil {
 		ctx, cancel := func() (context.Context, context.CancelFunc) {
-			return context.WithTimeout(context.Background(), 5*time.Second)
+			return context.WithTimeout(context.Background(), webWSWriteTimeout)
 		}()
 		_ = wc.server.Shutdown(ctx)
 		cancel()
@@ -1167,7 +1178,7 @@ func (wc *WebChannel) replayMissedEvents(client *Client, chatID string) {
 	select {
 	case lastSeq := <-syncCh:
 		fromSeq = lastSeq
-	case <-time.After(2 * time.Second):
+	case <-time.After(webWSCloseTimeout):
 		// No sync message — client is old version. Send current progress snapshot.
 		if wc.callbacks.GetActiveProgress != nil {
 			if p := wc.callbacks.GetActiveProgress("web", chatID); p != nil {
@@ -1214,7 +1225,7 @@ func (wc *WebChannel) replayMissedEvents(client *Client, chatID string) {
 func (wc *WebChannel) writePump(c *Client) {
 	defer c.conn.Close()
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(webWSHeartbeatTick)
 	defer ticker.Stop()
 
 	for {
@@ -1226,7 +1237,7 @@ func (wc *WebChannel) writePump(c *Client) {
 			}
 			// Internal pong — reply to client ping via single-writer goroutine.
 			if msg.Type == "__pong__" {
-				c.conn.WriteControl(websocket.PongMessage, []byte(msg.Content), time.Now().Add(5*time.Second))
+				c.conn.WriteControl(websocket.PongMessage, []byte(msg.Content), time.Now().Add(webWSWriteTimeout))
 				continue
 			}
 			if err := c.conn.WriteJSON(msg); err != nil {
@@ -1257,15 +1268,15 @@ func (wc *WebChannel) readPump(c *Client, si *sessionInfo) {
 	}()
 
 	c.conn.SetReadLimit(10 << 20) // 10MB max message (agent replies with code blocks can be large)
-	c.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+	c.conn.SetReadDeadline(time.Now().Add(webWSReadTimeout))
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+		c.conn.SetReadDeadline(time.Now().Add(webWSReadTimeout))
 		return nil
 	})
 	// Route client pings through sendCh so writePump handles the pong.
 	// This avoids any direct write from readPump (no mutex needed).
 	c.conn.SetPingHandler(func(appData string) error {
-		c.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+		c.conn.SetReadDeadline(time.Now().Add(webWSReadTimeout))
 		select {
 		case c.sendCh <- wsMessage{Type: "__pong__", Content: appData}:
 		default:

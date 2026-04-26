@@ -11,29 +11,29 @@ import (
 	log "xbot/logger"
 )
 
-// ChatHistoryStore 存储各个群组/会话的最近消息历史
+// ChatHistoryStore stores recent message history for each group/session
 type ChatHistoryStore struct {
 	mu      sync.RWMutex
 	history map[string]*ChatHistory // key: channel:chatID
 	maxSize int                     // 每个群组保留的最大消息数
 }
 
-// ChatHistory 单个群组的消息历史
+// ChatHistory is the message history for a single group
 type ChatHistory struct {
 	messages   []ChatMessage
 	maxSize    int
 	lastUpdate time.Time
 }
 
-// ChatMessage 单条消息记录
+// ChatMessage is a single message record
 type ChatMessage struct {
 	Content   string    `json:"content"`
 	SenderID  string    `json:"sender_id"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// NewChatHistoryStore 创建聊天历史存储
-// maxSize 每个群组保留的最大消息数（<=0 时默认 200）
+// NewChatHistoryStore creates a new chat history store
+// maxSize max messages per group (default 200 when <=0)
 func NewChatHistoryStore(maxSize int) *ChatHistoryStore {
 	if maxSize <= 0 {
 		maxSize = 200 // 默认保留最近 200 条，防止长期运行 OOM
@@ -44,10 +44,10 @@ func NewChatHistoryStore(maxSize int) *ChatHistoryStore {
 	}
 }
 
-// defaultMaxChannels 全局最大 channel 数，防止 history map 无限增长
+// defaultMaxChannels global max channel count, preventing unbounded history map growth
 const defaultMaxChannels = 10000
 
-// Add 添加一条消息到历史
+// Add adds a message to the history
 func (s *ChatHistoryStore) Add(channel, chatID, senderID, content string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,7 +78,7 @@ func (s *ChatHistoryStore) Add(channel, chatID, senderID, content string) {
 
 	// 限制大小
 	if len(hist.messages) > hist.maxSize {
-		// 保留最新的 maxSize 条消息
+		// keep the latest maxSize messages
 		hist.messages = hist.messages[len(hist.messages)-hist.maxSize:]
 	}
 }
@@ -98,7 +98,7 @@ func (s *ChatHistoryStore) evictOldestLocked() {
 	}
 }
 
-// Get 获取指定群组的最近消息历史
+// Get returns recent message history for the specified group
 func (s *ChatHistoryStore) Get(channel, chatID string, limit int) []ChatMessage {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -128,12 +128,12 @@ func (s *ChatHistoryStore) makeKey(channel, chatID string) string {
 
 // ---- ChatHistoryTool: 让 LLM 可以查询聊天历史 ----
 
-// ChatHistoryTool 聊天历史查询工具
+// ChatHistoryTool chat history query tool
 type ChatHistoryTool struct {
 	store *ChatHistoryStore
 }
 
-// NewChatHistoryTool 创建聊天历史工具
+// NewChatHistoryTool creates a new chat history tool
 func NewChatHistoryTool(store *ChatHistoryStore) *ChatHistoryTool {
 	return &ChatHistoryTool{store: store}
 }
@@ -176,7 +176,7 @@ func (t *ChatHistoryTool) Execute(ctx *ToolContext, input string) (*ToolResult, 
 		limit = 50
 	}
 
-	// 从 ToolContext 获取当前 channel 和 chatID
+	// get current channel and chatID from ToolContext
 	channel := ctx.Channel
 	chatID := ctx.ChatID
 

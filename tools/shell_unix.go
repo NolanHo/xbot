@@ -48,7 +48,7 @@ func setProcessAttrs(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-// killProcess 杀掉进程组
+// killProcess kills the process group
 func killProcess(cmd *exec.Cmd) {
 	if cmd.Process != nil {
 		killProcessTree(cmd.Process)

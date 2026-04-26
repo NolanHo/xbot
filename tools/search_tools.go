@@ -11,7 +11,7 @@ import (
 	"xbot/memory/letta"
 )
 
-// SearchToolsTool 搜索可用工具
+// SearchToolsTool searches available tools
 type SearchToolsTool struct{}
 
 func (t *SearchToolsTool) Name() string { return "search_tools" }

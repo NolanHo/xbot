@@ -27,7 +27,7 @@ var globalSkillSyncer = &skillSyncer{synced: make(map[string]time.Time)}
 // EnsureSynced lazily copies global skills and agents into the user's workspace volume.
 // Safe to call repeatedly; actual I/O only happens once per user every 5 minutes.
 func EnsureSynced(ctx *ToolContext) {
-	// 先检查 ctx 是否为 nil，避免后续访问 panic
+	// check ctx for nil first to avoid subsequent panic
 	if ctx == nil {
 		return
 	}
@@ -46,7 +46,7 @@ func EnsureSynced(ctx *ToolContext) {
 		return
 	}
 
-	// 使用 OriginUserID 作为同步键（基于原始用户隔离）
+	// uses OriginUserID as sync key (isolated by original user)
 	syncUserID := ctx.OriginUserID
 	if syncUserID == "" {
 		syncUserID = ctx.SenderID // fallback：兼容旧数据

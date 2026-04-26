@@ -17,13 +17,13 @@ import (
 	"xbot/llm"
 )
 
-// FetchTool 网页获取工具
+// FetchTool web page fetching tool
 type FetchTool struct {
 	// Note: httpClient removed — each request now creates a fresh transport with DNS rebinding protection.
 	tokenizer tokenizer.Codec
 }
 
-// NewFetchTool 创建 FetchTool
+// NewFetchTool creates a FetchTool
 func NewFetchTool() *FetchTool {
 	// 创建 tokenizer（复用）
 	enc, err := tokenizer.Get(tokenizer.Cl100kBase)
@@ -103,7 +103,7 @@ func (t *FetchTool) Execute(ctx *ToolContext, input string) (*ToolResult, error)
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// text/plain（如 GitHub raw 文件）直接返回原文
+	// text/plain (e.g. GitHub raw files) return content as-is
 	if strings.Contains(contentType, "text/plain") {
 		content := string(htmlContent)
 		// 格式化为与 HTML 一致的输出（带 URL 和分隔线）
@@ -119,7 +119,7 @@ func (t *FetchTool) Execute(ctx *ToolContext, input string) (*ToolResult, error)
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
 
-	// 使用 go-readability 提取正文
+	// extracts body using go-readability
 	parsedURL, err := url.Parse(params.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
@@ -216,24 +216,24 @@ func validateURL(rawURL string) error {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 
-	// 协议检查
+	// protocol check
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		return fmt.Errorf("unsupported protocol: %s (only http and https are allowed)", parsedURL.Scheme)
 	}
 
 	host := parsedURL.Hostname()
 
-	// 域名检查：localhost
+	// domain check: localhost
 	if host == "localhost" || host == "localhost.localdomain" {
 		return fmt.Errorf("localhost is not allowed")
 	}
 
-	// 内网 IP 检查
+	// private IP check
 	if isPrivateIP(host) {
 		return fmt.Errorf("private/internal IP addresses are not allowed: %s", host)
 	}
 
-	// S-02: DNS 解析验证 — 防止域名解析到内网 IP（DNS rebinding attack）
+	// S-02: DNS resolution check — prevent resolution to private IPs (DNS rebinding attack)
 	ips, err := net.LookupIP(host)
 	if err == nil {
 		for _, ip := range ips {
@@ -355,7 +355,7 @@ func (t *FetchTool) formatAsPlainText(content, pageURL string) string {
 
 // convertHTMLToMarkdown 将 HTML 内容转换为 Markdown 格式
 func convertHTMLToMarkdown(htmlContent, pageURL string, fallbackText string) string {
-	// 如果没有 HTML 内容，使用回退文本
+	// if no HTML content, use fallback text
 	if htmlContent == "" {
 		return fallbackText
 	}
@@ -383,19 +383,19 @@ func convertHTMLToMarkdown(htmlContent, pageURL string, fallbackText string) str
 func (t *FetchTool) truncateByTokens(content string, maxTokens int) (string, int) {
 	// 使用结构体中的 tokenizer（已在初始化时创建）
 	if t.tokenizer == nil {
-		// 如果 tokenizer 未初始化，不截断
+		// if tokenizer not initialized, don't truncate
 		return content, countTokensRoughly(content)
 	}
 
 	ids, _, err := t.tokenizer.Encode(content)
 	if err != nil {
-		// 如果失败，不截断
+		// if failed, don't truncate
 		return content, countTokensRoughly(content)
 	}
 
 	actualTokens := len(ids)
 
-	// 如果不超过限制，直接返回
+	// if within limit, return directly
 	if actualTokens <= maxTokens {
 		return content, actualTokens
 	}
@@ -416,7 +416,7 @@ func (t *FetchTool) truncateByTokens(content string, maxTokens int) (string, int
 	return sb.String(), maxTokens
 }
 
-// countTokensRoughly 粗略估算 token 数（字符/4 是常见估算）
+// countTokensRoughly roughly estimates token count (chars/4 is a common estimate)
 func countTokensRoughly(content string) int {
 	return len(content) / 4
 }

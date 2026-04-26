@@ -10,7 +10,7 @@ import (
 
 var nonSafeSegment = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
-// SanitizeWorkspaceKey 清理用户维度标识，避免路径注入。
+// SanitizeWorkspaceKey sanitizes a user-scoped identifier to prevent path injection.
 func SanitizeWorkspaceKey(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

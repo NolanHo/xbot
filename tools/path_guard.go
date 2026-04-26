@@ -108,7 +108,7 @@ func ResolveWritePath(ctx *ToolContext, inputPath string) (string, error) {
 
 	candidate := inputPath
 	if !filepath.IsAbs(candidate) {
-		// 优先使用 CurrentDir（Cd 设置的当前目录），否则 fallback 到 root
+		// prefer CurrentDir (set by Cd), otherwise fall back to root
 		if ctx != nil && ctx.CurrentDir != "" {
 			candidate = filepath.Join(ctx.CurrentDir, candidate)
 		} else {
@@ -149,7 +149,7 @@ func ResolveWritePath(ctx *ToolContext, inputPath string) (string, error) {
 //
 // 相对路径解析优先级：CurrentDir（Cd 设置）> WorkspaceRoot/WorkingDir。
 // 绝对路径直接校验，不受 CurrentDir 影响。
-// 允许读取范围包括 workspace root 及 ReadOnlyRoots 中列出的目录。
+// allowed read range includes workspace root and directories listed in ReadOnlyRoots.
 func ResolveReadPath(ctx *ToolContext, inputPath string) (string, error) {
 	if inputPath == "" {
 		return "", fmt.Errorf("path is required")
@@ -185,7 +185,7 @@ func ResolveReadPath(ctx *ToolContext, inputPath string) (string, error) {
 
 	candidate := inputPath
 	if !filepath.IsAbs(candidate) {
-		// 优先使用 CurrentDir（Cd 设置的当前目录），否则 fallback 到 root
+		// prefer CurrentDir (set by Cd), otherwise fall back to root
 		if ctx != nil && ctx.CurrentDir != "" {
 			candidate = filepath.Join(ctx.CurrentDir, candidate)
 		} else {
@@ -230,7 +230,7 @@ func ResolveReadPath(ctx *ToolContext, inputPath string) (string, error) {
 	return "", fmt.Errorf("read path is outside allowed roots: %s", inputPath)
 }
 
-// sandboxBaseDir 返回沙箱内的工作目录前缀。
+// sandboxBaseDir returns the sandbox working directory prefix.
 // 返回 Sandbox.Workspace(userID)（docker 模式下通常为 "/workspace"，remote 模式为 runner workspace）。
 // 返回空字符串表示无沙箱路径约束（none 模式），调用方应跳过路径校验。
 func sandboxBaseDir(ctx *ToolContext) string {
@@ -252,9 +252,9 @@ func shouldUseSandbox(ctx *ToolContext) bool {
 }
 
 // resolveSandboxCWD 将 CurrentDir 解析为沙箱内的绝对路径。
-// 支持两种格式：
-//   - 沙箱路径（如 /workspace/src）→ 直接返回
-//   - 宿主机路径（如 /data/users/ou_xxx/workspace/src）→ 转换为沙箱路径
+// supports two formats:
+//   - sandbox path (e.g. /workspace/src) → return directly
+//   - host path (e.g. /data/users/ou_xxx/workspace/src) → convert to sandbox path
 //
 // 返回空字符串表示无法解析（CurrentDir 为空或不在已知根目录下）。
 func resolveSandboxCWD(ctx *ToolContext, sandboxBase string) string {

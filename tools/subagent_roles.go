@@ -36,7 +36,7 @@ func (c SubAgentCapabilities) ToMap() map[string]bool {
 	return m
 }
 
-// CapabilitiesFromMap 从 map[string]bool 构造 SubAgentCapabilities。
+// CapabilitiesFromMap constructs SubAgentCapabilities from map[string]bool.
 // 默认 SpawnAgent=true：所有 agent 都能创建子 agent，除非显式设置 spawn_agent=false。
 func CapabilitiesFromMap(m map[string]bool) SubAgentCapabilities {
 	caps := SubAgentCapabilities{
@@ -71,10 +71,10 @@ func InitAgentRoles(dir string) error {
 	return nil
 }
 
-// GetSubAgentRole 根据名称查找角色（每次从文件加载，支持热更新）
-// 先查用户私有目录，再查全局目录（用户角色优先）
+// GetSubAgentRole finds a role by name (loaded from file each time, supports hot reload)
+// search user's private directory first, then global (user roles take priority)
 func GetSubAgentRole(name string, userAgentDirs ...string) (*SubAgentRole, bool) {
-	// 先搜索用户私有目录
+	// search user's private directory first
 	for _, dir := range userAgentDirs {
 		if dir == "" {
 			continue
@@ -91,9 +91,9 @@ func GetSubAgentRole(name string, userAgentDirs ...string) (*SubAgentRole, bool)
 		}
 	}
 
-	// 再搜索全局目录
+	// then search global directory
 	if agentsDir == "" {
-		// 全局目录不存在，尝试 embed fallback
+		// global directory not found, try embed fallback
 		return getEmbeddedAgentRole(name)
 	}
 	roles, err := LoadAgentRoles(agentsDir)
@@ -110,7 +110,7 @@ func GetSubAgentRole(name string, userAgentDirs ...string) (*SubAgentRole, bool)
 	return getEmbeddedAgentRole(name)
 }
 
-// getEmbeddedAgentRole 尝试从嵌入的 agent 定义中加载角色。
+// getEmbeddedAgentRole tries to load a role from embedded agent definitions.
 func getEmbeddedAgentRole(name string) (*SubAgentRole, bool) {
 	data, err := ReadEmbeddedAgentFile(name)
 	if err != nil {
@@ -151,7 +151,7 @@ func GetSubAgentRoleSandbox(ctx context.Context, name string, sb Sandbox, userID
 
 	// Search global directory (always os.*)
 	if agentsDir == "" {
-		// 全局目录不存在，尝试 embed fallback
+		// global directory not found, try embed fallback
 		return getEmbeddedAgentRole(name)
 	}
 	roles, err := LoadAgentRoles(agentsDir)

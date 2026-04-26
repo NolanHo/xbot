@@ -8,7 +8,7 @@ import (
 	"xbot/llm"
 )
 
-// MaskedRecallStore 是 ObservationMaskStore 暴露给 tools 包的接口。
+// MaskedRecallStore is the ObservationMaskStore interface exposed to the tools package.
 // 返回字符串而非 struct，避免 tools/agent 循环依赖。
 type MaskedRecallStore interface {
 	// RecallMasked 按 ID 召回已遮蔽的内容，返回 (toolName, fullContent, error)
@@ -122,7 +122,7 @@ func (t *RecallMaskedTool) recallByID(params recallMaskedParams) (*ToolResult, e
 	header += fmt.Sprintf("bytes:%d runes:%d", totalBytes, totalRunes)
 
 	if totalRunes <= limit {
-		// 完整返回
+		// return in full
 		return NewResult(header + "\n" + content), nil
 	}
 

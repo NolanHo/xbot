@@ -261,7 +261,7 @@ func (t *ManageTools) listMCP(ctx *ToolContext) (*ToolResult, error) {
 func (t *ManageTools) reload(ctx *ToolContext) (*ToolResult, error) {
 	results := []string{}
 
-	// 使所有会话的 MCP 连接失效，强制重新加载配置
+	// invalidates all sessions' MCP connections, forcing config reload
 	if ctx.InvalidateAllSessionMCP != nil {
 		ctx.InvalidateAllSessionMCP()
 		results = append(results, "MCP: All session connections invalidated, will reload on next use")

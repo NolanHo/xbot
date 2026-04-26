@@ -20,7 +20,7 @@ import (
 //   - **/test/*.go    → ("", "-path '*/test/*.go'")        // 递归
 //   - src/**/test/*.go→ ("src", "-path '*/test/*.go'")     // 递归
 func globToFindArgs(pattern string) (searchBase string, args string) {
-	// filepath.ToSlash 将 Windows 反斜杠 \ 转换为正斜杠 /，
+	// filepath.ToSlash converts Windows backslashes \ to forward slashes /,
 	// 确保跨平台 glob pattern 在 Linux 沙箱中正确工作。
 	// 例如 "src\*.go" 会被规范化为 "src/*.go"。
 	pattern = strings.Trim(pattern, "/")
@@ -31,7 +31,7 @@ func globToFindArgs(pattern string) (searchBase string, args string) {
 
 	segments := strings.Split(pattern, "/")
 
-	// 定位第一个 ** 的位置
+	// locate the first ** position
 	doubleStarIdx := -1
 	for i, seg := range segments {
 		if seg == "**" {
@@ -67,7 +67,7 @@ func globToFindArgs(pattern string) (searchBase string, args string) {
 	return prefix, fmt.Sprintf("-path '%s'", shellEscape(pathPattern))
 }
 
-// GlobTool 文件模式匹配搜索工具
+// GlobTool file pattern matching search tool
 type GlobTool struct{}
 
 func (t *GlobTool) Name() string {
@@ -173,7 +173,7 @@ func (t *GlobTool) executeLocal(ctx *ToolContext, pattern, path string) (*ToolRe
 	// Determine base directory
 	baseDir := path
 	if baseDir == "" {
-		// 优先使用 CurrentDir（PWD 工具优化）
+		// prefer CurrentDir (PWD tool optimization)
 		if ctx != nil && ctx.CurrentDir != "" {
 			baseDir = ctx.CurrentDir
 		} else if ctx != nil && ctx.WorkspaceRoot != "" {

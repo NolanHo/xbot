@@ -88,7 +88,7 @@ func (s *DockerSandbox) CloseForUser(userID string) error {
 	return nil
 }
 
-// IsExporting 检查该用户是否正在进行 export+import（用于引擎层排队阻塞）
+// IsExporting checks if the user is currently doing export+import (for engine-level queue blocking)
 func (s *DockerSandbox) IsExporting(userID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -98,7 +98,7 @@ func (s *DockerSandbox) IsExporting(userID string) bool {
 	return s.exportingUsers[userID]
 }
 
-// ExportAndImport 同步执行 export+import 持久化（由 settings 中的 cleanup 触发）。
+// ExportAndImport performs synchronous export+import persistence (triggered by cleanup in settings).
 // 调用期间 IsExporting(userID) 返回 true，引擎层会阻塞该用户的后续请求。
 func (s *DockerSandbox) ExportAndImport(userID string) error {
 	s.mu.Lock()
@@ -159,7 +159,7 @@ func (s *DockerSandbox) exportImportIfDirty(containerName, userID string) {
 
 	userImage := userImageName(userID)
 
-	// 1. 获取当前镜像的元数据（docker export/import 会丢失 CMD/ENTRYPOINT/ENV 等）
+	// 1. get current image metadata (docker export/import loses CMD/ENTRYPOINT/ENV etc.)
 	//    优先从已有用户镜像读取，不存在则从基础镜像读取
 	sourceImage := userImage
 	if err := dockerRun(dockerCmdTimeout, "image", "inspect", sourceImage); err != nil {
@@ -187,15 +187,15 @@ func (s *DockerSandbox) exportImportIfDirty(containerName, userID string) {
 		}
 	}
 
-	// 2. 记录旧镜像 ID（用于后续清理）
+	// 2. record old image ID (for later cleanup)
 	var oldImageID string
 	if out, err := dockerExec(dockerCmdTimeout, "image", "inspect", "-f", "{{.Id}}", userImage); err == nil {
 		oldImageID = strings.TrimSpace(string(out))
 	}
 
-	// 3. 管道化 export → import：docker export stdout 直接流入 docker import stdin，
-	//    避免写入大临时文件（典型 2GB FS 省掉一次完整磁盘写入）。
-	//    降级到临时文件方式（DinD 某些场景管道可能失败）。
+	// 3. piped export → import: docker export stdout flows directly into docker import stdin,
+	//    avoid writing large temp files (typical 2GB FS saves one full disk write).
+	//    fall back to temp file approach (DinD scenarios where piping may fail).
 	importArgs := []string{"import"}
 	for _, c := range changes {
 		importArgs = append(importArgs, "--change", c)
@@ -213,7 +213,7 @@ func (s *DockerSandbox) exportImportIfDirty(containerName, userID string) {
 	}
 	log.WithField("changes", len(changes)).Infof("Pipeline exported container %s to single-layer image %s", containerName, userImage)
 
-	// 5. 删除旧镜像（如果 ID 不同，说明 import 生成了新镜像）
+	// 5. delete old image (if ID differs, import created a new image)
 	if oldImageID != "" {
 		if newOut, err := dockerExec(dockerCmdTimeout, "image", "inspect", "-f", "{{.Id}}", userImage); err == nil {
 			newImageID := strings.TrimSpace(string(newOut))
@@ -227,12 +227,12 @@ func (s *DockerSandbox) exportImportIfDirty(containerName, userID string) {
 		}
 	}
 
-	// 6. 不做全局 image prune，避免误删用户安装的开发环境镜像
+	// 6. don't do global image prune, avoid accidentally deleting user-installed dev environment images
 	// 旧镜像已在第 5 步通过 rmi oldImageID 精确清理
 }
 
 // exportImportFallback 降级方案：export 到临时文件再 import（兼容 DinD 等管道不工作的场景）。
-// 不获取 s.mu 锁。
+// doesn't acquire s.mu lock.
 func (s *DockerSandbox) exportImportFallback(containerName, userImage string, changes []string) {
 	tmpFile, err := os.CreateTemp("", "xbot-export-*.tar")
 	if err != nil {
@@ -265,7 +265,7 @@ func (s *DockerSandbox) exportImportFallback(containerName, userImage string, ch
 	}
 	log.WithField("changes", len(changes)).Infof("Fallback exported container %s to single-layer image %s", containerName, userImage)
 
-	// 删除旧镜像
+	// delete old image
 	if oldImageID != "" {
 		if newOut, err := dockerExec(dockerCmdTimeout, "image", "inspect", "-f", "{{.Id}}", userImage); err == nil {
 			newImageID := strings.TrimSpace(string(newOut))
@@ -596,7 +596,7 @@ func (s *DockerSandbox) DownloadFile(ctx context.Context, url, outputPath, userI
 	return nil
 }
 
-// getOrCreateContainer 获取或创建用户的 Docker 容器
+// getOrCreateContainer gets or creates the user's Docker container
 // 优先使用用户专属镜像（由 export+import 生成），不存在则用基础镜像
 // 返回容器名称和检测到的用户默认 shell
 func (s *DockerSandbox) getOrCreateContainer(userID, workspace string) (containerName, shell string, err error) {
@@ -710,8 +710,8 @@ func (s *DockerSandbox) getOrCreateContainer(userID, workspace string) (containe
 	return containerName, shell, nil
 }
 
-// GetShell 获取用户在沙箱中的默认 shell（如 /bin/bash）
-// 如果容器不存在会自动创建
+// GetShell returns the user's default shell in the sandbox (e.g. /bin/bash)
+// container is auto-created if not present
 func (s *DockerSandbox) GetShell(userID string, workspace string) (string, error) {
 	ws := workspace
 	if ws == "" {
@@ -731,7 +731,7 @@ func (s *DockerSandbox) GetShell(userID string, workspace string) (string, error
 	return shell, err
 }
 
-// detectShell 从容器内的 /etc/passwd 获取用户的默认 shell
+// detectShell gets the user's default shell from /etc/passwd inside the container
 func (s *DockerSandbox) detectShell(containerName string) string {
 	// 获取 root 用户的默认 shell
 	output, err := dockerExec(dockerCmdTimeout, "exec", containerName,

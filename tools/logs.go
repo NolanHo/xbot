@@ -23,7 +23,7 @@ type LogsTool struct {
 	adminChatID string
 }
 
-// NewLogsTool 创建 LogsTool 实例
+// NewLogsTool creates a new LogsTool instance
 func NewLogsTool(adminChatID string) *LogsTool {
 	return &LogsTool{
 		adminChatID: adminChatID,
@@ -83,7 +83,7 @@ func (t *LogsTool) Execute(ctx *ToolContext, input string) (*ToolResult, error) 
 	}
 
 	// 确定日志目录
-	// 使用 DataDir 而非 WorkspaceRoot，因为日志是全局的，不是用户隔离的
+	// uses DataDir instead of WorkspaceRoot since logs are global, not user-isolated
 	logDir := filepath.Join(ctx.DataDir, LogsSubDir)
 
 	switch params.Action {
@@ -96,7 +96,7 @@ func (t *LogsTool) Execute(ctx *ToolContext, input string) (*ToolResult, error) 
 	}
 }
 
-// listLogs 列出所有日志文件
+// listLogs lists all log files
 func (t *LogsTool) listLogs(logDir string) (*ToolResult, error) {
 	files, err := t.getLogFiles(logDir)
 	if err != nil {
@@ -123,7 +123,7 @@ type logFileInfo struct {
 	Path string
 }
 
-// getLogFiles 获取日志文件列表（按日期倒序）
+// getLogFiles returns log files sorted by date (newest first)
 func (t *LogsTool) getLogFiles(logDir string) ([]logFileInfo, error) {
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
@@ -182,7 +182,7 @@ func (t *LogsTool) readLogs(logDir, filename string, lines int, level, grep stri
 			return nil, fmt.Errorf("path traversal not allowed")
 		}
 	} else {
-		// 默认读取最新的日志文件
+		// default: read the latest log file
 		files, err := t.getLogFiles(logDir)
 		if err != nil {
 			return nil, err
@@ -207,7 +207,7 @@ func (t *LogsTool) readLogs(logDir, filename string, lines int, level, grep stri
 		if level != "" && !t.matchLevel(line, level) {
 			continue
 		}
-		// grep 过滤
+		// grep filter
 		if grep != "" && !strings.Contains(line, grep) {
 			continue
 		}
@@ -293,14 +293,14 @@ func (t *LogsTool) matchLevel(line, level string) bool {
 		}
 	}
 
-	// 回退到文本匹配（TextFormatter）
+	// fall back to text matching (TextFormatter)
 	// 日志格式通常为：time="..." level=xxx msg="..."
 	levelPrefix := fmt.Sprintf("level=%s", level)
 	if strings.Contains(strings.ToLower(line), levelPrefix) {
 		return true
 	}
 
-	// 另一种常见格式：WARN: xxx, ERROR: xxx
+	// another common format: WARN: xxx, ERROR: xxx
 	upperLevel := strings.ToUpper(level)
 	switch upperLevel {
 	case "DEBUG":
@@ -333,7 +333,7 @@ func formatFileSize(bytes int64) string {
 // 用于类型检查
 var _ Tool = (*LogsTool)(nil)
 
-// 初始化时记录时间（用于调试）
+// record time at init (for debugging)
 func init() {
 	_ = time.Now() // 确保 time 包被导入
 }

@@ -10,7 +10,7 @@ import (
 	"xbot/llm"
 )
 
-// WebSearchTool 网络搜索工具（基于 Tavily API）
+// WebSearchTool web search tool (Tavily API)
 type WebSearchTool struct {
 	apiKey     string
 	httpClient *http.Client
@@ -169,7 +169,7 @@ func formatSearchResults(resp *TavilySearchResponse) string {
 
 	fmt.Fprintf(&sb, "# Web Search Results for: %s\n\n", resp.Query)
 
-	// 如果有 AI 生成的答案，先显示
+	// if AI-generated answer exists, show it first
 	if resp.Answer != "" {
 		sb.WriteString("## Summary\n")
 		sb.WriteString(resp.Answer)

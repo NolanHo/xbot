@@ -21,7 +21,7 @@ type CronTool struct {
 
 const timeFmtDatetime = "2006-01-02 15:04:05 MST"
 
-// NewCronTool 创建 CronTool 实例
+// NewCronTool creates a new CronTool instance
 func NewCronTool(cronSvc *sqlite.CronService) *CronTool {
 	return &CronTool{
 		cronSvc: cronSvc,

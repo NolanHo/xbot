@@ -23,7 +23,7 @@ type DownloadFileTool struct {
 	appSecret string
 }
 
-// NewDownloadFileTool 创建下载文件工具（注入飞书凭证）
+// NewDownloadFileTool creates a download file tool (injects Feishu credentials)
 func NewDownloadFileTool(appID, appSecret string) *DownloadFileTool {
 	return &DownloadFileTool{
 		appID:     appID,

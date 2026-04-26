@@ -18,7 +18,7 @@ import (
 // FileCreateTool — 创建新文件（2 params: path, content）
 // ============================================================================
 
-// FileCreateTool 创建新文件工具
+// FileCreateTool creates a new file
 type FileCreateTool struct{}
 
 func (t *FileCreateTool) Name() string {
@@ -120,7 +120,7 @@ func (t *FileCreateTool) executeLocal(ctx *ToolContext, params FileCreateParams)
 // FileReplaceTool — 查找替换文件内容（7 params）
 // ============================================================================
 
-// FileReplaceTool 文件替换工具
+// FileReplaceTool replaces file content
 type FileReplaceTool struct{}
 
 func (t *FileReplaceTool) Name() string {
@@ -259,7 +259,7 @@ func (t *FileReplaceTool) executeLocal(ctx *ToolContext, params FileReplaceParam
 // Shared helpers
 // ============================================================================
 
-// resolveSandboxPath 将用户输入的路径转换为容器内路径
+// resolveSandboxPath converts a user-input path to a container-internal path
 func resolveSandboxPath(ctx *ToolContext, userPath string) string {
 	sandboxBase := sandboxBaseDir(ctx)
 
@@ -316,7 +316,7 @@ func sandboxWriteNewFile(ctx *ToolContext, path, content string) error {
 	return nil
 }
 
-// doReplace 执行文本替换（支持精确匹配和 RE2 正则匹配）
+// doReplace performs text replacement (supports exact match and RE2 regex)
 // SECURITY NOTE: Go's regexp package uses RE2 engine which guarantees O(n) time complexity
 // for all operations, preventing ReDoS attacks.
 func doReplace(content string, params FileReplaceParams, filePath string) (string, string, error) {
@@ -400,7 +400,7 @@ func doReplace(content string, params FileReplaceParams, filePath string) (strin
 	return newContent, fmt.Sprintf("Successfully replaced %d occurrence(s) in %s", replacedCount, filePath), nil
 }
 
-// doRegexReplace 执行正则替换（由 doReplace 在 regex=true 时调用）
+// doRegexReplace performs regex replacement (called by doReplace when regex=true)
 func doRegexReplace(prefix, rangeText, suffix string, params FileReplaceParams, filePath, fullContent string) (string, string, error) {
 	re, err := regexp.Compile(params.OldString)
 	if err != nil {
@@ -623,7 +623,7 @@ func suggestMatch(content, searchStr string) string {
 	return ""
 }
 
-// Truncate 截断字符串（公共函数，供多处使用）
+// Truncate truncates a string (public function, used in multiple places)
 func Truncate(s string, maxLen int) string {
 	runes := []rune(s)
 	if len(runes) <= maxLen {

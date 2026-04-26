@@ -15,8 +15,8 @@ type CardBuilder struct {
 	sessions map[string]*CardSession
 	counter  atomic.Int64
 
-	// descriptions: card_id -> description string, 在 RemoveSession 时清理
-	// waiting cards 的 metadata 在 callback 后通过 CleanupCard 清理
+	// descriptions: card_id -> description string, cleaned up on RemoveSession
+	// waiting cards' metadata cleaned via CleanupCard after callback
 	descriptions sync.Map
 
 	// expectedInteractions stores which interaction types a card expects (persists after session removal)

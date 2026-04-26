@@ -14,7 +14,7 @@ import (
 // Only applies when the user explicitly passes max_lines > 0.
 const DefaultMaxReadLines = 0
 
-// ReadTool 读取文件工具
+// ReadTool file reading tool
 type ReadTool struct{}
 
 func (t *ReadTool) Name() string {
@@ -128,7 +128,7 @@ func applyLineLimit(result *ToolResult, maxLines, offset int) *ToolResult {
 func (t *ReadTool) executeInSandbox(ctx *ToolContext, filePath string) (*ToolResult, error) {
 	sandboxBase := sandboxBaseDir(ctx)
 
-	// 将用户输入的路径转换为容器内路径
+	// converts a user-input path to a container-internal path
 	sandboxPath := filePath
 	if !strings.HasPrefix(filePath, sandboxBase+"/") && filePath != sandboxBase && !strings.HasPrefix(filePath, "/") {
 		// 相对路径：优先基于 CurrentDir（Cd 后的沙箱路径），否则 sandboxBase

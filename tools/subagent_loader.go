@@ -9,7 +9,7 @@ import (
 	"unicode"
 )
 
-// LoadAgentRoles 从目录加载所有 agent 定义文件（*.md）
+// LoadAgentRoles loads all agent definition files (*.md) from a directory
 // 每个文件包含 YAML frontmatter（name, description, tools）和 SystemPrompt 正文
 func LoadAgentRoles(dir string) ([]SubAgentRole, error) {
 	entries, err := os.ReadDir(dir)
@@ -58,7 +58,7 @@ func LoadAgentRolesSandbox(ctx context.Context, dir string, sb Sandbox, userID s
 	return roles, nil
 }
 
-// ParseAgentFile 解析单个 agent 定义文件
+// ParseAgentFile parses a single agent definition file
 // 格式：YAML frontmatter（--- 之间）+ Markdown 正文作为 SystemPrompt
 func ParseAgentFile(path string) (SubAgentRole, error) {
 	data, err := os.ReadFile(path)
@@ -68,7 +68,7 @@ func ParseAgentFile(path string) (SubAgentRole, error) {
 
 	content := string(data)
 
-	// 分离 frontmatter 和正文
+	// separate frontmatter from body
 	frontmatter, body, err := splitFrontmatter(content)
 	if err != nil {
 		return SubAgentRole{}, fmt.Errorf("invalid frontmatter: %w", err)
@@ -85,8 +85,8 @@ func ParseAgentFile(path string) (SubAgentRole, error) {
 		name = strings.TrimSuffix(filepath.Base(path), ".md")
 	}
 
-	// 默认允许 spawn_agent，除非 frontmatter 中显式设置 spawn_agent: false
-	// （已在 parseFrontmatter 中处理）
+	// spawn_agent allowed by default unless frontmatter explicitly sets spawn_agent: false
+	// (already handled in parseFrontmatter)
 	return SubAgentRole{
 		Name:         name,
 		Description:  description,
@@ -122,17 +122,17 @@ func ParseAgentFileContent(data []byte, fallbackName string) (SubAgentRole, erro
 	}, nil
 }
 
-// splitFrontmatter 分离 YAML frontmatter 和正文
+// splitFrontmatter separates YAML frontmatter from body
 // 期望格式：以 "---\n" 开头，第二个 "---\n" 结束 frontmatter
 func splitFrontmatter(content string) (frontmatter, body string, err error) {
-	// 去掉可能的 BOM
+	// strip possible BOM
 	content = strings.TrimPrefix(content, "\xef\xbb\xbf")
 
 	if !strings.HasPrefix(content, "---") {
 		return "", "", fmt.Errorf("file does not start with ---")
 	}
 
-	// 找第二个 ---
+	// find the second ---
 	rest := content[3:] // 跳过第一个 ---
 	rest = strings.TrimPrefix(rest, "\r\n")
 	rest = strings.TrimPrefix(rest, "\n")
@@ -151,7 +151,7 @@ func splitFrontmatter(content string) (frontmatter, body string, err error) {
 	return frontmatter, body, nil
 }
 
-// parseFrontmatter 手动解析简单 YAML frontmatter
+// parseFrontmatter manually parses simple YAML frontmatter
 // 支持 name, description（字符串）、tools（列表）、model（字符串）和 capabilities（子字段）
 // 默认 spawn_agent=true，除非显式设置 spawn_agent: false
 func parseFrontmatter(fm string) (name, description, model string, tools []string, caps SubAgentCapabilities, err error) {
@@ -162,7 +162,7 @@ func parseFrontmatter(fm string) (name, description, model string, tools []strin
 	var currentField string
 
 	for _, line := range lines {
-		// 去掉 \r
+		// strip \r
 		line = strings.TrimRight(line, "\r")
 
 		// 跳过空行和注释
@@ -211,7 +211,7 @@ func parseFrontmatter(fm string) (name, description, model string, tools []strin
 		key := strings.TrimSpace(line[:colonIdx])
 		value := strings.TrimSpace(line[colonIdx+1:])
 
-		// 去掉引号包裹
+		// strip quote wrapping
 		value = stripQuotes(value)
 
 		switch key {
@@ -259,13 +259,13 @@ func parseFrontmatter(fm string) (name, description, model string, tools []strin
 	return name, description, model, tools, caps, nil
 }
 
-// isTruthy 判断字符串是否表示 true
+// isTruthy checks if a string represents true
 func isTruthy(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	return s == "true" || s == "yes" || s == "1"
 }
 
-// stripQuotes 去掉字符串两端的引号（单引号或双引号）
+// stripQuotes strips surrounding quotes (single or double) from a string
 func stripQuotes(s string) string {
 	if len(s) >= 2 {
 		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {

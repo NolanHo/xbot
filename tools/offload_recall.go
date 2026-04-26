@@ -8,7 +8,7 @@ import (
 	"xbot/llm"
 )
 
-// OffloadRecallStore 是 OffloadStore 暴露给 tools 包的接口。
+// OffloadRecallStore is the OffloadStore interface exposed to the tools package.
 type OffloadRecallStore interface {
 	Recall(sessionKey, id string) (string, error)
 }
@@ -16,7 +16,7 @@ type OffloadRecallStore interface {
 const (
 	offloadDefaultLimit = 8000  // 每次默认返回的 rune 数（约 8000 字符/16000 字节中文）
 	offloadMaxLimit     = 16000 // 最大返回 rune 数上限：平衡 LLM 上下文窗口与信息完整性，
-	// 单次约 16000 字符（约 32KB 中文），超大内容通过 offset 分页读取
+	// approximately 16000 chars per read (about 32KB CJK), larger content via offset pagination
 	offloadDefaultOffset = 0
 )
 
@@ -92,7 +92,7 @@ func (t *OffloadRecallTool) Execute(ctx *ToolContext, args string) (*ToolResult,
 	totalRunes := len(runes)
 	totalBytes := len(content)
 
-	// offset 超出范围
+	// offset out of range
 	if params.Offset >= totalRunes {
 		return NewResult(fmt.Sprintf("⚠️ offset %d exceeds total length %d runes (the content is fully read)", params.Offset, totalRunes)), nil
 	}

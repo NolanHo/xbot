@@ -39,7 +39,7 @@ type MCPConfig struct {
 	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
 }
 
-// mcpConnection MCP 连接封装
+// mcpConnection wraps an MCP connection
 type mcpConnection struct {
 	name         string
 	session      *mcp.ClientSession
@@ -283,7 +283,7 @@ func resolveXbotBinDir(configPath string) string {
 		binDir = filepath.Join(dir, ".xbot", "bin")
 	}
 
-	// 仅在目录存在时返回
+	// return only if directory exists
 	if info, err := os.Stat(binDir); err == nil && info.IsDir() {
 		return binDir
 	}
@@ -464,7 +464,7 @@ func InitializeMCPClient(ctx context.Context, session *mcp.ClientSession) (*MCPI
 	}, nil
 }
 
-// ConvertMCPParams 将 MCP 参数转换为 LLM ToolParam 格式
+// ConvertMCPParams converts MCP params to LLM ToolParam format
 // The official SDK's Tool.InputSchema is `any` (client-side: map[string]any).
 func ConvertMCPParams(tool *mcp.Tool) []llm.ToolParam {
 	return convertMCPParams(tool)
@@ -514,7 +514,7 @@ func convertMCPParams(tool *mcp.Tool) []llm.ToolParam {
 			desc = d
 		}
 
-		// 如果有 enum，附加到描述
+		// if enum exists, append to description
 		if enumVals, ok := propMap["enum"].([]any); ok && len(enumVals) > 0 {
 			enumStrs := make([]string, len(enumVals))
 			for i, v := range enumVals {
@@ -559,7 +559,7 @@ func formatMCPResult(result *mcp.CallToolResult) string {
 	return strings.Join(parts, "\n")
 }
 
-// LoadMCPConfig 从文件加载 MCP 配置
+// LoadMCPConfig loads MCP configuration from file
 func LoadMCPConfig(configPath string) (*MCPConfig, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {

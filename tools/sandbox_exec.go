@@ -61,7 +61,7 @@ func RunInSandbox(ctx *ToolContext, command string, args ...string) (string, err
 }
 
 // RunInSandboxWithShell 在沙箱内执行 shell 命令并返回输出。
-// 使用 login shell 自动加载环境变量配置文件。
+// uses login shell to auto-load environment config files.
 func RunInSandboxWithShell(ctx *ToolContext, shellCmd string) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("sandbox not enabled")

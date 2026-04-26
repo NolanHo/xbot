@@ -14,7 +14,7 @@ import (
 
 const defaultShellTimeout = 120 * time.Second
 
-// ShellTool 执行命令工具
+// ShellTool command execution tool
 type ShellTool struct{}
 
 func (t *ShellTool) Name() string {
@@ -83,7 +83,7 @@ func (t *ShellTool) Execute(toolCtx *ToolContext, input string) (*ToolResult, er
 		return nil, fmt.Errorf("command contains control characters (null bytes or other non-printable characters)")
 	}
 
-	// 安全预检：拦截危险命令
+	// safety pre-check: intercept dangerous commands
 	// - run_as 模式下禁止任何形式的 sudo（用户切换由框架通过 cmdbuilder 处理）
 	// - permission control 启用时，即使未设置 run_as，也禁止 LLM 直接使用 sudo
 	if blocked, reason := checkDangerousCommand(toolCtx.Ctx, params.Command, params.RunAs != ""); blocked {
@@ -129,7 +129,7 @@ func (t *ShellTool) Execute(toolCtx *ToolContext, input string) (*ToolResult, er
 	}
 
 	// 沙箱模式：workspace 必须用宿主机路径（用于 bind mount / 容器查找），
-	// 不能用容器内路径（CurrentDir），否则会导致容器 mount 校验失败并重建。
+	// can't use container-internal path (CurrentDir); would cause container mount validation failure and rebuild.
 	sandboxWorkspace := workspaceRoot
 	if sandboxWorkspace == "" {
 		sandboxWorkspace = execDir
@@ -150,7 +150,7 @@ func (t *ShellTool) Execute(toolCtx *ToolContext, input string) (*ToolResult, er
 	// 构建登录 shell 命令
 	shellCmd := params.Command
 
-	// 审计日志：记录每次 shell 执行
+	// audit log: records every shell execution
 	log.WithFields(log.Fields{
 		"command":    params.Command,
 		"timeout":    timeout,
@@ -275,7 +275,7 @@ func (t *ShellTool) executeForeground(
 		return nil, fmt.Errorf("sandbox exec: %w", err)
 	}
 
-	// 合并输出
+	// merge output
 	var resultBuilder strings.Builder
 	if result.Stdout != "" {
 		resultBuilder.WriteString(result.Stdout)
@@ -497,7 +497,7 @@ func detectCdTip(command string) string {
 	return `NOTE: "cd" inside Shell only affects this single command — the working directory resets on the next tool call. Use the Cd tool to persistently change directory.`
 }
 
-// dangerPatterns 定义绝对禁止执行的命令模式（黑名单拦截，直接拒绝）
+// dangerPatterns defines absolutely forbidden command patterns (blacklist, direct rejection)
 var dangerPatterns = []struct {
 	pattern *regexp.Regexp
 	reason  string
@@ -510,7 +510,7 @@ var dangerPatterns = []struct {
 	{regexp.MustCompile(`mv\s+/\s+/dev/null`), "mv / /dev/null is destructive"},
 }
 
-// warningPatterns 定义高危命令（告警但允许执行）
+// warningPatterns defines high-risk commands (warn but allow execution)
 var warningPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\brm\s+(-[^\s]*rf|-rf)\b`),
 	regexp.MustCompile(`\bdd\b`),
@@ -519,7 +519,7 @@ var warningPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b(format| FORMAT)\b`),
 }
 
-// checkDangerousCommand 检查命令是否包含危险模式
+// checkDangerousCommand checks if a command contains dangerous patterns
 // 返回 (blocked, reason)，如果 blocked=true 则应拒绝执行
 // disallowSudo: 当为 true 时（run_as 模式），任何形式的 sudo 都被禁止
 func checkDangerousCommand(ctx context.Context, cmd string, disallowSudo bool) (bool, string) {
@@ -530,10 +530,10 @@ func checkDangerousCommand(ctx context.Context, cmd string, disallowSudo bool) (
 		}
 	}
 
-	// sudo 检查
+	// sudo check
 	if sudoPattern.MatchString(cmd) {
 		if disallowSudo {
-			// run_as 模式：用户切换由框架控制，禁止 LLM 使用任何形式的 sudo
+			// run_as mode: user switching controlled by framework, prohibit any form of sudo by LLM
 			return true, "sudo is not allowed when run_as is set (user switching is handled by the framework)"
 		}
 		defaultUser, privilegedUser := PermUsersFromContext(ctx)

@@ -9,16 +9,16 @@ import (
 )
 
 // InteractiveSubAgentManager 扩展 SubAgentManager，支持 interactive mode。
-// agent 包的 Agent 实现此接口（如果是 nil 则不支持 interactive）。
+// the Agent type in the agent package implements this interface (nil means interactive not supported).
 type InteractiveSubAgentManager interface {
 	SubAgentManager
-	// SpawnInteractive 创建/复用 interactive SubAgent session 并执行任务。
+	// SpawnInteractive creates/reuses an interactive SubAgent session and executes a task.
 	// instance 为空时行为与旧版一致；设置 instance 后同一 role 可创建多个独立 session。
 	// model 为可选的模型覆盖，为空时继承主 Agent 模型。
 	SpawnInteractive(ctx *ToolContext, task, roleName, systemPrompt string, allowedTools []string, caps SubAgentCapabilities, instance, model string) (string, error)
-	// SendInteractive 向已有的 interactive session 发送消息。
+	// SendInteractive sends a message to an existing interactive session.
 	SendInteractive(ctx *ToolContext, task, roleName, systemPrompt string, allowedTools []string, caps SubAgentCapabilities, instance, model string) (string, error)
-	// UnloadInteractive 结束 interactive session（巩固记忆 + 清理）。
+	// UnloadInteractive unloads an interactive session (consolidates memory + cleanup).
 	UnloadInteractive(ctx *ToolContext, roleName, instance string) error
 	// InspectInteractive 返回 interactive session 的最近活动摘要（tail 风格）。
 	InspectInteractive(ctx *ToolContext, roleName, instance string, tailCount int) (string, error)

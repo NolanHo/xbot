@@ -11,7 +11,7 @@ import (
 	"xbot/llm"
 )
 
-// GrepTool 文件内容搜索工具
+// GrepTool file content search tool
 type GrepTool struct{}
 
 func (t *GrepTool) Name() string {
@@ -521,7 +521,7 @@ func (t *GrepTool) executeLocal(ctx *ToolContext, pattern, path, include string,
 	// Determine base directory
 	baseDir := path
 	if baseDir == "" {
-		// 优先使用 CurrentDir（PWD 工具优化）
+		// prefer CurrentDir (PWD tool optimization)
 		if ctx != nil && ctx.CurrentDir != "" {
 			baseDir = ctx.CurrentDir
 		} else if ctx != nil && ctx.WorkspaceRoot != "" {

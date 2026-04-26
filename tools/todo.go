@@ -10,21 +10,21 @@ import (
 	"xbot/llm"
 )
 
-// TodoItem 单个 TODO 项
+// TodoItem is a single TODO item
 type TodoItem struct {
 	ID   int    `json:"id"`
 	Text string `json:"text"`
 	Done bool   `json:"done"`
 }
 
-// TodoManager 内存级 TODO 管理（非持久化）
+// TodoManager is an in-memory TODO manager (not persisted)
 type TodoManager struct {
 	mu         sync.RWMutex
 	todos      map[string][]TodoItem // sessionKey -> todos
 	maxEntries int                   // 最大条目数，超过时淘汰最早的
 }
 
-// NewTodoManager 创建 TODO 管理器
+// NewTodoManager creates a new TodoManager
 func NewTodoManager() *TodoManager {
 	return &TodoManager{
 		todos:      make(map[string][]TodoItem),
@@ -32,7 +32,7 @@ func NewTodoManager() *TodoManager {
 	}
 }
 
-// SetTodos 写入/更新指定 session 的 TODO 列表
+// SetTodos writes/updates the TODO list for the specified session
 func (m *TodoManager) SetTodos(sessionKey string, items []TodoItem) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -55,7 +55,7 @@ func (m *TodoManager) SetTodos(sessionKey string, items []TodoItem) {
 	m.todos[sessionKey] = items
 }
 
-// GetTodoSummary 获取指定 session 的 TODO 状态摘要
+// GetTodoSummary returns a TODO status summary for the specified session
 func (m *TodoManager) GetTodoSummary(sessionKey string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -78,7 +78,7 @@ func (m *TodoManager) GetTodoSummary(sessionKey string) string {
 	return fmt.Sprintf("(%d/%d)\n%s", done, len(items), strings.Join(parts, "\n"))
 }
 
-// GetTodos 获取指定 session 的 TODO 列表
+// GetTodos returns the TODO list for the specified session
 func (m *TodoManager) GetTodos(sessionKey string) []TodoItem {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

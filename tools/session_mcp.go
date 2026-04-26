@@ -22,7 +22,7 @@ const maxMCPConnections = 20
 // The caller should NOT set initialized=true so that the next access retries.
 var errNotInitialized = fmt.Errorf("MCP config not found, will retry on next access")
 
-// SessionMCPManager 管理单个会话的 MCP 连接
+// SessionMCPManager manages MCP connections for a single session
 type SessionMCPManager struct {
 	mu                sync.RWMutex
 	sessionKey        string                    // "channel:chatID"
@@ -41,7 +41,7 @@ type SessionMCPManager struct {
 	onChange          func()                    // 初始化完成后的回调（通知调用方重新索引）
 }
 
-// NewSessionMCPManager 创建会话 MCP 管理器
+// NewSessionMCPManager creates a new session MCP manager
 func NewSessionMCPManager(sessionKey, userID, globalConfigPath, userConfigPath, workspaceRoot string, inactivityTimeout time.Duration) *SessionMCPManager {
 	return &SessionMCPManager{
 		sessionKey:        sessionKey,
@@ -57,7 +57,7 @@ func NewSessionMCPManager(sessionKey, userID, globalConfigPath, userConfigPath, 
 	}
 }
 
-// UpdateScope 更新当前会话可见的用户配置与工作区。
+// UpdateScope updates the current session's visible user config and workspace.
 func (sm *SessionMCPManager) UpdateScope(userID, userConfigPath, workspaceRoot string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -189,7 +189,7 @@ func (sm *SessionMCPManager) GetSessionTools() []Tool {
 	return tools
 }
 
-// MarkActive 标记服务器为活跃状态
+// MarkActive marks the server as active
 func (sm *SessionMCPManager) MarkActive(serverName string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -197,7 +197,7 @@ func (sm *SessionMCPManager) MarkActive(serverName string) {
 	sm.sessionLastUsed = time.Now()
 }
 
-// UnloadInactiveServers 卸载超时不活跃的服务器
+// UnloadInactiveServers unloads inactive servers past the timeout
 // 返回会话最后活跃时间（用于判断会话是否需要从缓存中移除）
 func (sm *SessionMCPManager) UnloadInactiveServers() time.Time {
 	sm.mu.Lock()
@@ -234,7 +234,7 @@ func (sm *SessionMCPManager) UnloadInactiveServers() time.Time {
 	return sm.sessionLastUsed
 }
 
-// Close 关闭所有连接
+// Close closes all connections
 func (sm *SessionMCPManager) Close() {
 	atomic.StoreUint32(&sm.closed, 1)
 
@@ -253,7 +253,7 @@ func (sm *SessionMCPManager) Close() {
 	sm.lastActive = make(map[string]time.Time)
 }
 
-// Invalidate 重置初始化标志，强制下次调用时重新加载配置
+// Invalidate resets the init flag, forcing reload on next call
 func (sm *SessionMCPManager) Invalidate() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -303,7 +303,7 @@ func (sm *SessionMCPManager) loadAndConnect(ctx context.Context) error {
 	return nil
 }
 
-// connectServer 连接单个 MCP Server
+// connectServer connects a single MCP server
 func (sm *SessionMCPManager) connectServer(ctx context.Context, name string, cfg MCPServerConfig) error {
 	// 限制最大连接数，防止恶意或异常情况创建大量连接
 	if len(sm.connections) >= maxMCPConnections {
@@ -369,7 +369,7 @@ func (sm *SessionMCPManager) connectServer(ctx context.Context, name string, cfg
 	return nil
 }
 
-// closeConnection 关闭单个连接
+// closeConnection closes a single connection
 func (sm *SessionMCPManager) closeConnection(conn *mcpConnection) {
 	if conn != nil && conn.session != nil {
 		if err := conn.session.Close(); err != nil {
@@ -380,7 +380,7 @@ func (sm *SessionMCPManager) closeConnection(conn *mcpConnection) {
 	}
 }
 
-// loadConfig 从 JSON 文件加载 MCP 配置
+// loadConfig loads MCP config from a JSON file
 func (sm *SessionMCPManager) loadConfig() (*MCPConfig, error) {
 	merged := &MCPConfig{MCPServers: map[string]MCPServerConfig{}}
 

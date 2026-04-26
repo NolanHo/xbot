@@ -1111,8 +1111,22 @@ func (s *runState) runCompression(ctx context.Context, cm ContextManager, totalT
 }
 
 // executeToolCalls runs all tool calls from the LLM response.
+// It is the coordinator that delegates to focused sub-methods:
+//   - initToolCallProgress: set up progress placeholders
+//   - dispatchToolCalls: route calls to the right execution mode
+//   - finalizeToolCallProgress: update structured progress & snapshot
 func (s *runState) executeToolCalls(ctx context.Context, response *llm.LLMResponse, iteration int) []toolExecResult {
-	// Add progress placeholders for all tool calls
+	progressStartIdx := s.initToolCallProgress(response, iteration)
+	execResults := make([]toolExecResult, len(response.ToolCalls))
+	s.dispatchToolCalls(ctx, response, iteration, progressStartIdx, execResults)
+	s.finalizeToolCallProgress(iteration)
+	return execResults
+}
+
+// initToolCallProgress sets up progress-tracking placeholders for every tool call
+// in response and returns the index into progressLines where the first placeholder
+// was added (used for later in-place updates by execOneToolCall).
+func (s *runState) initToolCallProgress(response *llm.LLMResponse, iteration int) int {
 	progressStartIdx := len(s.progressLines)
 	for _, tc := range response.ToolCalls {
 		s.toolsUsed = append(s.toolsUsed, tc.Name)
@@ -1122,7 +1136,6 @@ func (s *runState) executeToolCalls(ctx context.Context, response *llm.LLMRespon
 			s.progressLines = append(s.progressLines, fmt.Sprintf("> ⏳ %s ...", toolLabel))
 		}
 	}
-	execResults := make([]toolExecResult, len(response.ToolCalls))
 	if s.structuredProgress != nil {
 		s.structuredProgress.Phase = PhaseToolExec
 		s.structuredProgress.ActiveTools = make([]ToolProgress, len(response.ToolCalls))
@@ -1141,161 +1154,168 @@ func (s *runState) executeToolCalls(ctx context.Context, response *llm.LLMRespon
 	if s.autoNotify {
 		s.notifyProgress("")
 	}
+	return progressStartIdx
+}
 
-	// execOne executes a single tool call and records the result.
-	execOne := func(entry toolCallEntry) {
-		tc := entry.tc
-		argPreview := tc.Arguments
-		if r := []rune(argPreview); len(r) > 200 {
-			argPreview = string(r[:200]) + "..."
+// execOneToolCall executes a single tool call, records the result in results,
+// and updates progress indicators in-place.
+func (s *runState) execOneToolCall(ctx context.Context, entry toolCallEntry, progressStartIdx int, results []toolExecResult) {
+	tc := entry.tc
+	argPreview := tc.Arguments
+	if r := []rune(argPreview); len(r) > 200 {
+		argPreview = string(r[:200]) + "..."
+	}
+	log.Ctx(ctx).WithFields(log.Fields{
+		"tool":      tc.Name,
+		"id":        tc.ID,
+		"iteration": entry.iteration,
+		"call_idx":  entry.index,
+	}).Debugf("Tool call: %s(%s)", tc.Name, argPreview)
+
+	var execCtx context.Context
+	var cancel context.CancelFunc
+	if tc.Name == toolSubAgent {
+		execCtx, cancel = ctx, func() {}
+		if s.autoNotify {
+			pi := progressStartIdx + entry.index
+			if pi < len(s.progressLines) {
+				execCtx = WithSubAgentProgress(execCtx, func(detail SubAgentProgressDetail) {
+					s.progressMu.Lock()
+					s.progressLines[pi] = formatSubAgentProgress(detail)
+					s.progressMu.Unlock()
+					s.notifyProgress("")
+				})
+			}
+		}
+	} else {
+		execCtx, cancel = ctx, func() {}
+	}
+
+	start := time.Now()
+	if s.structuredProgress != nil && entry.index < len(s.structuredProgress.ActiveTools) {
+		s.structuredProgress.ActiveTools[entry.index].Status = ToolRunning
+	}
+	// Notify CLI immediately so the running animation is visible
+	// before the tool blocks on execution.
+	if s.autoNotify {
+		s.notifyProgress("")
+	}
+	result, execErr := s.toolExecutor(execCtx, tc)
+	elapsed := time.Since(start)
+	cancel()
+
+	results[entry.index] = toolExecResult{err: execErr, result: result, elapsed: elapsed}
+	if s.structuredProgress != nil && entry.index < len(s.structuredProgress.ActiveTools) {
+		status := ToolDone
+		if execErr != nil || (result != nil && result.IsError) {
+			status = ToolError
+		}
+		s.structuredProgress.ActiveTools[entry.index].Status = status
+		s.structuredProgress.ActiveTools[entry.index].Elapsed = elapsed
+		if result != nil && result.Summary != "" {
+			su := strings.TrimSpace(result.Summary)
+			if idx := strings.Index(su, "\n"); idx >= 0 {
+				su = su[:idx]
+			}
+			if r := []rune(su); len(r) > 100 {
+				su = string(r[:100]) + "..."
+			}
+			s.structuredProgress.ActiveTools[entry.index].Summary = su
+		} else if execErr != nil {
+			su := execErr.Error()
+			if r := []rune(su); len(r) > 100 {
+				su = string(r[:100]) + "..."
+			}
+			s.structuredProgress.ActiveTools[entry.index].Summary = su
+		}
+	}
+
+	toolLabel := formatToolProgress(tc.Name, tc.Arguments)
+	if execErr != nil {
+		GlobalMetrics.TotalToolErrors.Add(1)
+		log.Ctx(ctx).WithFields(log.Fields{
+			"tool":    tc.Name,
+			"elapsed": elapsed.Round(time.Millisecond),
+		}).WithError(execErr).Debug("Tool failed (hook also logged)")
+		results[entry.index].content = fmt.Sprintf("Error: %v\n\nPlease fix the issue and try again with corrected parameters.", execErr)
+		results[entry.index].llmContent = results[entry.index].content
+
+		if s.autoNotify {
+			if tc.Name == toolSubAgent {
+				line := s.progressLines[progressStartIdx+entry.index]
+				line = strings.ReplaceAll(line, "⏳", "❌")
+				line = strings.ReplaceAll(line, "🔄", "❌")
+				s.progressLines[progressStartIdx+entry.index] = line
+			} else {
+				s.progressLines[progressStartIdx+entry.index] = fmt.Sprintf("> ❌ %s (%s)", toolLabel, elapsed.Round(time.Millisecond))
+			}
+		}
+	} else {
+		results[entry.index].content = result.Summary
+		results[entry.index].llmContent = buildToolMessageContent(result)
+
+		if result.IsError {
+			GlobalMetrics.TotalToolErrors.Add(1)
+			results[entry.index].llmContent = fmt.Sprintf("Error: %s\n\nDo NOT retry the same command. Analyze the error, fix the root cause, then try a different approach.", results[entry.index].llmContent)
+		}
+
+		resultPreview := result.Summary
+		if r := []rune(resultPreview); len(r) > 200 {
+			resultPreview = string(r[:200]) + "..."
 		}
 		log.Ctx(ctx).WithFields(log.Fields{
-			"tool":      tc.Name,
-			"id":        tc.ID,
-			"iteration": entry.iteration,
-			"call_idx":  entry.index,
-		}).Debugf("Tool call: %s(%s)", tc.Name, argPreview)
+			"tool":    tc.Name,
+			"elapsed": elapsed.Round(time.Millisecond),
+		}).Debugf("Tool done: %s", resultPreview)
 
-		var execCtx context.Context
-		var cancel context.CancelFunc
-		if tc.Name == toolSubAgent {
-			execCtx, cancel = ctx, func() {}
-			if s.autoNotify {
-				pi := progressStartIdx + entry.index
-				if pi < len(s.progressLines) {
-					execCtx = WithSubAgentProgress(execCtx, func(detail SubAgentProgressDetail) {
-						s.progressMu.Lock()
-						s.progressLines[pi] = formatSubAgentProgress(detail)
-						s.progressMu.Unlock()
-						s.notifyProgress("")
-					})
-				}
-			}
-		} else {
-			execCtx, cancel = ctx, func() {}
-		}
-
-		start := time.Now()
-		if s.structuredProgress != nil && entry.index < len(s.structuredProgress.ActiveTools) {
-			s.structuredProgress.ActiveTools[entry.index].Status = ToolRunning
-		}
-		// Notify CLI immediately so the running animation is visible
-		// before the tool blocks on execution.
 		if s.autoNotify {
-			s.notifyProgress("")
-		}
-		result, execErr := s.toolExecutor(execCtx, tc)
-		elapsed := time.Since(start)
-		cancel()
-
-		execResults[entry.index] = toolExecResult{err: execErr, result: result, elapsed: elapsed}
-		if s.structuredProgress != nil && entry.index < len(s.structuredProgress.ActiveTools) {
-			status := ToolDone
-			if execErr != nil || (result != nil && result.IsError) {
-				status = ToolError
-			}
-			s.structuredProgress.ActiveTools[entry.index].Status = status
-			s.structuredProgress.ActiveTools[entry.index].Elapsed = elapsed
-			if result != nil && result.Summary != "" {
-				su := strings.TrimSpace(result.Summary)
-				if idx := strings.Index(su, "\n"); idx >= 0 {
-					su = su[:idx]
+			if tc.Name == toolSubAgent {
+				line := s.progressLines[progressStartIdx+entry.index]
+				// Replace both possible prefixes: ⏳ (initial placeholder) and 🔄 (progress-updated)
+				line = strings.ReplaceAll(line, "⏳", "✅")
+				line = strings.ReplaceAll(line, "🔄", "✅")
+				s.progressLines[progressStartIdx+entry.index] = line
+			} else {
+				icon := "✅"
+				if result.IsError {
+					icon = "❌"
 				}
-				if r := []rune(su); len(r) > 100 {
-					su = string(r[:100]) + "..."
-				}
-				s.structuredProgress.ActiveTools[entry.index].Summary = su
-			} else if execErr != nil {
-				su := execErr.Error()
-				if r := []rune(su); len(r) > 100 {
-					su = string(r[:100]) + "..."
-				}
-				s.structuredProgress.ActiveTools[entry.index].Summary = su
-			}
-		}
-
-		toolLabel := formatToolProgress(tc.Name, tc.Arguments)
-		if execErr != nil {
-			GlobalMetrics.TotalToolErrors.Add(1)
-			log.Ctx(ctx).WithFields(log.Fields{
-				"tool":    tc.Name,
-				"elapsed": elapsed.Round(time.Millisecond),
-			}).WithError(execErr).Debug("Tool failed (hook also logged)")
-			execResults[entry.index].content = fmt.Sprintf("Error: %v\n\nPlease fix the issue and try again with corrected parameters.", execErr)
-			execResults[entry.index].llmContent = execResults[entry.index].content
-
-			if s.autoNotify {
-				if tc.Name == toolSubAgent {
-					line := s.progressLines[progressStartIdx+entry.index]
-					line = strings.ReplaceAll(line, "⏳", "❌")
-					line = strings.ReplaceAll(line, "🔄", "❌")
-					s.progressLines[progressStartIdx+entry.index] = line
-				} else {
-					s.progressLines[progressStartIdx+entry.index] = fmt.Sprintf("> ❌ %s (%s)", toolLabel, elapsed.Round(time.Millisecond))
-				}
-			}
-		} else {
-			execResults[entry.index].content = result.Summary
-			execResults[entry.index].llmContent = buildToolMessageContent(result)
-
-			if result.IsError {
-				GlobalMetrics.TotalToolErrors.Add(1)
-				execResults[entry.index].llmContent = fmt.Sprintf("Error: %s\n\nDo NOT retry the same command. Analyze the error, fix the root cause, then try a different approach.", execResults[entry.index].llmContent)
-			}
-
-			resultPreview := result.Summary
-			if r := []rune(resultPreview); len(r) > 200 {
-				resultPreview = string(r[:200]) + "..."
-			}
-			log.Ctx(ctx).WithFields(log.Fields{
-				"tool":    tc.Name,
-				"elapsed": elapsed.Round(time.Millisecond),
-			}).Debugf("Tool done: %s", resultPreview)
-
-			if s.autoNotify {
-				if tc.Name == toolSubAgent {
-					line := s.progressLines[progressStartIdx+entry.index]
-					// Replace both possible prefixes: ⏳ (initial placeholder) and 🔄 (progress-updated)
-					line = strings.ReplaceAll(line, "⏳", "✅")
-					line = strings.ReplaceAll(line, "🔄", "✅")
-					s.progressLines[progressStartIdx+entry.index] = line
-				} else {
-					icon := "✅"
-					if result.IsError {
-						icon = "❌"
-					}
-					s.progressLines[progressStartIdx+entry.index] = fmt.Sprintf("> %s %s (%s)", icon, toolLabel, elapsed.Round(time.Millisecond))
-				}
+				s.progressLines[progressStartIdx+entry.index] = fmt.Sprintf("> %s %s (%s)", icon, toolLabel, elapsed.Round(time.Millisecond))
 			}
 		}
 	}
+}
 
-	// executeSubAgentOps runs SubAgent tool calls concurrently.
-	executeSubAgentOps := func(ops []toolCallEntry, execFn func(toolCallEntry), subAgentSem func(context.Context) func(), doAutoNotify bool) {
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-		for _, entry := range ops {
-			wg.Add(1)
-			go func(e toolCallEntry) {
-				defer clipanic.Recover("agent.executeToolCalls.subAgentOp", e.tc, false)
-				defer wg.Done()
-				var release func()
-				if subAgentSem != nil {
-					release = subAgentSem(ctx)
-					defer release()
-				}
-				execFn(e)
-				if doAutoNotify && !s.batchProgressByIteration {
-					mu.Lock()
-					s.notifyProgress("")
-					mu.Unlock()
-				}
-			}(entry)
-		}
-		wg.Wait()
+// runSubAgentOps executes SubAgent tool calls concurrently using the optional
+// sub-agent semaphore for concurrency limiting.
+func (s *runState) runSubAgentOps(ctx context.Context, ops []toolCallEntry, progressStartIdx int, results []toolExecResult) {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for _, entry := range ops {
+		wg.Add(1)
+		go func(e toolCallEntry) {
+			defer clipanic.Recover("agent.executeToolCalls.subAgentOp", e.tc, false)
+			defer wg.Done()
+			var release func()
+			if s.cfg.SubAgentSem != nil {
+				release = s.cfg.SubAgentSem(ctx)
+				defer release()
+			}
+			s.execOneToolCall(ctx, e, progressStartIdx, results)
+			if s.autoNotify && !s.batchProgressByIteration {
+				mu.Lock()
+				s.notifyProgress("")
+				mu.Unlock()
+			}
+		}(entry)
 	}
+	wg.Wait()
+}
 
-	// Dispatch tool calls based on execution mode
+// dispatchToolCalls routes tool calls to the appropriate execution strategy:
+// read-write split (parallel reads, serial writes), concurrent sub-agents, or
+// plain sequential execution.
+func (s *runState) dispatchToolCalls(ctx context.Context, response *llm.LLMResponse, iteration int, progressStartIdx int, results []toolExecResult) {
 	if s.cfg.EnableReadWriteSplit {
 		var readOps, writeOps, subAgentOps []toolCallEntry
 		for idx, tc := range response.ToolCalls {
@@ -1310,7 +1330,7 @@ func (s *runState) executeToolCalls(ctx context.Context, response *llm.LLMRespon
 		}
 
 		if len(subAgentOps) > 0 {
-			executeSubAgentOps(subAgentOps, execOne, s.cfg.SubAgentSem, s.autoNotify)
+			s.runSubAgentOps(ctx, subAgentOps, progressStartIdx, results)
 		}
 		if len(readOps) > 0 {
 			const maxParallel = 8
@@ -1323,7 +1343,7 @@ func (s *runState) executeToolCalls(ctx context.Context, response *llm.LLMRespon
 					defer clipanic.Recover("agent.executeToolCalls.readOp", e.tc, false)
 					defer wg.Done()
 					defer func() { <-sem }()
-					execOne(e)
+					s.execOneToolCall(ctx, e, progressStartIdx, results)
 				}(entry)
 			}
 			wg.Wait()
@@ -1332,7 +1352,7 @@ func (s *runState) executeToolCalls(ctx context.Context, response *llm.LLMRespon
 			}
 		}
 		for _, entry := range writeOps {
-			execOne(entry)
+			s.execOneToolCall(ctx, entry, progressStartIdx, results)
 			if s.autoNotify && !s.batchProgressByIteration {
 				s.notifyProgress("")
 			}
@@ -1349,24 +1369,28 @@ func (s *runState) executeToolCalls(ctx context.Context, response *llm.LLMRespon
 		}
 
 		if len(subAgentOps) > 0 {
-			executeSubAgentOps(subAgentOps, execOne, s.cfg.SubAgentSem, s.autoNotify)
+			s.runSubAgentOps(ctx, subAgentOps, progressStartIdx, results)
 		}
 		for _, entry := range otherOps {
-			execOne(entry)
+			s.execOneToolCall(ctx, entry, progressStartIdx, results)
 			if s.autoNotify && !s.batchProgressByIteration {
 				s.notifyProgress("")
 			}
 		}
 	} else {
 		for idx, tc := range response.ToolCalls {
-			execOne(toolCallEntry{iteration: iteration, index: idx, tc: tc})
+			s.execOneToolCall(ctx, toolCallEntry{iteration: iteration, index: idx, tc: tc}, progressStartIdx, results)
 			if s.autoNotify && !s.batchProgressByIteration {
 				s.notifyProgress("")
 			}
 		}
 	}
+}
 
-	// Update structured progress: all tools completed
+// finalizeToolCallProgress moves active tools to completed, creates an iteration
+// snapshot for structured-progress consumers, and sends a final progress
+// notification.
+func (s *runState) finalizeToolCallProgress(iteration int) {
 	if s.structuredProgress != nil {
 		s.structuredProgress.CompletedTools = append(s.structuredProgress.CompletedTools, s.structuredProgress.ActiveTools...)
 		s.structuredProgress.ActiveTools = nil
@@ -1399,8 +1423,6 @@ func (s *runState) executeToolCalls(ctx context.Context, response *llm.LLMRespon
 	if s.autoNotify && s.batchProgressByIteration {
 		s.notifyProgress("")
 	}
-
-	return execResults
 }
 
 // processToolResults handles offload, OAuth, waiting user, and stale invalidation

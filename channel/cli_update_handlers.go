@@ -13,40 +13,15 @@ import (
 // Returns (model, cmds, handled). If handled is true, the caller should return
 // immediately; otherwise, post-switch processing (viewport/textarea update) should continue.
 func (m *cliModel) handleKeyPress(msg tea.KeyPressMsg, wasTyping bool) (tea.Model, []tea.Cmd, bool) {
-	var cmds []tea.Cmd
 
 	// 🥚 When easter egg overlay is active, any key dismisses it (except Ctrl+C, already handled above)
 	if m.easterEgg != easterEggNone {
 		return m, []tea.Cmd{func() tea.Msg { return easterEggDoneMsg{} }}, true
 	}
 
-	// 🥚 Konami Code easter egg: listen for arrow keys and letter keys
-	if m.easterEgg == easterEggNone {
-		konamiKey := ""
-		switch msg.Code {
-		case tea.KeyUp:
-			konamiKey = "up"
-		case tea.KeyDown:
-			konamiKey = "down"
-		case tea.KeyLeft:
-			konamiKey = "left"
-		case tea.KeyRight:
-			konamiKey = "right"
-		}
-		// Detect letter keys B and A
-		if len(msg.Text) == 1 {
-			switch msg.Text[0] {
-			case 'b', 'B':
-				konamiKey = "b"
-			case 'a', 'A':
-				konamiKey = "a"
-			}
-		}
-		if konamiKey != "" && m.checkKonami(konamiKey) {
-			// Konami Code full sequence match!
-			cmd := m.activateEasterEgg(easterEggKonami)
-			return m, []tea.Cmd{cmd}, true
-		}
+	// 🥚 Konami Code easter egg detection
+	if handled, konamiCmd := m.handleKonamiCode(msg); handled {
+		return m, konamiCmd, true
 	}
 
 	// NOTE: Ctrl+C is handled at the top of Update() — never handle it here.
@@ -57,22 +32,7 @@ func (m *cliModel) handleKeyPress(msg tea.KeyPressMsg, wasTyping bool) (tea.Mode
 		return m, nil, true
 
 	case msg.Code == tea.KeyEsc:
-		// Esc: clear input when idle; cancel queue editing or clear input when processing
-		if m.queueEditing {
-			m.queueEditing = false
-			m.queueEditBuf = ""
-			m.textarea.SetValue("")
-			return m, nil, true
-		}
-		if !m.typing {
-			if m.textarea.Value() != "" {
-				m.textarea.Reset()
-				m.inputHistoryIdx = -1
-				m.inputDraft = ""
-				m.autoExpandInput()
-			}
-		}
-		return m, nil, true
+		return m.handleEscKey()
 
 	case msg.String() == "ctrl+p":
 		// Ctrl+P: Quick switch subscription
@@ -113,38 +73,7 @@ func (m *cliModel) handleKeyPress(msg tea.KeyPressMsg, wasTyping bool) (tea.Mode
 		}
 
 	case msg.Code == tea.KeyUp && msg.Mod == tea.ModShift:
-		// Shift+Up: recall queued message for editing / browse input history.
-		if m.panelMode == "" && m.textarea.Value() != "" {
-			return m, nil, true
-		}
-		if !m.viewport.AtBottom() {
-			return m, nil, true
-		}
-		// §Q Message queue: Shift+Up during typing to recall last queued message for editing
-		if m.panelMode == "" && m.typing && !m.inputReady && len(m.messageQueue) > 0 {
-			if !m.queueEditing && m.textarea.Value() == "" {
-				// Recall last queued message
-				m.queueEditing = true
-				m.queueEditBuf = m.messageQueue[len(m.messageQueue)-1]
-				m.textarea.SetValue(m.queueEditBuf)
-				m.autoExpandInput()
-				return m, nil, true
-			}
-		}
-		if m.panelMode == "" && !m.typing {
-			// Browse history when input is empty
-			if m.textarea.Value() == "" && len(m.inputHistory) > 0 {
-				if m.inputHistoryIdx == -1 {
-					m.inputDraft = "" // Save empty draft
-					m.inputHistoryIdx = 0
-				} else if m.inputHistoryIdx < len(m.inputHistory)-1 {
-					m.inputHistoryIdx++
-				}
-				m.textarea.SetValue(m.inputHistory[m.inputHistoryIdx])
-				m.autoExpandInput()
-				return m, nil, true
-			}
-		}
+		return m.handleShiftUp()
 
 	case msg.Code == tea.KeyUp:
 		// Plain ArrowUp: only viewport scroll (no queue recall / history).
@@ -159,24 +88,7 @@ func (m *cliModel) handleKeyPress(msg tea.KeyPressMsg, wasTyping bool) (tea.Mode
 		}
 
 	case msg.Code == tea.KeyDown && msg.Mod == tea.ModShift:
-		// Shift+Down: browse input history backwards.
-		if m.panelMode == "" && m.textarea.Value() != "" {
-			return m, nil, true
-		}
-		if !m.viewport.AtBottom() {
-			return m, nil, true
-		}
-		if m.panelMode == "" && !m.typing && m.inputHistoryIdx >= 0 {
-			if m.inputHistoryIdx > 0 {
-				m.inputHistoryIdx--
-				m.textarea.SetValue(m.inputHistory[m.inputHistoryIdx])
-			} else {
-				m.inputHistoryIdx = -1
-				m.textarea.SetValue(m.inputDraft)
-			}
-			m.autoExpandInput()
-			return m, nil, true
-		}
+		return m.handleShiftDown()
 
 	case msg.Code == tea.KeyDown:
 		// Plain ArrowDown: only viewport scroll.
@@ -189,88 +101,7 @@ func (m *cliModel) handleKeyPress(msg tea.KeyPressMsg, wasTyping bool) (tea.Mode
 		}
 
 	case msg.Code == tea.KeyEnter:
-		// Plain Enter sends. Modified/newline-intent variants should fall through to
-		// the textarea so its native multiline/internal-scroll behavior works,
-		// especially once the input reaches MaxHeight.
-		// Note: ctrl+j is handled earlier in Update() via isCtrlJ() → InsertString("\n").
-		// Note: cycleModel uses Ctrl+N (not Ctrl+M), so no need to intercept here.
-		// Enter sends message
-		if !m.inputReady {
-			// §Q Message queue: allow queuing messages during typing
-			if m.queueEditing {
-				// Editing queued message → save edit result
-				m.messageQueue[len(m.messageQueue)-1] = m.textarea.Value()
-				m.queueEditing = false
-				m.queueEditBuf = ""
-				m.textarea.SetValue("")
-				return m, nil, true
-			}
-			if m.textarea.Value() != "" {
-				m.messageQueue = append(m.messageQueue, m.textarea.Value())
-				m.textarea.SetValue("")
-				// Show queue hint
-				if len(m.messageQueue) == 1 {
-					m.showTempStatus(fmt.Sprintf(m.locale.MessageQueuedUp, len(m.messageQueue)))
-				} else {
-					m.showTempStatus(fmt.Sprintf(m.locale.MessageQueued, len(m.messageQueue)))
-				}
-				return m, nil, true
-			}
-			return m, nil, true
-		}
-		// §8b @ mode: Enter enters directory or confirms file
-		// Check fileCompletions even without Tab (fileCompActive=false):
-		// typing @path auto-populates completions via input change handler.
-		if len(m.fileCompletions) > 0 {
-			input := m.textarea.Value()
-			if ok, prefix := detectAtPrefix(input); ok {
-				selected := m.fileCompletions[m.fileCompIdx]
-				atStart := len(input) - len(prefix) - 1
-				if isDir(selected) {
-					newInput := input[:atStart] + "@" + selected + "/"
-					m.textarea.SetValue(newInput)
-					m.fileCompActive = false
-					m.populateFileCompletions(selected + "/")
-				} else {
-					newInput := input[:atStart] + "@" + selected + " "
-					m.textarea.SetValue(newInput)
-					m.fileCompActive = false
-					m.fileCompletions = nil
-					m.fileCompIdx = 0
-				}
-				return m, nil, true
-			}
-		}
-		content := strings.TrimSpace(m.textarea.Value())
-		if content != "" {
-			// §22 Input history: save sent content (deduplicated, don't save / commands and empty input)
-			if !strings.HasPrefix(content, "/") {
-				if len(m.inputHistory) == 0 || m.inputHistory[0] != content {
-					m.inputHistory = append([]string{content}, m.inputHistory...)
-					if len(m.inputHistory) > inputHistoryMax {
-						m.inputHistory = m.inputHistory[:inputHistoryMax]
-					}
-				}
-			}
-			m.inputHistoryIdx = -1
-			m.inputDraft = ""
-			if m.allTodosDone() {
-				m.todos = nil
-				m.todosDoneCleared = true
-				m.relayoutViewport() // TODO 清除，恢复 viewport 高度
-			}
-			// Send message (easter egg may return animation cmd)
-			if cmd := m.sendMessage(content); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			m.textarea.Reset()
-			m.autoExpandInput()
-			m.viewport.GotoBottom()
-			m.newContentHint = false
-		}
-		// NOTE: tick chain is started by startAgentTurn() inside sendMessage().
-		// No need to emit tickCmd() here — doing so would create duplicate chains.
-		return m, cmds, true
+		return m.handleEnterKey()
 
 	case msg.Code == tea.KeyTab:
 		// §8 Tab command completion
@@ -296,6 +127,208 @@ func (m *cliModel) handleKeyPress(msg tea.KeyPressMsg, wasTyping bool) (tea.Mode
 
 	// Unhandled key — let post-switch processing handle it (viewport/textarea update)
 	return m, nil, false
+}
+
+// handleKonamiCode checks for Konami Code easter egg key sequence.
+// Returns (handled, cmds). If handled is true, the key event is consumed.
+func (m *cliModel) handleKonamiCode(msg tea.KeyPressMsg) (bool, []tea.Cmd) {
+	if m.easterEgg != easterEggNone {
+		return false, nil
+	}
+	konamiKey := ""
+	switch msg.Code {
+	case tea.KeyUp:
+		konamiKey = "up"
+	case tea.KeyDown:
+		konamiKey = "down"
+	case tea.KeyLeft:
+		konamiKey = "left"
+	case tea.KeyRight:
+		konamiKey = "right"
+	}
+	// Detect letter keys B and A
+	if len(msg.Text) == 1 {
+		switch msg.Text[0] {
+		case 'b', 'B':
+			konamiKey = "b"
+		case 'a', 'A':
+			konamiKey = "a"
+		}
+	}
+	if konamiKey != "" && m.checkKonami(konamiKey) {
+		// Konami Code full sequence match!
+		cmd := m.activateEasterEgg(easterEggKonami)
+		return true, []tea.Cmd{cmd}
+	}
+	return false, nil
+}
+
+// handleEscKey handles the Escape key: clears input when idle,
+// cancels queue editing, or clears input during processing.
+func (m *cliModel) handleEscKey() (tea.Model, []tea.Cmd, bool) {
+	if m.queueEditing {
+		m.queueEditing = false
+		m.queueEditBuf = ""
+		m.textarea.SetValue("")
+		return m, nil, true
+	}
+	if !m.typing {
+		if m.textarea.Value() != "" {
+			m.textarea.Reset()
+			m.inputHistoryIdx = -1
+			m.inputDraft = ""
+			m.autoExpandInput()
+		}
+	}
+	return m, nil, true
+}
+
+// handleShiftUp handles Shift+Up: recalls queued messages for editing
+// and browses input history when idle.
+func (m *cliModel) handleShiftUp() (tea.Model, []tea.Cmd, bool) {
+	if m.panelMode == "" && m.textarea.Value() != "" {
+		return m, nil, true
+	}
+	if !m.viewport.AtBottom() {
+		return m, nil, true
+	}
+	// §Q Message queue: Shift+Up during typing to recall last queued message for editing
+	if m.panelMode == "" && m.typing && !m.inputReady && len(m.messageQueue) > 0 {
+		if !m.queueEditing && m.textarea.Value() == "" {
+			// Recall last queued message
+			m.queueEditing = true
+			m.queueEditBuf = m.messageQueue[len(m.messageQueue)-1]
+			m.textarea.SetValue(m.queueEditBuf)
+			m.autoExpandInput()
+			return m, nil, true
+		}
+	}
+	if m.panelMode == "" && !m.typing {
+		// Browse history when input is empty
+		if m.textarea.Value() == "" && len(m.inputHistory) > 0 {
+			if m.inputHistoryIdx == -1 {
+				m.inputDraft = "" // Save empty draft
+				m.inputHistoryIdx = 0
+			} else if m.inputHistoryIdx < len(m.inputHistory)-1 {
+				m.inputHistoryIdx++
+			}
+			m.textarea.SetValue(m.inputHistory[m.inputHistoryIdx])
+			m.autoExpandInput()
+			return m, nil, true
+		}
+	}
+	return m, nil, false
+}
+
+// handleShiftDown handles Shift+Down: browses input history backwards.
+func (m *cliModel) handleShiftDown() (tea.Model, []tea.Cmd, bool) {
+	if m.panelMode == "" && m.textarea.Value() != "" {
+		return m, nil, true
+	}
+	if !m.viewport.AtBottom() {
+		return m, nil, true
+	}
+	if m.panelMode == "" && !m.typing && m.inputHistoryIdx >= 0 {
+		if m.inputHistoryIdx > 0 {
+			m.inputHistoryIdx--
+			m.textarea.SetValue(m.inputHistory[m.inputHistoryIdx])
+		} else {
+			m.inputHistoryIdx = -1
+			m.textarea.SetValue(m.inputDraft)
+		}
+		m.autoExpandInput()
+		return m, nil, true
+	}
+	return m, nil, false
+}
+
+// handleEnterKey handles the Enter key: message queuing during processing,
+// @ file completion, and message sending.
+func (m *cliModel) handleEnterKey() (tea.Model, []tea.Cmd, bool) {
+	var cmds []tea.Cmd
+
+	// Plain Enter sends. Modified/newline-intent variants should fall through to
+	// the textarea so its native multiline/internal-scroll behavior works,
+	// especially once the input reaches MaxHeight.
+	// Note: ctrl+j is handled earlier in Update() via isCtrlJ() → InsertString("\n").
+	// Note: cycleModel uses Ctrl+N (not Ctrl+M), so no need to intercept here.
+	// Enter sends message
+	if !m.inputReady {
+		// §Q Message queue: allow queuing messages during typing
+		if m.queueEditing {
+			// Editing queued message → save edit result
+			m.messageQueue[len(m.messageQueue)-1] = m.textarea.Value()
+			m.queueEditing = false
+			m.queueEditBuf = ""
+			m.textarea.SetValue("")
+			return m, nil, true
+		}
+		if m.textarea.Value() != "" {
+			m.messageQueue = append(m.messageQueue, m.textarea.Value())
+			m.textarea.SetValue("")
+			// Show queue hint
+			if len(m.messageQueue) == 1 {
+				m.showTempStatus(fmt.Sprintf(m.locale.MessageQueuedUp, len(m.messageQueue)))
+			} else {
+				m.showTempStatus(fmt.Sprintf(m.locale.MessageQueued, len(m.messageQueue)))
+			}
+			return m, nil, true
+		}
+		return m, nil, true
+	}
+	// §8b @ mode: Enter enters directory or confirms file
+	// Check fileCompletions even without Tab (fileCompActive=false):
+	// typing @path auto-populates completions via input change handler.
+	if len(m.fileCompletions) > 0 {
+		input := m.textarea.Value()
+		if ok, prefix := detectAtPrefix(input); ok {
+			selected := m.fileCompletions[m.fileCompIdx]
+			atStart := len(input) - len(prefix) - 1
+			if isDir(selected) {
+				newInput := input[:atStart] + "@" + selected + "/"
+				m.textarea.SetValue(newInput)
+				m.fileCompActive = false
+				m.populateFileCompletions(selected + "/")
+			} else {
+				newInput := input[:atStart] + "@" + selected + " "
+				m.textarea.SetValue(newInput)
+				m.fileCompActive = false
+				m.fileCompletions = nil
+				m.fileCompIdx = 0
+			}
+			return m, nil, true
+		}
+	}
+	content := strings.TrimSpace(m.textarea.Value())
+	if content != "" {
+		// §22 Input history: save sent content (deduplicated, don't save / commands and empty input)
+		if !strings.HasPrefix(content, "/") {
+			if len(m.inputHistory) == 0 || m.inputHistory[0] != content {
+				m.inputHistory = append([]string{content}, m.inputHistory...)
+				if len(m.inputHistory) > inputHistoryMax {
+					m.inputHistory = m.inputHistory[:inputHistoryMax]
+				}
+			}
+		}
+		m.inputHistoryIdx = -1
+		m.inputDraft = ""
+		if m.allTodosDone() {
+			m.todos = nil
+			m.todosDoneCleared = true
+			m.relayoutViewport() // TODO 清除，恢复 viewport 高度
+		}
+		// Send message (easter egg may return animation cmd)
+		if cmd := m.sendMessage(content); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		m.textarea.Reset()
+		m.autoExpandInput()
+		m.viewport.GotoBottom()
+		m.newContentHint = false
+	}
+	// NOTE: tick chain is started by startAgentTurn() inside sendMessage().
+	// No need to emit tickCmd() here — doing so would create duplicate chains.
+	return m, cmds, true
 }
 
 // handleProgressMsg processes progress update events from the agent.

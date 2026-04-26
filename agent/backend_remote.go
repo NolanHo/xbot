@@ -33,6 +33,11 @@ const (
 	wsCloseTimeout     = 30 * time.Second  // Graceful close timeout
 )
 
+// isNilJSON returns true if the raw JSON bytes are empty or contain a JSON null.
+func isNilJSON(raw json.RawMessage) bool {
+	return isNilJSON(raw)
+}
+
 // ---------------------------------------------------------------------------
 // RPC protocol types (shared between RemoteBackend client and server handler)
 // ---------------------------------------------------------------------------
@@ -254,7 +259,7 @@ func (b *RemoteBackend) GetActiveProgress(ch, chatID string) *channel.CLIProgres
 	raw, err := b.callRPC("get_active_progress", map[string]string{
 		"channel": ch, "chat_id": chatID,
 	})
-	if err != nil || len(raw) == 0 || string(raw) == "null" {
+	if err != nil || isNilJSON(raw) {
 		return nil
 	}
 	var payload channel.CLIProgressPayload
@@ -798,7 +803,7 @@ func (b *RemoteBackend) callRPCString(method string, params any) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return "", nil
 	}
 	var s string
@@ -821,7 +826,7 @@ func (b *RemoteBackend) GetSessionMessages(channelName, chatID, roleName, instan
 	if err != nil {
 		return nil, false
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, false
 	}
 	var msgs []SessionMessage
@@ -839,7 +844,7 @@ func (b *RemoteBackend) GetAgentSessionDump(channelName, chatID, roleName, insta
 	if err != nil {
 		return nil, false
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, false
 	}
 	var dump AgentSessionDump
@@ -856,7 +861,7 @@ func (b *RemoteBackend) GetAgentSessionDumpByFullKey(fullKey string) (*AgentSess
 	if err != nil {
 		return nil, false
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, false
 	}
 	var dump AgentSessionDump
@@ -871,7 +876,7 @@ func (b *RemoteBackend) callRPCInt(method string, params any) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return 0, nil
 	}
 	var n int
@@ -1021,7 +1026,7 @@ func (b *RemoteBackend) CountInteractiveSessions(channelName, chatID string) int
 
 func (b *RemoteBackend) ListInteractiveSessions(channelName, chatID string) []InteractiveSessionInfo {
 	raw, err := b.callRPC("list_interactive_sessions", map[string]string{"channel": channelName, "chat_id": chatID})
-	if err != nil || len(raw) == 0 || string(raw) == "null" {
+	if err != nil || isNilJSON(raw) {
 		return nil
 	}
 	var result []InteractiveSessionInfo
@@ -1040,7 +1045,7 @@ func (b *RemoteBackend) InspectInteractiveSession(ctx context.Context, roleName,
 	if err != nil {
 		return "", err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return "", nil
 	}
 	var s string
@@ -1059,7 +1064,7 @@ func (b *RemoteBackend) GetSettings(namespace, senderID string) (map[string]stri
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result map[string]string
@@ -1077,7 +1082,7 @@ func (b *RemoteBackend) SetSetting(namespace, senderID, key, value string) error
 
 func (b *RemoteBackend) ListModels() []string {
 	raw, err := b.callRPC("list_models", nil)
-	if err != nil || len(raw) == 0 || string(raw) == "null" {
+	if err != nil || isNilJSON(raw) {
 		return nil
 	}
 	var result []string
@@ -1090,7 +1095,7 @@ func (b *RemoteBackend) ListModels() []string {
 
 func (b *RemoteBackend) ListAllModels() []string {
 	raw, err := b.callRPC("list_all_models", nil)
-	if err != nil || len(raw) == 0 || string(raw) == "null" {
+	if err != nil || isNilJSON(raw) {
 		return nil
 	}
 	var result []string
@@ -1125,7 +1130,7 @@ func (b *RemoteBackend) GetMemoryStats(ctx context.Context, ch, chatID, senderID
 	raw, err := b.callRPC("get_memory_stats", map[string]string{
 		"channel": ch, "chat_id": chatID,
 	})
-	if err != nil || len(raw) == 0 || string(raw) == "null" {
+	if err != nil || isNilJSON(raw) {
 		return nil
 	}
 	var result map[string]string
@@ -1141,7 +1146,7 @@ func (b *RemoteBackend) GetUserTokenUsage(senderID string) (map[string]any, erro
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result map[string]any
@@ -1156,7 +1161,7 @@ func (b *RemoteBackend) GetDailyTokenUsage(senderID string, days int) ([]map[str
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result []map[string]any
@@ -1188,7 +1193,7 @@ func (b *RemoteBackend) ListBgTasks(sessionKey string) ([]BgTaskJSON, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result []BgTaskJSON
@@ -1220,7 +1225,7 @@ func (b *RemoteBackend) ListTenants() ([]TenantInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result []TenantInfo
@@ -1235,7 +1240,7 @@ func (b *RemoteBackend) ListSubscriptions(senderID string) ([]channel.Subscripti
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result []channel.Subscription
@@ -1250,7 +1255,7 @@ func (b *RemoteBackend) GetDefaultSubscription(senderID string) (*channel.Subscr
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result channel.Subscription
@@ -1295,7 +1300,7 @@ func (b *RemoteBackend) GetHistory(ch, chatID string) ([]channel.HistoryMessage,
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result []channel.HistoryMessage
@@ -1335,7 +1340,7 @@ func (b *RemoteBackend) GetChannelConfigs() (map[string]map[string]string, error
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) == 0 || string(raw) == "null" {
+	if isNilJSON(raw) {
 		return nil, nil
 	}
 	var result map[string]map[string]string

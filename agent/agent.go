@@ -1561,6 +1561,94 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 // processMessage processes a single inbound message
 
 func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bus.OutboundMessage, error) {
+	// Preprocess: request ID, user context, logging, media attachment
+	ctx, msg = a.preprocessMessage(ctx, msg)
+
+	// Cron messages use independent processing flow (no history context, no message update tracking)
+	if msg.IsCron {
+		return a.processCronMessage(ctx, msg)
+	}
+
+	// Initialize session message tracking and get/create tenant session
+	tenantSession, err := a.initMessageSession(ctx, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Command matching: dispatched uniformly via CommandRegistry
+	if cmd := a.commands.Match(msg.Content); cmd != nil {
+		log.Ctx(ctx).WithFields(log.Fields{
+			"channel": msg.Channel,
+			"command": cmd.Name(),
+		}).Info("Command matched")
+		return cmd.Execute(ctx, a, msg)
+	}
+
+	// Handle card responses (button clicks, form submissions)
+	if msg.Metadata != nil && msg.Metadata["card_response"] == "true" {
+		return a.handleCardResponse(ctx, msg, tenantSession)
+	}
+
+	preReplyNotify := bus.ShouldPreReplyNotify(msg.Metadata) && msg.Channel != "cli"
+	replyPolicy := bus.InboundReplyPolicy(msg.Metadata)
+
+	// Immediately send a random acknowledgment reply
+	if preReplyNotify {
+		a.sendAck(msg.Channel, msg.ChatID)
+	}
+
+	// Build LLM messages (inject long-term memory, skills)
+	messages, err := a.buildPrompt(ctx, msg, tenantSession)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle AskUser reply: replace tool message content with user's answer
+	messages, askUserAnswered := a.handleAskUserReply(ctx, msg, messages, tenantSession)
+
+	// Eager-save user message before Run() so engine messages appear after it
+	a.eagerSaveUserMsg(ctx, msg, askUserAnswered, tenantSession)
+
+	// Build run config
+	cfg := a.buildMainRunConfig(ctx, msg, messages, tenantSession, preReplyNotify)
+	// Restore token count from last Run() to ensure maybeCompress can use accurate values
+	if extras := cfg.ToolContextExtras; extras != nil && extras.MemorySvc != nil && extras.TenantID != 0 {
+		if pt, ct, err := extras.MemorySvc.GetTokenState(ctx, extras.TenantID); err == nil && pt > 0 {
+			cfg.LastPromptTokens = pt
+			cfg.LastCompletionTokens = ct
+		}
+	}
+
+	// Inject running background tasks / interactive agents / groups into last user message
+	messages = a.injectActiveContextNotes(ctx, msg, messages)
+
+	// Wire drain callback for bg notifications (session-scoped filtering)
+	a.wireBgNotificationDrain(&cfg, msg.Channel+":"+msg.ChatID)
+
+	// Emit session events (start now, defer end)
+	emitEnd := a.emitSessionStartEvent(ctx, msg, &cfg)
+	defer emitEnd()
+
+	// Mark Run as active so bgNotifyLoop buffers notifications
+	atomic.StoreInt32(&a.bgRunActive, 1)
+	out := Run(ctx, cfg)
+	atomic.StoreInt32(&a.bgRunActive, 0)
+
+	// Drain remaining bg notifications that arrived after Run's last iteration
+	a.drainRemainingNotifications()
+
+	// Handle Run errors (cancellation, general errors)
+	if handled, outbound, err := a.handleRunError(ctx, msg, out, tenantSession); handled {
+		return outbound, err
+	}
+
+	// Finalize output: persist assistant message, send reply, add reaction
+	return a.finalizeRunOutput(ctx, msg, out, tenantSession, replyPolicy)
+}
+
+// preprocessMessage sets up request context (request ID, user ID), logs a preview,
+// and appends media file references to the message content.
+func (a *Agent) preprocessMessage(ctx context.Context, msg bus.InboundMessage) (context.Context, bus.InboundMessage) {
 	// Use the requestID carried by the message (generated when channel receives the message), generate new one if absent
 	reqID := msg.RequestID
 	if reqID == "" {
@@ -1592,11 +1680,13 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 		msg.Content += ref.String()
 	}
 
-	// Cron messages use independent processing flow (no history context, no message update tracking)
-	if msg.IsCron {
-		return a.processCronMessage(ctx, msg)
-	}
+	return ctx, msg
+}
 
+// initMessageSession initializes session message tracking, creates or retrieves
+// the tenant session, configures tenant-scoped stores, and caches the message
+// to chat history.
+func (a *Agent) initMessageSession(ctx context.Context, msg bus.InboundMessage) (*session.TenantSession, error) {
 	// Initialize session message tracking: clear old sent message IDs, record inbound message ID for first reply
 	key := msg.Channel + ":" + msg.ChatID
 	a.sessionMsgIDs.Delete(key)
@@ -1613,7 +1703,7 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 		return nil, fmt.Errorf("get/create tenant session: %w", err)
 	}
 
-	// Set tenant-scoped stores for this request.
+	// Set tenant-scoped stores for this request
 	tenantID := tenantSession.TenantID()
 	if a.contextEditor != nil {
 		a.contextEditor.SetTenantID(tenantID)
@@ -1630,164 +1720,140 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 		"sender":  msg.SenderID,
 	}).Debug("Message cached to chat history")
 
-	// Command matching: dispatched uniformly via CommandRegistry
-	if cmd := a.commands.Match(msg.Content); cmd != nil {
-		log.Ctx(ctx).WithFields(log.Fields{
-			"channel": msg.Channel,
-			"command": cmd.Name(),
-		}).Info("Command matched")
-		return cmd.Execute(ctx, a, msg)
-	}
+	return tenantSession, nil
+}
 
-	// Handle card responses (button clicks, form submissions)
-	if msg.Metadata != nil && msg.Metadata["card_response"] == "true" {
-		return a.handleCardResponse(ctx, msg, tenantSession)
-	}
-
-	preReplyNotify := bus.ShouldPreReplyNotify(msg.Metadata) && msg.Channel != "cli"
-	replyPolicy := bus.InboundReplyPolicy(msg.Metadata)
-
-	// Immediately send a random acknowledgment reply
-	if preReplyNotify {
-		a.sendAck(msg.Channel, msg.ChatID)
-	}
-
-	// Build LLM messages (inject long-term memory, skills)
-	messages, err := a.buildPrompt(ctx, msg, tenantSession)
-	if err != nil {
-		return nil, err
-	}
-
+// handleAskUserReply processes AskUser answer messages by removing the appended
+// user message and replacing the most recent AskUser tool message content with
+// the user's answer. Returns the modified messages slice and whether this was
+// an AskUser answer.
+func (a *Agent) handleAskUserReply(ctx context.Context, msg bus.InboundMessage, messages []llm.ChatMessage, tenantSession *session.TenantSession) ([]llm.ChatMessage, bool) {
 	// AskUser reply is not a new user message, but replaces the AskUser tool result.
-	// Remove the user message appended by Assemble, and precisely replace the most recent AskUser tool message.
 	askUserAnswered := msg.Metadata != nil && msg.Metadata["ask_user_answered"] == "true"
-	if askUserAnswered {
-		// Remove last user message appended by Assemble
-		if len(messages) > 0 && messages[len(messages)-1].Role == "user" {
-			messages = messages[:len(messages)-1]
+	if !askUserAnswered {
+		return messages, false
+	}
+
+	// Remove last user message appended by Assemble
+	if len(messages) > 0 && messages[len(messages)-1].Role == "user" {
+		messages = messages[:len(messages)-1]
+	}
+	// Replace the most recent AskUser tool message content with user's answer.
+	foundAskUserTool := false
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "tool" {
+			continue
 		}
-		// Replace the most recent AskUser tool message content with user's answer.
-		foundAskUserTool := false
+		if messages[i].ToolName != "AskUser" {
+			continue
+		}
+		messages[i].Content = msg.Content
+		foundAskUserTool = true
+		break
+	}
+	if !foundAskUserTool {
+		log.Ctx(ctx).Warn("AskUser answer received but no matching AskUser tool message found in prompt history")
+	}
+	// Also update the stale tool result in session so future buildPrompt reads correct content.
+	if err := tenantSession.ReplaceToolMessage("AskUser", "", msg.Content); err != nil {
+		log.Ctx(ctx).WithError(err).Warn("Failed to replace AskUser tool result in session")
+	}
+
+	return messages, true
+}
+
+// eagerSaveUserMsg saves the user message to the session before Run() executes,
+// ensuring incrementally persisted assistant/tool messages appear after it in the DB.
+func (a *Agent) eagerSaveUserMsg(ctx context.Context, msg bus.InboundMessage, askUserAnswered bool, tenantSession *session.TenantSession) {
+	if askUserAnswered || (msg.Metadata != nil && msg.Metadata["user_msg_eager_saved"] == "true") {
+		return
+	}
+	userMsg := llm.NewUserMessage(msg.Content)
+	if !msg.Time.IsZero() {
+		userMsg.Timestamp = msg.Time
+	}
+	if err := tenantSession.AddMessage(userMsg); err != nil {
+		log.Ctx(ctx).WithError(err).WithFields(log.Fields{
+			"channel": msg.Channel,
+			"chat_id": msg.ChatID,
+			"sender":  msg.SenderID,
+			"content": msg.Content,
+		}).Warn("Failed to eager-save user message")
+	}
+}
+
+// injectActiveContextNotes appends system notes about running background tasks,
+// active interactive agents, and active group chats to the last user message
+// so the LLM is aware of current activity.
+func (a *Agent) injectActiveContextNotes(ctx context.Context, msg bus.InboundMessage, messages []llm.ChatMessage) []llm.ChatMessage {
+	var systemNotes []string
+
+	// Background tasks
+	if a.bgTaskMgr != nil {
+		sessionKey := msg.Channel + ":" + msg.ChatID
+		running := a.bgTaskMgr.ListRunning(sessionKey)
+		if len(running) > 0 {
+			var ids []string
+			for _, t := range running {
+				ids = append(ids, t.ID)
+			}
+			systemNotes = append(systemNotes, fmt.Sprintf("Running background tasks: %s", strings.Join(ids, ", ")))
+		}
+	}
+
+	// Interactive agent sessions
+	sessions := a.ListInteractiveSessions(msg.Channel, msg.ChatID)
+	if len(sessions) > 0 {
+		var agentParts []string
+		for _, s := range sessions {
+			status := "idle"
+			if s.Running {
+				status = "running"
+			}
+			mode := "fg"
+			if s.Background {
+				mode = "bg"
+			}
+			agentParts = append(agentParts, fmt.Sprintf("%s/%s(%s,%s)", s.Role, s.Instance, mode, status))
+		}
+		systemNotes = append(systemNotes, fmt.Sprintf("Active interactive agents: %s", strings.Join(agentParts, ", ")))
+	}
+
+	// Active group chats
+	groups := tools.ListGroups()
+	if len(groups) > 0 {
+		var groupParts []string
+		for _, g := range groups {
+			status := "open"
+			if g.Closed {
+				status = "closed"
+			}
+			members := strings.Join(g.Members, ",")
+			groupParts = append(groupParts, fmt.Sprintf("%s(%s, %d members: %s)", g.Name, status, len(g.Members), members))
+		}
+		systemNotes = append(systemNotes, fmt.Sprintf("Groups: %s", strings.Join(groupParts, "; ")))
+	}
+
+	if len(systemNotes) > 0 {
+		info := "\n[System] " + strings.Join(systemNotes, " | ")
+		// Append to a copy of the last user message to avoid mutating session data
 		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role != "tool" {
-				continue
-			}
-			if messages[i].ToolName != "AskUser" {
-				continue
-			}
-			messages[i].Content = msg.Content
-			foundAskUserTool = true
-			break
-		}
-		if !foundAskUserTool {
-			log.Ctx(ctx).Warn("AskUser answer received but no matching AskUser tool message found in prompt history")
-		}
-		// Also update the stale tool result in session so future buildPrompt reads correct content.
-		if err := tenantSession.ReplaceToolMessage("AskUser", "", msg.Content); err != nil {
-			log.Ctx(ctx).WithError(err).Warn("Failed to replace AskUser tool result in session")
-		}
-	}
-
-	// Run Agent loop (unified Run)
-	// Eager-save user message BEFORE Run() so incrementally persisted assistant/tool
-	// messages appear after it in the DB. GetHistory uses user messages as turn boundaries.
-	if !askUserAnswered && (msg.Metadata == nil || msg.Metadata["user_msg_eager_saved"] != "true") {
-		userMsg := llm.NewUserMessage(msg.Content)
-		if !msg.Time.IsZero() {
-			userMsg.Timestamp = msg.Time
-		}
-		if err := tenantSession.AddMessage(userMsg); err != nil {
-			log.Ctx(ctx).WithError(err).WithFields(log.Fields{
-				"channel": msg.Channel,
-				"chat_id": msg.ChatID,
-				"sender":  msg.SenderID,
-				"content": msg.Content,
-			}).Warn("Failed to eager-save user message")
-		}
-	}
-
-	cfg := a.buildMainRunConfig(ctx, msg, messages, tenantSession, preReplyNotify)
-	// Restore token count from last Run() to ensure maybeCompress can use API-accurate values after restart.
-	// Must read from current tenant's DB — Agent-level lastPromptTokens is globally shared,
-	// cross-chat would cause new windows to incorrectly use other chat's token count and trigger compression.
-	if extras := cfg.ToolContextExtras; extras != nil && extras.MemorySvc != nil && extras.TenantID != 0 {
-		if pt, ct, err := extras.MemorySvc.GetTokenState(ctx, extras.TenantID); err == nil && pt > 0 {
-			cfg.LastPromptTokens = pt
-			cfg.LastCompletionTokens = ct
-		}
-	}
-	// Mark Run as active so bgNotifyLoop buffers notifications instead of processing idle
-	atomic.StoreInt32(&a.bgRunActive, 1)
-
-	// Inject running background task IDs into the last user message so the LLM
-	// is aware of active tasks and doesn't try to restart them.
-	{
-		var systemNotes []string
-
-		// Background tasks
-		if a.bgTaskMgr != nil {
-			sessionKey := msg.Channel + ":" + msg.ChatID
-			running := a.bgTaskMgr.ListRunning(sessionKey)
-			if len(running) > 0 {
-				var ids []string
-				for _, t := range running {
-					ids = append(ids, t.ID)
-				}
-				systemNotes = append(systemNotes, fmt.Sprintf("Running background tasks: %s", strings.Join(ids, ", ")))
-			}
-		}
-
-		// Interactive agent sessions
-		sessions := a.ListInteractiveSessions(msg.Channel, msg.ChatID)
-		if len(sessions) > 0 {
-			var agentParts []string
-			for _, s := range sessions {
-				status := "idle"
-				if s.Running {
-					status = "running"
-				}
-				mode := "fg"
-				if s.Background {
-					mode = "bg"
-				}
-				agentParts = append(agentParts, fmt.Sprintf("%s/%s(%s,%s)", s.Role, s.Instance, mode, status))
-			}
-			systemNotes = append(systemNotes, fmt.Sprintf("Active interactive agents: %s", strings.Join(agentParts, ", ")))
-		}
-
-		// Active group chats
-		groups := tools.ListGroups()
-		if len(groups) > 0 {
-			var groupParts []string
-			for _, g := range groups {
-				status := "open"
-				if g.Closed {
-					status = "closed"
-				}
-				members := strings.Join(g.Members, ",")
-				groupParts = append(groupParts, fmt.Sprintf("%s(%s, %d members: %s)", g.Name, status, len(g.Members), members))
-			}
-			systemNotes = append(systemNotes, fmt.Sprintf("Groups: %s", strings.Join(groupParts, "; ")))
-		}
-
-		if len(systemNotes) > 0 {
-			info := "\n[System] " + strings.Join(systemNotes, " | ")
-			// Append to a copy of the last user message to avoid mutating session data
-			for i := len(messages) - 1; i >= 0; i-- {
-				if messages[i].Role == "user" {
-					m := messages[i] // shallow copy
-					m.Content += info
-					messages[i] = m
-					break
-				}
+			if messages[i].Role == "user" {
+				m := messages[i] // shallow copy
+				m.Content += info
+				messages[i] = m
+				break
 			}
 		}
 	}
 
-	// Wire drain callback so Run loop can inject bg notifications as tool messages.
-	// Only return notifications matching THIS session's key. Other sessions' notifications
-	// are put back into the pending list to prevent cross-session contamination.
-	currentSessionKey := msg.Channel + ":" + msg.ChatID
+	return messages
+}
+
+// wireBgNotificationDrain configures the RunConfig's DrainBgNotifications callback
+// to filter and return only notifications matching the given session key.
+// Other sessions' notifications are put back into the pending list.
+func (a *Agent) wireBgNotificationDrain(cfg *RunConfig, sessionKey string) {
 	cfg.DrainBgNotifications = func() []tools.BgNotification {
 		a.bgRunPendingMu.Lock()
 		pending := a.bgRunPending
@@ -1796,7 +1862,7 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 		var mine []tools.BgNotification
 		var others []tools.BgNotification
 		for _, n := range pending {
-			if n.SessionKey() == currentSessionKey {
+			if n.SessionKey() == sessionKey {
 				mine = append(mine, n)
 			} else {
 				others = append(others, n)
@@ -1810,41 +1876,43 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 		}
 		return mine
 	}
+}
 
-	// Emit SessionStart event (notification, non-blocking)
-	if a.hookManager != nil {
-		memoryProvider := ""
-		if cfg.Memory != nil {
-			memoryProvider = fmt.Sprintf("%T", cfg.Memory)
-		}
-		a.hookManager.Emit(ctx, &hooks.SessionStartEvent{
+// emitSessionStartEvent emits the SessionStart hook event and returns a
+// cleanup function that emits the SessionEnd event. The caller should
+// defer the cleanup function.
+func (a *Agent) emitSessionStartEvent(ctx context.Context, msg bus.InboundMessage, cfg *RunConfig) func() {
+	if a.hookManager == nil {
+		return func() {}
+	}
+	memoryProvider := ""
+	if cfg.Memory != nil {
+		memoryProvider = fmt.Sprintf("%T", cfg.Memory)
+	}
+	a.hookManager.Emit(ctx, &hooks.SessionStartEvent{
+		BasePayload: hooks.BasePayload{
+			SessionID: msg.ChatID, Channel: msg.Channel,
+			SenderID: msg.SenderID, ChatID: msg.ChatID,
+		},
+		Source:         msg.Channel,
+		Model:          cfg.Model,
+		MemoryProvider: memoryProvider,
+	})
+	return func() {
+		a.hookManager.Emit(ctx, &hooks.SessionEndEvent{
 			BasePayload: hooks.BasePayload{
 				SessionID: msg.ChatID, Channel: msg.Channel,
 				SenderID: msg.SenderID, ChatID: msg.ChatID,
 			},
-			Source:         msg.Channel,
-			Model:          cfg.Model,
-			MemoryProvider: memoryProvider,
+			Source: msg.Channel,
 		})
 	}
+}
 
-	// Emit SessionEnd event on processMessage exit (notification, non-blocking)
-	if a.hookManager != nil {
-		defer func() {
-			a.hookManager.Emit(ctx, &hooks.SessionEndEvent{
-				BasePayload: hooks.BasePayload{
-					SessionID: msg.ChatID, Channel: msg.Channel,
-					SenderID: msg.SenderID, ChatID: msg.ChatID,
-				},
-				Source: msg.Channel,
-			})
-		}()
-	}
-
-	out := Run(ctx, cfg)
-	atomic.StoreInt32(&a.bgRunActive, 0)
-	// Drain any bg notifications that arrived after Run's last iteration.
-	// Process them as user messages (idle path).
+// drainRemainingNotifications processes any background notifications that
+// arrived after the Run loop's last iteration. Each notification is dispatched
+// through the idle path.
+func (a *Agent) drainRemainingNotifications() {
 	a.bgRunPendingMu.Lock()
 	remaining := a.bgRunPending
 	a.bgRunPending = nil
@@ -1857,51 +1925,66 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 			go a.processSubAgentBgNotification(n)
 		}
 	}
-	if out.Error != nil {
-		// When cancelled, save any un-persisted engine messages from the
-		// interrupted iteration. User message and completed iterations are
-		// already persisted (eager-save + incremental persistence).
-		if errors.Is(out.Error, context.Canceled) {
-			for _, em := range out.EngineMessages {
-				if err := assertNoSystemPersist(em); err != nil {
-					continue
-				}
-				if err := tenantSession.AddMessage(em); err != nil {
-					log.Ctx(ctx).WithError(err).Warn("Failed to save engine message on cancel")
-				}
-			}
-			if len(out.EngineMessages) > 0 {
-				log.Ctx(ctx).Infof("Cancelled: persisted %d un-persisted engine messages", len(out.EngineMessages))
-			}
-			// Save iteration history as an assistant message with detail,
-			// so web UI can restore it on page refresh without showing "loading".
-			if len(out.IterationHistory) > 0 {
-				cancelMsg := llm.NewAssistantMessage("")
-				cancelMsg.DisplayOnly = true
-				if jsonBytes, err := json.Marshal(out.IterationHistory); err == nil {
-					cancelMsg.Detail = string(jsonBytes)
-				}
-				if err := tenantSession.AddMessage(cancelMsg); err != nil {
-					log.Ctx(ctx).WithError(err).Warn("Failed to save cancelled iteration history")
-				}
-			}
-			// Send a minimal outbound so the web channel knows processing ended.
-			// Without this, web stays in "loading" state after cancel on refresh.
-			meta := map[string]string{"cancelled": "true"}
-			if len(out.IterationHistory) > 0 {
-				if jsonBytes, err := json.Marshal(out.IterationHistory); err == nil {
-					meta["progress_history"] = string(jsonBytes)
-				}
-			}
-			return &bus.OutboundMessage{
-				Channel:  msg.Channel,
-				ChatID:   msg.ChatID,
-				Content:  "",
-				Metadata: meta,
-			}, nil
-		}
-		return nil, out.Error
+}
+
+// handleRunError handles errors from the Run loop. For cancellation errors,
+// it persists un-persisted engine messages and iteration history, then returns
+// an outbound message with cancellation metadata. Returns (true, outbound, err)
+// if the error was handled and the caller should return. Returns (false, nil, nil)
+// if there was no error and the caller should continue processing.
+func (a *Agent) handleRunError(ctx context.Context, msg bus.InboundMessage, out *RunOutput, tenantSession *session.TenantSession) (handled bool, outbound *bus.OutboundMessage, err error) {
+	if out.Error == nil {
+		return false, nil, nil
 	}
+	// When cancelled, save any un-persisted engine messages from the
+	// interrupted iteration. User message and completed iterations are
+	// already persisted (eager-save + incremental persistence).
+	if errors.Is(out.Error, context.Canceled) {
+		for _, em := range out.EngineMessages {
+			if err := assertNoSystemPersist(em); err != nil {
+				continue
+			}
+			if err := tenantSession.AddMessage(em); err != nil {
+				log.Ctx(ctx).WithError(err).Warn("Failed to save engine message on cancel")
+			}
+		}
+		if len(out.EngineMessages) > 0 {
+			log.Ctx(ctx).Infof("Cancelled: persisted %d un-persisted engine messages", len(out.EngineMessages))
+		}
+		// Save iteration history as an assistant message with detail,
+		// so web UI can restore it on page refresh without showing "loading".
+		if len(out.IterationHistory) > 0 {
+			cancelMsg := llm.NewAssistantMessage("")
+			cancelMsg.DisplayOnly = true
+			if jsonBytes, err := json.Marshal(out.IterationHistory); err == nil {
+				cancelMsg.Detail = string(jsonBytes)
+			}
+			if err := tenantSession.AddMessage(cancelMsg); err != nil {
+				log.Ctx(ctx).WithError(err).Warn("Failed to save cancelled iteration history")
+			}
+		}
+		// Send a minimal outbound so the web channel knows processing ended.
+		// Without this, web stays in "loading" state after cancel on refresh.
+		meta := map[string]string{"cancelled": "true"}
+		if len(out.IterationHistory) > 0 {
+			if jsonBytes, err := json.Marshal(out.IterationHistory); err == nil {
+				meta["progress_history"] = string(jsonBytes)
+			}
+		}
+		return true, &bus.OutboundMessage{
+			Channel:  msg.Channel,
+			ChatID:   msg.ChatID,
+			Content:  "",
+			Metadata: meta,
+		}, nil
+	}
+	return true, nil, out.Error
+}
+
+// finalizeRunOutput processes the successful output of the Run loop: handles
+// WaitingUser state, empty content scenarios, persists the assistant message,
+// sends the final reply, and adds the completion reaction.
+func (a *Agent) finalizeRunOutput(ctx context.Context, msg bus.InboundMessage, out *RunOutput, tenantSession *session.TenantSession, replyPolicy string) (*bus.OutboundMessage, error) {
 	finalContent := out.Content
 	waitingUser := out.WaitingUser
 
@@ -1916,18 +1999,17 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 		for k, v := range out.Metadata {
 			meta[k] = v
 		}
-		waitOut := &bus.OutboundMessage{
+		return &bus.OutboundMessage{
 			Channel:     msg.Channel,
 			ChatID:      msg.ChatID,
 			Content:     finalContent,
 			WaitingUser: true,
 			Metadata:    meta,
-		}
-		return waitOut, nil
+		}, nil
 	}
 
 	// If final content is empty and not Optional reply strategy, send prompt to user
-	if finalContent == "" && !waitingUser && replyPolicy != bus.ReplyPolicyOptional {
+	if finalContent == "" && replyPolicy != bus.ReplyPolicyOptional {
 		log.Ctx(ctx).Warn("Run produced empty content without waiting for user input")
 		if err := a.sendMessage(msg.Channel, msg.ChatID, "⚠️ 处理完成，但未生成回复内容。请尝试重新描述您的需求。"); err != nil {
 			log.Ctx(ctx).WithError(err).Warn("Failed to send empty content notification")
@@ -1956,7 +2038,6 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 
 	// User message already eager-saved before Run(). Engine messages already
 	// incrementally persisted. Only need to save the final assistant reply.
-
 	assistantMsg := llm.NewAssistantMessage(finalContent)
 	assistantMsg.ReasoningContent = out.ReasoningContent
 	// Attach iteration history as JSON detail for UI display (not included in LLM context).

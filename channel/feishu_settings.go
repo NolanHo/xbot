@@ -79,6 +79,9 @@ func (f *FeishuChannel) BuildSettingsCard(ctx context.Context, senderID, chatID,
 }
 
 // HandleSettingsAction processes settings card callback actions.
+// HandleSettingsAction routes a settings card action to the appropriate sub-handler.
+// It parses the action_data payload, determines the action type, and dispatches
+// to the corresponding domain-specific handler method.
 func (f *FeishuChannel) HandleSettingsAction(ctx context.Context, actionData map[string]any, senderID, chatID, messageID string) (map[string]any, error) {
 	actionDataJSON, _ := actionData["action_data"].(string)
 	if actionDataJSON == "" {
@@ -100,6 +103,54 @@ func (f *FeishuChannel) HandleSettingsAction(ctx context.Context, actionData map
 	case "settings_tab":
 		return f.BuildSettingsCard(ctx, senderID, chatID, parsed["tab"])
 
+	case "settings_set_model", "settings_set_max_context", "settings_set_max_output_tokens",
+		"settings_set_concurrency", "settings_set_thinking_mode", "settings_set_model_tier":
+		return f.handleModelSettingsAction(ctx, action, parsed, actionData, senderID, chatID)
+
+	case "settings_activate_subscription", "settings_delete_subscription",
+		"settings_add_subscription", "settings_submit_subscription":
+		return f.handleSubscriptionAction(ctx, action, parsed, actionData, senderID, chatID)
+
+	case "settings_install", "settings_publish", "settings_unpublish",
+		"settings_delete_item", "settings_market_page":
+		return f.handleMarketAction(ctx, action, parsed, senderID, chatID)
+
+	case "settings_sandbox_cleanup":
+		return f.handleSandboxCleanupAction(ctx, senderID, chatID)
+
+	case "settings_generate_token", "settings_revoke_token",
+		"settings_runner_set_active", "settings_runner_delete", "settings_runner_create":
+		return f.handleRunnerAction(ctx, action, parsed, actionData, senderID, chatID)
+
+	case "settings_feishu_web_link", "settings_feishu_web_unlink":
+		return f.handleWebLinkAction(ctx, action, actionData, senderID, chatID)
+
+	// ── Danger zone: step 1 → show confirmation card ──
+	case "danger_clear_session", "danger_clear_core_persona", "danger_clear_core_human",
+		"danger_clear_core_working", "danger_clear_core_all", "danger_clear_long_term",
+		"danger_clear_event_history", "danger_clear_archival", "danger_reset_all":
+		confirmStr := dangerConfirmString(action)
+		label := dangerTargetLabel(action)
+		return buildDangerConfirmCard(label, confirmStr, action), nil
+
+	// ── Danger zone: step 2 → execute after user confirmation ──
+	case "danger_confirm":
+		return f.handleDangerConfirmAction(actionData, senderID, chatID)
+
+	default:
+		return nil, fmt.Errorf("unknown settings action: %s", action)
+	}
+}
+
+// --- HandleSettingsAction sub-handlers ---
+// Each method below handles a related group of settings actions extracted
+// from HandleSettingsAction for readability. The main method acts as dispatcher.
+
+// handleModelSettingsAction processes LLM model configuration actions including
+// model selection, context window size, output token limit, concurrency,
+// thinking mode, and model tier assignment.
+func (f *FeishuChannel) handleModelSettingsAction(ctx context.Context, action string, parsed map[string]string, actionData map[string]any, senderID, chatID string) (map[string]any, error) {
+	switch action {
 	case "settings_set_model":
 		model := parsed["model"]
 		if model == "" {
@@ -222,6 +273,15 @@ func (f *FeishuChannel) HandleSettingsAction(ctx context.Context, actionData map
 		}
 		return f.BuildSettingsCard(ctx, senderID, chatID, "model")
 
+	default:
+		return nil, fmt.Errorf("unknown model settings action: %s", action)
+	}
+}
+
+// handleSubscriptionAction processes subscription lifecycle actions including
+// activation, deletion, add-form display, and form submission for new subscriptions.
+func (f *FeishuChannel) handleSubscriptionAction(ctx context.Context, action string, parsed map[string]string, actionData map[string]any, senderID, chatID string) (map[string]any, error) {
+	switch action {
 	case "settings_activate_subscription":
 		subID := parsed["subscription_id"]
 		if subID == "" {
@@ -294,6 +354,15 @@ func (f *FeishuChannel) HandleSettingsAction(ctx context.Context, actionData map
 		}
 		return f.BuildSettingsCard(ctx, senderID, chatID, "model")
 
+	default:
+		return nil, fmt.Errorf("unknown subscription action: %s", action)
+	}
+}
+
+// handleMarketAction processes market/registry actions including item install,
+// publish, unpublish, delete, and page navigation.
+func (f *FeishuChannel) handleMarketAction(ctx context.Context, action string, parsed map[string]string, senderID, chatID string) (map[string]any, error) {
+	switch action {
 	case "settings_install":
 		entryType := parsed["entry_type"]
 		entryIDStr := parsed["entry_id"]
@@ -350,21 +419,34 @@ func (f *FeishuChannel) HandleSettingsAction(ctx context.Context, actionData map
 		}
 		return f.BuildSettingsCard(ctx, senderID, chatID, "market", parsePageOpts(parsed))
 
-	case "settings_sandbox_cleanup":
-		if f.settingsCallbacks.SandboxCleanupTrigger == nil {
-			return nil, fmt.Errorf("沙箱持久化功能未启用")
-		}
-		if f.settingsCallbacks.SandboxIsExporting != nil && f.settingsCallbacks.SandboxIsExporting(senderID) {
-			return nil, fmt.Errorf("沙箱正在持久化中，请稍候")
-		}
-		if err := f.settingsCallbacks.SandboxCleanupTrigger(senderID); err != nil {
-			return nil, fmt.Errorf("沙箱持久化失败: %v", err)
-		}
-		return f.BuildSettingsCard(ctx, senderID, chatID, "general")
-
 	case "settings_market_page":
 		return f.BuildSettingsCard(ctx, senderID, chatID, "market", parsePageOpts(parsed))
 
+	default:
+		return nil, fmt.Errorf("unknown market action: %s", action)
+	}
+}
+
+// handleSandboxCleanupAction processes the sandbox persistence/cleanup trigger.
+// It validates that sandbox persistence is enabled and not already exporting before
+// triggering the cleanup.
+func (f *FeishuChannel) handleSandboxCleanupAction(ctx context.Context, senderID, chatID string) (map[string]any, error) {
+	if f.settingsCallbacks.SandboxCleanupTrigger == nil {
+		return nil, fmt.Errorf("沙箱持久化功能未启用")
+	}
+	if f.settingsCallbacks.SandboxIsExporting != nil && f.settingsCallbacks.SandboxIsExporting(senderID) {
+		return nil, fmt.Errorf("沙箱正在持久化中，请稍候")
+	}
+	if err := f.settingsCallbacks.SandboxCleanupTrigger(senderID); err != nil {
+		return nil, fmt.Errorf("沙箱持久化失败: %v", err)
+	}
+	return f.BuildSettingsCard(ctx, senderID, chatID, "general")
+}
+
+// handleRunnerAction processes runner and per-user token management actions including
+// token generation/revocation and runner creation/deletion/activation.
+func (f *FeishuChannel) handleRunnerAction(ctx context.Context, action string, parsed map[string]string, actionData map[string]any, senderID, chatID string) (map[string]any, error) {
+	switch action {
 	case "settings_generate_token":
 		if f.settingsCallbacks.RunnerTokenGenerate == nil {
 			return nil, fmt.Errorf("per-user runner token 功能未启用")
@@ -401,7 +483,6 @@ func (f *FeishuChannel) HandleSettingsAction(ctx context.Context, actionData map
 		}
 		return f.BuildSettingsCard(ctx, senderID, chatID, "general")
 
-	// ── Multi-Runner management actions ──
 	case "settings_runner_set_active":
 		if f.settingsCallbacks.RunnerSetActive == nil {
 			return nil, fmt.Errorf("runner 管理功能未启用")
@@ -458,6 +539,14 @@ func (f *FeishuChannel) HandleSettingsAction(ctx context.Context, actionData map
 		}
 		return f.BuildSettingsCard(ctx, senderID, chatID, "general", SettingsCardOpts{RunnerConnectBanner: cmd})
 
+	default:
+		return nil, fmt.Errorf("unknown runner action: %s", action)
+	}
+}
+
+// handleWebLinkAction processes Feishu-to-web account linking and unlinking actions.
+func (f *FeishuChannel) handleWebLinkAction(ctx context.Context, action string, actionData map[string]any, senderID, chatID string) (map[string]any, error) {
+	switch action {
 	case "settings_feishu_web_link":
 		username := formStr(actionData, "web_username")
 		password := formStr(actionData, "web_password")
@@ -481,34 +570,29 @@ func (f *FeishuChannel) HandleSettingsAction(ctx context.Context, actionData map
 		}
 		return f.BuildSettingsCard(ctx, senderID, chatID, "general")
 
-	// ── Danger zone: step 1 → show confirmation card ──
-	case "danger_clear_session", "danger_clear_core_persona", "danger_clear_core_human",
-		"danger_clear_core_working", "danger_clear_core_all", "danger_clear_long_term",
-		"danger_clear_event_history", "danger_clear_archival", "danger_reset_all":
-		confirmStr := dangerConfirmString(action)
-		label := dangerTargetLabel(action)
-		return buildDangerConfirmCard(label, confirmStr, action), nil
-
-	// ── Danger zone: step 2 → execute after user confirmation ──
-	case "danger_confirm":
-		userInput := formStr(actionData, "confirm_input")
-		target := formStr(actionData, "target_action")
-		// Server-side validation: never trust client-supplied expect_input
-		expected := dangerConfirmString(target)
-		if userInput != expected {
-			return buildDangerResultCard("❌ 确认文字不匹配，操作已取消。"), nil
-		}
-		if f.settingsCallbacks.MemoryClear != nil {
-			if err := f.settingsCallbacks.MemoryClear(senderID, chatID, target); err != nil {
-				return buildDangerResultCard(fmt.Sprintf("❌ 清空失败：%v", err)), nil
-			}
-		}
-		label := dangerTargetLabel(target)
-		return buildDangerResultCard(fmt.Sprintf("✅ 已清空：%s", label)), nil
-
 	default:
-		return nil, fmt.Errorf("unknown settings action: %s", action)
+		return nil, fmt.Errorf("unknown web link action: %s", action)
 	}
+}
+
+// handleDangerConfirmAction processes the danger zone confirmation step.
+// It validates the user's confirmation input matches the expected string,
+// then executes the destructive memory-clearing operation.
+func (f *FeishuChannel) handleDangerConfirmAction(actionData map[string]any, senderID, chatID string) (map[string]any, error) {
+	userInput := formStr(actionData, "confirm_input")
+	target := formStr(actionData, "target_action")
+	// Server-side validation: never trust client-supplied expect_input
+	expected := dangerConfirmString(target)
+	if userInput != expected {
+		return buildDangerResultCard("❌ 确认文字不匹配，操作已取消。"), nil
+	}
+	if f.settingsCallbacks.MemoryClear != nil {
+		if err := f.settingsCallbacks.MemoryClear(senderID, chatID, target); err != nil {
+			return buildDangerResultCard(fmt.Sprintf("❌ 清空失败：%v", err)), nil
+		}
+	}
+	label := dangerTargetLabel(target)
+	return buildDangerResultCard(fmt.Sprintf("✅ 已清空：%s", label)), nil
 }
 
 // --- Tab content builders ---

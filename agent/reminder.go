@@ -7,6 +7,9 @@ import (
 	"xbot/llm"
 )
 
+// maxTaskReminderRunes is the max length for task descriptions in reminders.
+const maxTaskReminderRunes = 500
+
 // systemReminderRe is pre-compiled for stripSystemReminder (called in hot loops).
 var systemReminderRe = regexp.MustCompile(`\n?\n?<system-reminder>[\s\S]*?</system-reminder>`)
 
@@ -127,8 +130,8 @@ func extractUserGoal(content string) string {
 	}
 	goal := strings.TrimSpace(strings.Join(goalLines, "\n"))
 	runes := []rune(goal)
-	if len(runes) > 500 {
-		goal = string(runes[:500]) + "..."
+	if len(runes) > maxTaskReminderRunes {
+		goal = string(runes[:maxTaskReminderRunes]) + "..."
 	}
 	return goal
 }

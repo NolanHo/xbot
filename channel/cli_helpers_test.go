@@ -273,7 +273,7 @@ func TestShowSystemMsg_AppendsMessage(t *testing.T) {
 	if len(model.messages) != 1 {
 		t.Fatalf("messages count = %d, want 1", len(model.messages))
 	}
-	if model.messages[0].role != "system" {
+	if model.messages[0].role != roleSystem {
 		t.Errorf("message role = %q, want %q", model.messages[0].role, "system")
 	}
 	if model.messages[0].content != "test message" {
@@ -294,7 +294,7 @@ func TestShowSystemMsg_DifferentLevels(t *testing.T) {
 	for i, level := range levels {
 		model.showSystemMsg("msg", level)
 		msg := model.messages[i]
-		if msg.role != "system" {
+		if msg.role != roleSystem {
 			t.Errorf("level %d: role = %q, want system", level, msg.role)
 		}
 	}
@@ -337,8 +337,8 @@ func TestInvalidateAllCache_MarksDirty(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "user", content: "hello", dirty: false},
-		{role: "assistant", content: "hi", dirty: false},
+		{role: roleUser, content: "hello", dirty: false},
+		{role: roleAssistant, content: "hi", dirty: false},
 	}
 	model.renderCacheValid = true
 
@@ -358,7 +358,7 @@ func TestInvalidateAllCache_NoUpdateViewport(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "user", content: "hello"},
+		{role: roleUser, content: "hello"},
 	}
 	// Set viewport content to known value
 	model.updateViewportContent()
@@ -376,7 +376,7 @@ func TestInvalidateAllCache_WithUpdateViewport(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "user", content: "hello"},
+		{role: roleUser, content: "hello"},
 	}
 	model.renderCacheValid = true
 
@@ -899,7 +899,7 @@ func TestInvalidateAllCache_LargeMessageSlice(t *testing.T) {
 	model := newCLIModel()
 	model.messages = make([]cliMessage, 10000)
 	for i := range model.messages {
-		model.messages[i] = cliMessage{role: "user", content: "test"}
+		model.messages[i] = cliMessage{role: roleUser, content: "test"}
 	}
 	model.renderCacheValid = true
 

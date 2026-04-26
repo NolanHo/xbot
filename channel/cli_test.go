@@ -379,8 +379,8 @@ func TestCLIModelViewWithMessages(t *testing.T) {
 	model.splashDone = true
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "user", content: "Hello", timestamp: time.Now()},
-		{role: "assistant", content: "Hi there!", timestamp: time.Now()},
+		{role: roleUser, content: "Hello", timestamp: time.Now()},
+		{role: roleAssistant, content: "Hi there!", timestamp: time.Now()},
 	}
 
 	view := model.View()
@@ -408,7 +408,7 @@ func TestCLIModelHandleAgentMessage(t *testing.T) {
 	if len(model.messages) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(model.messages))
 	}
-	if model.messages[0].role != "assistant" {
+	if model.messages[0].role != roleAssistant {
 		t.Errorf("Message role = %q, want 'assistant'", model.messages[0].role)
 	}
 	if model.messages[0].content != "Hello from agent" {
@@ -634,7 +634,7 @@ func TestCLIModelUpdateCtrlCWhileTyping(t *testing.T) {
 	// Should add cancel system message
 	hasCancel := false
 	for _, msg := range model.messages {
-		if msg.role == "system" && (strings.Contains(msg.content, "取消") || strings.Contains(msg.content, "Cancel")) {
+		if msg.role == roleSystem && (strings.Contains(msg.content, "取消") || strings.Contains(msg.content, "Cancel")) {
 			hasCancel = true
 		}
 	}
@@ -1221,8 +1221,8 @@ func TestCLIModelUpdateViewportContent(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "user", content: "Hello", timestamp: time.Now()},
-		{role: "assistant", content: "Hi there!", timestamp: time.Now(), isPartial: false},
+		{role: roleUser, content: "Hello", timestamp: time.Now()},
+		{role: roleAssistant, content: "Hi there!", timestamp: time.Now(), isPartial: false},
 	}
 
 	model.updateViewportContent()
@@ -1237,7 +1237,7 @@ func TestCLIModelUpdateViewportContentPartialMessage(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "assistant", content: "Streaming...", timestamp: time.Now(), isPartial: true},
+		{role: roleAssistant, content: "Streaming...", timestamp: time.Now(), isPartial: true},
 	}
 
 	model.updateViewportContent()
@@ -1253,7 +1253,7 @@ func TestCLIModelUpdateViewportContentWithMarkdown(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "assistant", content: "# Header\n\n**bold**", timestamp: time.Now()},
+		{role: roleAssistant, content: "# Header\n\n**bold**", timestamp: time.Now()},
 	}
 
 	model.updateViewportContent()
@@ -1268,7 +1268,7 @@ func TestCLIModelUpdateViewportContentUserMessage(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "user", content: "User message", timestamp: time.Now()},
+		{role: roleUser, content: "User message", timestamp: time.Now()},
 	}
 
 	model.updateViewportContent()
@@ -1283,7 +1283,7 @@ func TestCLIModelUpdateViewportContentAssistantMessage(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.messages = []cliMessage{
-		{role: "assistant", content: "Assistant message", timestamp: time.Now()},
+		{role: roleAssistant, content: "Assistant message", timestamp: time.Now()},
 	}
 
 	model.updateViewportContent()
@@ -1382,7 +1382,7 @@ func TestCLIMessageFields(t *testing.T) {
 		isPartial: false,
 	}
 
-	if msg.role != "user" {
+	if msg.role != roleUser {
 		t.Errorf("role = %q, want 'user'", msg.role)
 	}
 	if msg.content != "Test content" {

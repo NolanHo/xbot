@@ -60,6 +60,9 @@ const (
 	// projectContextCacheTTL controls how long the file content is cached
 	// before re-reading from disk.
 	projectContextCacheTTL = 30 * time.Second
+
+	// timeFmtDatetime is the Go reference time format for "2006-01-02 15:04:05 MST".
+	timeFmtDatetime = "2006-01-02 15:04:05 MST"
 )
 
 // ProjectContextMiddleware automatically loads a project-level context file
@@ -452,7 +455,7 @@ func (m *UserMessageMiddleware) Name() string  { return "user_message" }
 func (m *UserMessageMiddleware) Priority() int { return 200 }
 
 func (m *UserMessageMiddleware) Process(mc *MessageContext) error {
-	now := time.Now().Format("2006-01-02 15:04:05 MST")
+	now := time.Now().Format(timeFmtDatetime)
 
 	var userMsg string
 	if mc.SenderName != "" {
@@ -483,7 +486,7 @@ func (m *CronSystemPromptMiddleware) Name() string  { return "cron_system_prompt
 func (m *CronSystemPromptMiddleware) Priority() int { return 0 }
 
 func (m *CronSystemPromptMiddleware) Process(mc *MessageContext) error {
-	now := time.Now().Format("2006-01-02 15:04:05 MST")
+	now := time.Now().Format(timeFmtDatetime)
 	cronPrompt := EmbeddedCronPrompt()
 	if cronPrompt == "" {
 		cronPrompt = "You are xbot executing a scheduled cron task.\n\n## Guidelines\n- You are processing a scheduled reminder/task\n- Execute the task directly and concisely\n- Use tools when needed\n- Report results clearly\n- WorkDir: %s\n- Time: %s\n"

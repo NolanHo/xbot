@@ -674,193 +674,209 @@ func (f *FeishuChannel) buildMultiRunnerSection(senderID string, o SettingsCardO
 		})
 	}
 
-	runners, err := f.settingsCallbacks.RunnerList(senderID)
-	if err != nil || len(runners) == 0 {
-		elements = append(elements, map[string]any{
-			"tag":     "markdown",
-			"content": "尚未添加工作环境。点击下方按钮添加 Runner。",
-		})
-	} else {
-		// Get active runner name
-		activeName := ""
-		if f.settingsCallbacks.RunnerGetActive != nil {
-			if name, err := f.settingsCallbacks.RunnerGetActive(senderID); err == nil {
-				activeName = name
-			}
-		}
-
-		for _, r := range runners {
-			isBuiltin := r.Name == tools.BuiltinDockerRunnerName
-			statusIcon := "🟢"
-			if !r.Online {
-				statusIcon = "⚫"
-			}
-			activeTag := ""
-			if r.Name == activeName {
-				activeTag = " ← 活跃"
-			}
-			displayName := r.Name
-			if isBuiltin {
-				displayName = "Docker Sandbox (内置)"
-			}
-			modeTag := "原生"
-			if r.Mode == "docker" {
-				modeTag = "🐳 Docker"
-			}
-			wsTag := ""
-			if r.Workspace != "" {
-				wsTag = fmt.Sprintf(" · %s", r.Workspace)
-			}
-			if isBuiltin && r.DockerImage != "" {
-				wsTag = fmt.Sprintf(" · %s", r.DockerImage)
-			}
-			elements = append(elements, map[string]any{
-				"tag":     "markdown",
-				"content": fmt.Sprintf("%s **%s**%s (%s%s)", statusIcon, displayName, activeTag, modeTag, wsTag),
-			})
-
-			// Buttons: set active + delete (builtin docker cannot be deleted)
-			var btns []map[string]any
-			if r.Name != activeName {
-				btns = append(btns, map[string]any{
-					"tag":  "button",
-					"text": map[string]any{"tag": "plain_text", "content": "切换"},
-					"type": "primary",
-					"value": map[string]string{
-						"action_data": mustMapToJSON(map[string]string{
-							"action":      "settings_runner_set_active",
-							"runner_name": r.Name,
-						}),
-					},
-				})
-			}
-			if !isBuiltin {
-				btns = append(btns, map[string]any{
-					"tag":  "button",
-					"text": map[string]any{"tag": "plain_text", "content": "🗑️ 删除"},
-					"type": "danger",
-					"value": map[string]string{
-						"action_data": mustMapToJSON(map[string]string{
-							"action":      "settings_runner_delete",
-							"runner_name": r.Name,
-						}),
-					},
-				})
-			}
-			if len(btns) > 0 {
-				elements = append(elements, wrapButtonsInColumns(btns))
-			}
-		}
-	}
+	elements = append(elements, f.buildRunnerListElements(senderID)...)
 
 	elements = append(elements, map[string]any{
 		"tag":     "markdown",
 		"content": "添加 Runner：任选其一提交。**原生**无镜像字段；**Docker** 需填写镜像。",
 	})
 
-	formNative := []map[string]any{
-		{
-			"tag":  "input",
-			"name": "mr_native_name",
-			"label": map[string]any{
-				"tag":     "plain_text",
-				"content": "Runner 名称",
-			},
-			"placeholder": map[string]any{
-				"tag":     "plain_text",
-				"content": "例如：MacBook Pro",
-			},
-		},
-		{
-			"tag":  "input",
-			"name": "mr_native_workspace",
-			"label": map[string]any{
-				"tag":     "plain_text",
-				"content": "Working directory",
-			},
-			"placeholder": map[string]any{
-				"tag":     "plain_text",
-				"content": "/workspace",
-			},
-		},
-		{
-			"tag":         "button",
-			"name":        "runner_create_native_submit",
-			"text":        map[string]any{"tag": "plain_text", "content": "✨ 添加原生 Runner"},
-			"type":        "primary",
-			"action_type": "form_submit",
-			"value": map[string]string{
-				"action_data": mustMapToJSON(map[string]string{
-					"action":      "settings_runner_create",
-					"runner_mode": "native",
-				}),
-			},
-		},
-	}
-	elements = append(elements, map[string]any{
-		"tag":      "form",
-		"name":     "runner_create_form_native",
-		"elements": formNative,
-	})
-
-	formDocker := []map[string]any{
-		{
-			"tag":  "input",
-			"name": "mr_docker_name",
-			"label": map[string]any{
-				"tag":     "plain_text",
-				"content": "Runner 名称",
-			},
-			"placeholder": map[string]any{
-				"tag":     "plain_text",
-				"content": "例如：docker-dev",
-			},
-		},
-		{
-			"tag":  "input",
-			"name": "mr_docker_image",
-			"label": map[string]any{
-				"tag":     "plain_text",
-				"content": "Docker 镜像",
-			},
-			"placeholder": map[string]any{
-				"tag":     "plain_text",
-				"content": "ubuntu:22.04",
-			},
-		},
-		{
-			"tag":  "input",
-			"name": "mr_docker_workspace",
-			"label": map[string]any{
-				"tag":     "plain_text",
-				"content": "Working directory",
-			},
-			"placeholder": map[string]any{
-				"tag":     "plain_text",
-				"content": "/workspace",
-			},
-		},
-		{
-			"tag":         "button",
-			"name":        "runner_create_docker_submit",
-			"text":        map[string]any{"tag": "plain_text", "content": "✨ 添加 Docker Runner"},
-			"type":        "primary",
-			"action_type": "form_submit",
-			"value": map[string]string{
-				"action_data": mustMapToJSON(map[string]string{
-					"action":      "settings_runner_create",
-					"runner_mode": "docker",
-				}),
-			},
-		},
-	}
-	elements = append(elements, map[string]any{
-		"tag":      "form",
-		"name":     "runner_create_form_docker",
-		"elements": formDocker,
-	})
+	elements = append(elements, buildNativeRunnerForm())
+	elements = append(elements, buildDockerRunnerForm())
 
 	return elements
+}
+
+// buildRunnerListElements returns UI elements for listing configured runners with status and action buttons.
+func (f *FeishuChannel) buildRunnerListElements(senderID string) []map[string]any {
+	runners, err := f.settingsCallbacks.RunnerList(senderID)
+	if err != nil || len(runners) == 0 {
+		return []map[string]any{{
+			"tag":     "markdown",
+			"content": "尚未添加工作环境。点击下方按钮添加 Runner。",
+		}}
+	}
+
+	var elements []map[string]any
+
+	// Get active runner name
+	activeName := ""
+	if f.settingsCallbacks.RunnerGetActive != nil {
+		if name, err := f.settingsCallbacks.RunnerGetActive(senderID); err == nil {
+			activeName = name
+		}
+	}
+
+	for _, r := range runners {
+		isBuiltin := r.Name == tools.BuiltinDockerRunnerName
+		statusIcon := "🟢"
+		if !r.Online {
+			statusIcon = "⚫"
+		}
+		activeTag := ""
+		if r.Name == activeName {
+			activeTag = " ← 活跃"
+		}
+		displayName := r.Name
+		if isBuiltin {
+			displayName = "Docker Sandbox (内置)"
+		}
+		modeTag := "原生"
+		if r.Mode == "docker" {
+			modeTag = "🐳 Docker"
+		}
+		wsTag := ""
+		if r.Workspace != "" {
+			wsTag = fmt.Sprintf(" · %s", r.Workspace)
+		}
+		if isBuiltin && r.DockerImage != "" {
+			wsTag = fmt.Sprintf(" · %s", r.DockerImage)
+		}
+		elements = append(elements, map[string]any{
+			"tag":     "markdown",
+			"content": fmt.Sprintf("%s **%s**%s (%s%s)", statusIcon, displayName, activeTag, modeTag, wsTag),
+		})
+
+		// Buttons: set active + delete (builtin docker cannot be deleted)
+		var btns []map[string]any
+		if r.Name != activeName {
+			btns = append(btns, map[string]any{
+				"tag":  "button",
+				"text": map[string]any{"tag": "plain_text", "content": "切换"},
+				"type": "primary",
+				"value": map[string]string{
+					"action_data": mustMapToJSON(map[string]string{
+						"action":      "settings_runner_set_active",
+						"runner_name": r.Name,
+					}),
+				},
+			})
+		}
+		if !isBuiltin {
+			btns = append(btns, map[string]any{
+				"tag":  "button",
+				"text": map[string]any{"tag": "plain_text", "content": "🗑️ 删除"},
+				"type": "danger",
+				"value": map[string]string{
+					"action_data": mustMapToJSON(map[string]string{
+						"action":      "settings_runner_delete",
+						"runner_name": r.Name,
+					}),
+				},
+			})
+		}
+		if len(btns) > 0 {
+			elements = append(elements, wrapButtonsInColumns(btns))
+		}
+	}
+
+	return elements
+}
+
+// buildNativeRunnerForm returns the Feishu form element for adding a native runner.
+func buildNativeRunnerForm() map[string]any {
+	return map[string]any{
+		"tag":  "form",
+		"name": "runner_create_form_native",
+		"elements": []map[string]any{
+			{
+				"tag":  "input",
+				"name": "mr_native_name",
+				"label": map[string]any{
+					"tag":     "plain_text",
+					"content": "Runner 名称",
+				},
+				"placeholder": map[string]any{
+					"tag":     "plain_text",
+					"content": "例如：MacBook Pro",
+				},
+			},
+			{
+				"tag":  "input",
+				"name": "mr_native_workspace",
+				"label": map[string]any{
+					"tag":     "plain_text",
+					"content": "Working directory",
+				},
+				"placeholder": map[string]any{
+					"tag":     "plain_text",
+					"content": "/workspace",
+				},
+			},
+			{
+				"tag":         "button",
+				"name":        "runner_create_native_submit",
+				"text":        map[string]any{"tag": "plain_text", "content": "✨ 添加原生 Runner"},
+				"type":        "primary",
+				"action_type": "form_submit",
+				"value": map[string]string{
+					"action_data": mustMapToJSON(map[string]string{
+						"action":      "settings_runner_create",
+						"runner_mode": "native",
+					}),
+				},
+			},
+		},
+	}
+}
+
+// buildDockerRunnerForm returns the Feishu form element for adding a Docker runner.
+func buildDockerRunnerForm() map[string]any {
+	return map[string]any{
+		"tag":  "form",
+		"name": "runner_create_form_docker",
+		"elements": []map[string]any{
+			{
+				"tag":  "input",
+				"name": "mr_docker_name",
+				"label": map[string]any{
+					"tag":     "plain_text",
+					"content": "Runner 名称",
+				},
+				"placeholder": map[string]any{
+					"tag":     "plain_text",
+					"content": "例如：docker-dev",
+				},
+			},
+			{
+				"tag":  "input",
+				"name": "mr_docker_image",
+				"label": map[string]any{
+					"tag":     "plain_text",
+					"content": "Docker 镜像",
+				},
+				"placeholder": map[string]any{
+					"tag":     "plain_text",
+					"content": "ubuntu:22.04",
+				},
+			},
+			{
+				"tag":  "input",
+				"name": "mr_docker_workspace",
+				"label": map[string]any{
+					"tag":     "plain_text",
+					"content": "Working directory",
+				},
+				"placeholder": map[string]any{
+					"tag":     "plain_text",
+					"content": "/workspace",
+				},
+			},
+			{
+				"tag":         "button",
+				"name":        "runner_create_docker_submit",
+				"text":        map[string]any{"tag": "plain_text", "content": "✨ 添加 Docker Runner"},
+				"type":        "primary",
+				"action_type": "form_submit",
+				"value": map[string]string{
+					"action_data": mustMapToJSON(map[string]string{
+						"action":      "settings_runner_create",
+						"runner_mode": "docker",
+					}),
+				},
+			},
+		},
+	}
 }
 
 // buildLegacyRunnerSection builds the legacy single-token runner UI.

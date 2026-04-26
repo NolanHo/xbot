@@ -111,7 +111,7 @@ func (m *cliModel) typewriterBehind() bool {
 	return false
 }
 
-// advanceWriterCJK is like advanceWriter but CJK-aware: when the next rune to reveal
+// advanceWriterCJK advances the typewriter cursor with CJK-aware speed control: when
 // is CJK, it only advances every other tick (effectively half speed).
 // skipFlip tracks alternating ticks within a single call chain.
 func (m *cliModel) advanceWriterCJK(visible *int, target int, content string, skipFlip *bool) {

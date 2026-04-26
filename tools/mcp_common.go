@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -424,13 +425,11 @@ func ConnectHTTPServer(ctx context.Context, cfg MCPServerConfig) (*mcp.ClientSes
 	return session, nil
 }
 
-// IsProcessExitError checks if the error is a child process exit error (e.g. "exit status 1")
+// IsProcessExitError checks if the error is a child process exit error (e.g. "exit status 1").
+// Uses errors.As to reliably detect *exec.ExitError even when wrapped.
 func IsProcessExitError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "exit status") || strings.Contains(errStr, "signal:")
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr)
 }
 
 // MCPInitResult holds the result of MCP client initialization.

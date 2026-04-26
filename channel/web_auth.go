@@ -16,6 +16,8 @@ import (
 
 	log "xbot/logger"
 
+	"xbot/storage/sqlite"
+
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -99,7 +101,7 @@ func CreateWebUser(db *sql.DB, username string) (string, string, error) {
 		username, string(hash),
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if sqlite.IsUniqueConstraintError(err) {
 			return "", "", fmt.Errorf("username %q already exists", username)
 		}
 		return "", "", fmt.Errorf("failed to create user: %w", err)
@@ -234,7 +236,7 @@ func (wc *WebChannel) handleRegister(w http.ResponseWriter, r *http.Request) {
 		req.Username, string(hash),
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if sqlite.IsUniqueConstraintError(err) {
 			writeJSON(w, http.StatusConflict, authResponse{OK: false, Message: "username already exists"})
 			return
 		}
@@ -435,7 +437,7 @@ func FeishuLinkUser(db *sql.DB, feishuUserID, username, password string) (string
 		username, string(hash),
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if sqlite.IsUniqueConstraintError(err) {
 			return "", fmt.Errorf("username already exists")
 		}
 		return "", fmt.Errorf("failed to create user")

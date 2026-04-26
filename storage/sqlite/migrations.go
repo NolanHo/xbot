@@ -3,7 +3,6 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
-	"strings"
 
 	log "xbot/logger"
 )
@@ -704,22 +703,22 @@ func migrateV20ToV21(conn *sql.DB) error {
 	if _, err := conn.Exec("ALTER TABLE runners ADD COLUMN llm_provider TEXT NOT NULL DEFAULT ''"); err != nil {
 		// Column may already exist in fresh DB (created with v21+ schema).
 		// Skip if error is "duplicate column name".
-		if !strings.Contains(err.Error(), "duplicate column") {
+		if !IsDuplicateColumnError(err) {
 			return fmt.Errorf("migrate v20->v21: %w", err)
 		}
 	}
 	if _, err := conn.Exec("ALTER TABLE runners ADD COLUMN llm_api_key TEXT NOT NULL DEFAULT ''"); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column") {
+		if !IsDuplicateColumnError(err) {
 			return fmt.Errorf("migrate v20->v21: %w", err)
 		}
 	}
 	if _, err := conn.Exec("ALTER TABLE runners ADD COLUMN llm_model TEXT NOT NULL DEFAULT ''"); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column") {
+		if !IsDuplicateColumnError(err) {
 			return fmt.Errorf("migrate v20->v21: %w", err)
 		}
 	}
 	if _, err := conn.Exec("ALTER TABLE runners ADD COLUMN llm_base_url TEXT NOT NULL DEFAULT ''"); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column") {
+		if !IsDuplicateColumnError(err) {
 			return fmt.Errorf("migrate v20->v21: %w", err)
 		}
 	}

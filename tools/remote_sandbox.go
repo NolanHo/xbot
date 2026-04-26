@@ -176,82 +176,15 @@ func (rs *RemoteSandbox) handleWebSocket(w http.ResponseWriter, r *http.Request)
 	)
 
 	conn.SetReadDeadline(time.Now().Add(pongWait))
-	// Reset read deadline when we receive a pong (response to our pings).
-	// Do NOT set SetPingHandler — the default auto-replies pong to the runner's pings.
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
 
-	// Read registration message
-	_, raw, err := conn.ReadMessage()
+	// Read, validate, and authenticate the registration message.
+	reg, runnerName, shell, err := rs.readRegistration(conn, pathUserID)
 	if err != nil {
-		log.WithError(err).Error("Failed to read registration message")
 		return
-	}
-
-	var msg RunnerMessage
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		log.WithError(err).Error("Invalid registration message")
-		return
-	}
-	if msg.Type != "register" {
-		log.WithField("type", msg.Type).Error("Expected register message")
-		return
-	}
-
-	var reg RegisterRequest
-	if err := json.Unmarshal(msg.Body, &reg); err != nil {
-		log.WithError(err).Error("Invalid registration body")
-		return
-	}
-	authenticated := (rs.tokenStore != nil && rs.tokenStore.Validate(reg.AuthToken, reg.UserID)) ||
-		(rs.authToken != "" && subtle.ConstantTimeCompare([]byte(reg.AuthToken), []byte(rs.authToken)) == 1)
-	if !authenticated {
-		log.WithFields(log.Fields{
-			"user_id":    reg.UserID,
-			"has_store":  rs.tokenStore != nil,
-			"has_global": rs.authToken != "",
-		}).Warn("Runner authentication failed")
-		rs.sendRegisterError(conn, "AUTH_FAILED", "authentication failed")
-		return
-	}
-	if reg.UserID == "" {
-		log.Warn("Runner registration missing user_id")
-		rs.sendRegisterError(conn, "INVALID", "missing user_id")
-		return
-	}
-	// S6: Bind token to userID — the URL path determines identity, not the claim.
-	if reg.UserID != pathUserID {
-		log.WithFields(log.Fields{
-			"path_user_id": pathUserID,
-			"claimed_id":   reg.UserID,
-		}).Warn("Runner userID mismatch (potential impersonation)")
-		rs.sendRegisterError(conn, "FORBIDDEN", "user_id mismatch")
-		return
-	}
-
-	shell := reg.Shell
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-
-	// Look up runner name from token.
-	runnerName := ""
-	if rs.tokenStore != nil {
-		if uid, rname, err := rs.tokenStore.FindByToken(reg.AuthToken); err == nil && uid == reg.UserID {
-			runnerName = rname
-		} else {
-			// Fallback: check legacy runner_tokens table for backward compat.
-			uid := rs.tokenStore.FindByTokenInRunnerTokens(reg.AuthToken)
-			if uid == reg.UserID {
-				// Legacy token: use "default" as name.
-				runnerName = "default"
-			}
-		}
-	}
-	if runnerName == "" {
-		runnerName = "default"
 	}
 
 	rc := &runnerConnection{
@@ -264,68 +197,17 @@ func (rs *RemoteSandbox) handleWebSocket(w http.ResponseWriter, r *http.Request)
 		done:       make(chan struct{}),
 	}
 
-	// Register connection in userRunnersEntry.
-	newEntry := &userRunnersEntry{
-		runners: map[string]*runnerConnection{runnerName: rc},
-		active:  runnerName,
-	}
-	actual, loaded := rs.connections.LoadOrStore(reg.UserID, newEntry)
-	entry, ok := actual.(*userRunnersEntry)
-	if !ok {
-		log.WithField("user_id", reg.UserID).Error("invalid runner connection type")
-		conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","body":{"code":"internal_error","message":"invalid connection state"}}`))
-		conn.Close()
-		return
-	}
-	if loaded {
-		entry.mu.Lock()
-		entry.runners[runnerName] = rc
-		if entry.active == "" {
-			entry.active = runnerName
-		}
-		entry.mu.Unlock()
-	}
-
-	defer func() {
-		// On disconnect, remove this runner from the entry.
-		entry.mu.Lock()
-		delete(entry.runners, runnerName)
-		// If the disconnected runner was active, fallback to first available.
-		if entry.active == runnerName {
-			for name := range entry.runners {
-				entry.active = name
-				break
-			}
-			if entry.active == "" {
-				// No runners left — remove entry entirely.
-				entry.mu.Unlock()
-				rs.connections.Delete(reg.UserID)
-				if rs.OnRunnerStatusChange != nil {
-					go rs.OnRunnerStatusChange(reg.UserID, runnerName, false)
-				}
-				return
-			}
-		}
-		if rs.OnRunnerStatusChange != nil {
-			go rs.OnRunnerStatusChange(reg.UserID, runnerName, false)
-		}
-		entry.mu.Unlock()
-	}()
-
-	// Send registration acknowledgment
-	okBody, err := json.Marshal(map[string]string{"status": "ok"})
+	// Store connection and set up disconnect cleanup.
+	_, cleanup, err := rs.storeRunnerConnection(rc)
 	if err != nil {
-		log.WithError(err).Error("Failed to marshal register_ok body")
-		conn.Close()
 		return
 	}
-	okMsg, err := json.Marshal(RunnerMessage{Type: "register_ok", Body: okBody})
-	if err != nil {
-		log.WithError(err).Error("Failed to marshal register_ok message")
-		conn.Close()
+	defer cleanup()
+
+	// Acknowledge successful registration.
+	if err := rs.sendRegisterOK(conn); err != nil {
 		return
 	}
-	conn.WriteMessage(websocket.TextMessage, okMsg)
 
 	log.WithFields(log.Fields{
 		"user_id":     reg.UserID,
@@ -333,7 +215,171 @@ func (rs *RemoteSandbox) handleWebSocket(w http.ResponseWriter, r *http.Request)
 		"workspace":   reg.Workspace,
 	}).Info("Runner connected")
 
-	// If runner declares LLM capability, update DB record (for injectProxyLLM to query)
+	// Post-registration: LLM update, status notification, write pump, initial sync.
+	rs.handlePostRegistration(rc, reg, runnerName, pingPeriod, writeWait)
+
+	// Block while reading incoming messages from the runner.
+	rs.readRunnerMessages(rc, reg.UserID, runnerName)
+
+	// Silence the unused-variable warning for entry (used by deferred cleanup).
+}
+
+// readRegistration reads the initial registration message, validates
+// authentication, and resolves the runner name. On failure it logs the
+// error and sends an appropriate error frame to conn.
+func (rs *RemoteSandbox) readRegistration(conn *websocket.Conn, pathUserID string) (*RegisterRequest, string, string, error) {
+	_, raw, err := conn.ReadMessage()
+	if err != nil {
+		log.WithError(err).Error("Failed to read registration message")
+		return nil, "", "", err
+	}
+
+	var msg RunnerMessage
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		log.WithError(err).Error("Invalid registration message")
+		return nil, "", "", err
+	}
+	if msg.Type != "register" {
+		log.WithField("type", msg.Type).Error("Expected register message")
+		return nil, "", "", fmt.Errorf("expected register message, got %q", msg.Type)
+	}
+
+	var reg RegisterRequest
+	if err := json.Unmarshal(msg.Body, &reg); err != nil {
+		log.WithError(err).Error("Invalid registration body")
+		return nil, "", "", err
+	}
+
+	// Authenticate the runner.
+	authenticated := (rs.tokenStore != nil && rs.tokenStore.Validate(reg.AuthToken, reg.UserID)) ||
+		(rs.authToken != "" && subtle.ConstantTimeCompare([]byte(reg.AuthToken), []byte(rs.authToken)) == 1)
+	if !authenticated {
+		log.WithFields(log.Fields{
+			"user_id":    reg.UserID,
+			"has_store":  rs.tokenStore != nil,
+			"has_global": rs.authToken != "",
+		}).Warn("Runner authentication failed")
+		rs.sendRegisterError(conn, "AUTH_FAILED", "authentication failed")
+		return nil, "", "", fmt.Errorf("authentication failed")
+	}
+	if reg.UserID == "" {
+		log.Warn("Runner registration missing user_id")
+		rs.sendRegisterError(conn, "INVALID", "missing user_id")
+		return nil, "", "", fmt.Errorf("missing user_id")
+	}
+	// Bind token to userID — the URL path determines identity, not the claim.
+	if reg.UserID != pathUserID {
+		log.WithFields(log.Fields{
+			"path_user_id": pathUserID,
+			"claimed_id":   reg.UserID,
+		}).Warn("Runner userID mismatch (potential impersonation)")
+		rs.sendRegisterError(conn, "FORBIDDEN", "user_id mismatch")
+		return nil, "", "", fmt.Errorf("user_id mismatch")
+	}
+
+	shell := reg.Shell
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+
+	runnerName := rs.resolveRunnerName(reg)
+	return &reg, runnerName, shell, nil
+}
+
+// resolveRunnerName determines the runner name by looking up the
+// authentication token in the token store.
+func (rs *RemoteSandbox) resolveRunnerName(reg RegisterRequest) string {
+	runnerName := ""
+	if rs.tokenStore != nil {
+		if uid, rname, err := rs.tokenStore.FindByToken(reg.AuthToken); err == nil && uid == reg.UserID {
+			runnerName = rname
+		} else {
+			// Fallback: check legacy runner_tokens table for backward compat.
+			uid := rs.tokenStore.FindByTokenInRunnerTokens(reg.AuthToken)
+			if uid == reg.UserID {
+				runnerName = "default"
+			}
+		}
+	}
+	if runnerName == "" {
+		runnerName = "default"
+	}
+	return runnerName
+}
+
+// storeRunnerConnection registers the runner connection in the connections map
+// and returns the userRunnersEntry plus a cleanup function to be deferred.
+func (rs *RemoteSandbox) storeRunnerConnection(rc *runnerConnection) (*userRunnersEntry, func(), error) {
+	newEntry := &userRunnersEntry{
+		runners: map[string]*runnerConnection{rc.runnerName: rc},
+		active:  rc.runnerName,
+	}
+	actual, loaded := rs.connections.LoadOrStore(rc.userID, newEntry)
+	entry, ok := actual.(*userRunnersEntry)
+	if !ok {
+		log.WithField("user_id", rc.userID).Error("invalid runner connection type")
+		rc.wsConn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","body":{"code":"internal_error","message":"invalid connection state"}}`))
+		rc.wsConn.Close()
+		return nil, nil, fmt.Errorf("invalid connection state")
+	}
+	if loaded {
+		entry.mu.Lock()
+		entry.runners[rc.runnerName] = rc
+		if entry.active == "" {
+			entry.active = rc.runnerName
+		}
+		entry.mu.Unlock()
+	}
+
+	cleanup := func() {
+		entry.mu.Lock()
+		delete(entry.runners, rc.runnerName)
+		// If the disconnected runner was active, fallback to first available.
+		if entry.active == rc.runnerName {
+			for name := range entry.runners {
+				entry.active = name
+				break
+			}
+			if entry.active == "" {
+				// No runners left — remove entry entirely.
+				entry.mu.Unlock()
+				rs.connections.Delete(rc.userID)
+				if rs.OnRunnerStatusChange != nil {
+					go rs.OnRunnerStatusChange(rc.userID, rc.runnerName, false)
+				}
+				return
+			}
+		}
+		if rs.OnRunnerStatusChange != nil {
+			go rs.OnRunnerStatusChange(rc.userID, rc.runnerName, false)
+		}
+		entry.mu.Unlock()
+	}
+
+	return entry, cleanup, nil
+}
+
+// sendRegisterOK marshals and sends the registration acknowledgment frame.
+func (rs *RemoteSandbox) sendRegisterOK(conn *websocket.Conn) error {
+	okBody, err := json.Marshal(map[string]string{"status": "ok"})
+	if err != nil {
+		log.WithError(err).Error("Failed to marshal register_ok body")
+		conn.Close()
+		return err
+	}
+	okMsg, err := json.Marshal(RunnerMessage{Type: "register_ok", Body: okBody})
+	if err != nil {
+		log.WithError(err).Error("Failed to marshal register_ok message")
+		conn.Close()
+		return err
+	}
+	return conn.WriteMessage(websocket.TextMessage, okMsg)
+}
+
+// handlePostRegistration performs post-connection setup: records LLM
+// capability, notifies status change, starts the write pump and initial sync.
+func (rs *RemoteSandbox) handlePostRegistration(rc *runnerConnection, reg *RegisterRequest, runnerName string, pingPeriod, writeWait time.Duration) {
+	// If runner declares LLM capability, update DB record (for injectProxyLLM to query).
 	if reg.LLMProvider != "" && rs.tokenStore != nil {
 		rs.tokenStore.UpdateRunnerLLM(reg.UserID, runnerName, RunnerLLMSettings{
 			Provider: reg.LLMProvider,
@@ -348,7 +394,7 @@ func (rs *RemoteSandbox) handleWebSocket(w http.ResponseWriter, r *http.Request)
 		}).Info("Runner LLM capability recorded")
 	}
 
-	// Notify runner status change
+	// Notify runner status change.
 	if rs.OnRunnerStatusChange != nil {
 		go rs.OnRunnerStatusChange(reg.UserID, runnerName, true)
 	}
@@ -356,15 +402,18 @@ func (rs *RemoteSandbox) handleWebSocket(w http.ResponseWriter, r *http.Request)
 	// Single writer goroutine: handles both request writes and ping heartbeats.
 	go rs.writePump(rc, pingPeriod, writeWait)
 
-	// Sync global skills and agents to the runner in the background
+	// Sync global skills and agents to the runner in the background.
 	go rs.syncToRunner(reg.UserID, reg.Workspace)
+}
 
-	// Keep reading messages (responses, heartbeats, and stdio push messages)
+// readRunnerMessages is the main read loop that processes incoming messages
+// from a connected runner (responses, heartbeats, and stdio push messages).
+func (rs *RemoteSandbox) readRunnerMessages(rc *runnerConnection, userID, runnerName string) {
 	for {
-		_, raw, err := conn.ReadMessage()
+		_, raw, err := rc.wsConn.ReadMessage()
 		if err != nil {
 			log.WithError(err).WithFields(log.Fields{
-				"user_id":     reg.UserID,
+				"user_id":     userID,
 				"runner_name": runnerName,
 			}).Debug("Runner disconnected")
 			return
@@ -390,7 +439,6 @@ func (rs *RemoteSandbox) handleWebSocket(w http.ResponseWriter, r *http.Request)
 			rs.pendingMu.Unlock()
 		}
 	}
-
 }
 
 // getRunner returns the active connection for a user, or an error.

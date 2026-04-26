@@ -10,6 +10,10 @@ import (
 	"xbot/llm"
 )
 
+// maxReasonableTargetLen is the maximum reasonable length for a tool target string.
+// Targets longer than this are likely malformed.
+const maxReasonableTargetLen = 50
+
 // ActiveFile recent N rounds of active file records
 type ActiveFile struct {
 	Path         string   // File path
@@ -32,7 +36,7 @@ func containsSemanticMatch(text, target string) bool {
 	}
 
 	// Reverse check: target contains key parts of text
-	if len(target) > 50 && len(target) > len(text) {
+	if len(target) > maxReasonableTargetLen && len(target) > len(text) {
 		if strings.Contains(strings.ToLower(target), strings.ToLower(text)) {
 			return true
 		}

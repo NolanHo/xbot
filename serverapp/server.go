@@ -226,7 +226,7 @@ func registerChannels(disp *channel.Dispatcher, cfg *config.Config, msgBus *bus.
 
 	}
 
-	// 注册 QQ 渠道
+	// Register QQ channel
 	if cfg.QQ.Enabled {
 		qqCh := channel.NewQQChannel(channel.QQConfig{
 			AppID:        cfg.QQ.AppID,
@@ -236,7 +236,7 @@ func registerChannels(disp *channel.Dispatcher, cfg *config.Config, msgBus *bus.
 		disp.Register(qqCh)
 	}
 
-	// 注册 NapCat (OneBot 11) 渠道
+	// Register NapCat (OneBot 11) channel
 	if cfg.NapCat.Enabled {
 		napcatCh := channel.NewNapCatChannel(channel.NapCatConfig{
 			WSUrl:     cfg.NapCat.WSUrl,
@@ -324,8 +324,8 @@ func Run(args []string) error {
 		if (args[i] == "--config" || args[i] == "-config") && i+1 < len(args) {
 			configPath = args[i+1]
 			i++
-		} else if len(args[i]) > 9 && args[i][:9] == "--config=" {
-			configPath = args[i][9:]
+		} else if strings.HasPrefix(args[i], "--config=") {
+			configPath = strings.TrimPrefix(args[i], "--config=")
 		}
 	}
 
@@ -363,7 +363,7 @@ func Run(args []string) error {
 		log.WithError(err).Fatal("Failed to setup OAuth")
 	}
 
-	// 初始化沙箱
+	// Initialize sandbox
 	tools.InitSandbox(cfg.Sandbox, workDir)
 
 	bc := agent.BackendConfig{
@@ -454,16 +454,16 @@ func Run(args []string) error {
 		}
 	}
 
-	// 注册 OAuth 和 Feishu MCP 工具（如果启用）
+	// Register OAuth and Feishu MCP tools (if enabled)
 	if cfg.OAuth.Enable && oauthManager != nil {
-		// 注册 OAuth 工具
+		// Register OAuth tool
 		oauthTool := &tools.OAuthTool{
 			Manager: oauthManager,
 			BaseURL: cfg.OAuth.BaseURL,
 		}
 		backend.RegisterCoreTool(oauthTool)
 
-		// 注册 Feishu MCP 工具
+		// Register Feishu MCP tool
 		feishuMCP := feishu_mcp.NewFeishuMCP(oauthManager, cfg.Feishu.AppID, cfg.Feishu.AppSecret)
 		if feishuProvider != nil {
 			feishuMCP.SetLarkClient(feishuProvider.GetLarkClient())
@@ -505,12 +505,12 @@ func Run(args []string) error {
 		log.Info("OAuth and Feishu MCP tools registered")
 	}
 
-	// 注册 DownloadFile 工具（支持 Web/OSS 和飞书两种来源）
+	// Register DownloadFile tool (supports both Web/OSS and Feishu sources)
 	backend.RegisterCoreTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
 	backend.RegisterTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
 	backend.RegisterCoreTool(tools.NewWebSearchTool(cfg.TavilyAPIKey))
 
-	// 注册 Logs 工具（仅管理员可用）
+	// Register Logs tool (admin only)
 	adminChatID := cfg.Admin.ChatID
 	if adminChatID != "" {
 		logsTool := tools.NewLogsTool(adminChatID)
@@ -518,7 +518,7 @@ func Run(args []string) error {
 		log.WithField("admin_chat_id", adminChatID).Info("Logs tool registered (admin only)")
 	}
 
-	// 初始化事件触发系统（Event Trigger System）
+	// Initialize Event Trigger System
 	triggerSvc := sqlite.NewTriggerService(backend.MultiSession().DB())
 	eventRouter := event.NewRouter(triggerSvc)
 	backend.SetEventRouter(eventRouter)
@@ -540,7 +540,7 @@ func Run(args []string) error {
 		})
 	}
 
-	// 所有工具注册完成，索引全局工具（用于 search_tools 语义搜索）
+	// All tools registered; index global tools for search_tools semantic search
 	backend.IndexGlobalTools()
 	backend.LLMFactory().SetModelTiers(cfg.LLM)
 	backend.LLMFactory().SetRetryConfig(llm_pkg.RetryConfig{
@@ -604,14 +604,14 @@ func Run(args []string) error {
 		},
 	)
 
-	// 设置飞书渠道的 CardBuilder（用于卡片回调处理）
+	// Set Feishu channel's CardBuilder (for card callback handling)
 	if feishuCh != nil {
 		feishuCh.SetCardBuilder(backend.GetCardBuilder())
 		if state := backend.ApprovalState(); state != nil {
 			feishuCh.SetApprovalState(state)
 		}
 
-		// 传递 admin chatID 和 web DB（用于 admin 命令如 !webadd）
+		// Pass admin chatID and web DB (for admin commands like !webadd)
 		if adminChatID != "" {
 			feishuCh.SetAdminChatID(adminChatID)
 		}
@@ -619,20 +619,20 @@ func Run(args []string) error {
 			feishuCh.SetWebDB(webDB)
 		}
 
-		// 注入设置卡片回调（让飞书渠道能访问 Agent 的 LLM/Registry/Settings 功能）
+		// Inject settings card callbacks (allows Feishu channel to access Agent LLM/Registry/Settings)
 		feishuCh.SetSettingsCallbacks(buildFeishuSettingsCallbacks(cfg, backend))
 
-		// 注入飞书渠道特化 prompt 提供者
+		// Inject Feishu channel-specific prompt provider
 		backend.SetChannelPromptProviders(&feishuPromptAdapter{ch: feishuCh})
 	}
 
-	// 设置优雅退出（提前声明 ctx，供 OAuth Manager cleanup goroutine 使用）
+	// Setup graceful shutdown (declare ctx early for OAuth Manager cleanup goroutine)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 设置 OAuth 服务器的回调函数，使其能在授权完成后发送消息
+	// Set OAuth server callback to send messages after authorization completes
 	if oauthServer != nil {
-		// 启动 OAuth flow 定期清理 goroutine
+		// Start OAuth flow periodic cleanup goroutine
 		oauthManager.Start(ctx)
 
 		oauthServer.SetSendFunc(func(channel, chatID, content string) error {
@@ -643,7 +643,7 @@ func Run(args []string) error {
 			})
 			return err
 		})
-		// 现在启动 OAuth HTTP 服务器
+		// Start OAuth HTTP server
 		if err := oauthServer.Start(); err != nil {
 			log.WithError(err).Fatal("Failed to start OAuth server")
 		}
@@ -664,7 +664,7 @@ func Run(args []string) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// 启动出站消息分发
+	// Start outbound message dispatcher
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -674,7 +674,7 @@ func Run(args []string) error {
 		disp.Run()
 	}()
 
-	// 启动所有渠道
+	// Start all channels
 	for name, ch := range getChannels(disp) {
 		go func(n string, c channel.Channel) {
 			defer func() {
@@ -689,7 +689,7 @@ func Run(args []string) error {
 		}(name, ch)
 	}
 
-	// 启动 Webhook 事件服务器
+	// Start Webhook event server
 	if webhookServer != nil {
 		go func() {
 			defer func() {
@@ -708,12 +708,12 @@ func Run(args []string) error {
 		}).Info("Webhook event server started")
 	}
 
-	// 启动 Agent 循环
+	// Start Agent loop
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				log.WithField("panic", r).Error("Agent loop panicked\n" + string(debug.Stack()))
-				// 触发优雅退出，避免僵尸进程
+				// Trigger graceful shutdown to avoid zombie process
 				sigCh <- syscall.SIGTERM
 			}
 		}()
@@ -725,56 +725,56 @@ func Run(args []string) error {
 	log.Info("xbot started successfully")
 	fmt.Println("🤖 xbot is running. Press Ctrl+C to stop.")
 
-	// 启动后发送上线通知
+	// Send startup notification after boot
 	if cfg.StartupNotify.Channel != "" && cfg.StartupNotify.ChatID != "" {
 		go sendStartupNotify(disp, cfg)
 	}
 
-	// 等待退出信号
+	// Wait for shutdown signal
 	sig := <-sigCh
 	log.WithField("signal", sig.String()).Warn("Received shutdown signal")
 	fmt.Println("\nShutting down...")
 
-	// 先取消 context，让 agent.Run() 退出（其 defer 会清理 cron 和 cleanup routine）
+	// Cancel context first to let agent.Run() exit (its defer cleans up cron and cleanup routines)
 	cancel()
 
-	// 关闭 Webhook 事件服务器
+	// Close Webhook event server
 	if webhookServer != nil {
 		webhookServer.Stop()
 	}
 
-	// 等待 agent loop 退出后再继续关闭
+	// Wait for agent loop to exit before continuing shutdown
 	if backend != nil {
 		backend.Close()
 	}
 
-	// 关闭沙箱（清理 Docker 容器等资源）
-	// export/import 可能耗时较长（大容器数分钟），不设超时，必须等待完成。
+	// Close sandbox (clean up Docker containers and other resources)
+	// export/import may take long (large containers: minutes); no timeout, must wait for completion.
 	if sandbox := tools.GetSandbox(); sandbox != nil {
 		if err := sandbox.Close(); err != nil {
 			log.WithError(err).Warn("Sandbox close error")
 		}
 	}
 
-	// 停止 OAuth 服务器
+	// Stop OAuth server
 	if oauthServer != nil {
 		if err := oauthServer.Shutdown(context.Background()); err != nil {
 			log.WithError(err).Warn("OAuth server shutdown error")
 		}
 	}
-	// 停止 OAuth Manager 的定期清理 goroutine
+	// Stop OAuth Manager periodic cleanup goroutine
 	if oauthManager != nil {
 		oauthManager.Close()
 	}
 
-	// 关闭 OAuth 共享数据库连接
+	// Close OAuth shared database connection
 	if sharedDB != nil {
 		if err := sharedDB.Close(); err != nil {
 			log.WithError(err).Warn("OAuth shared DB close error")
 		}
 	}
 
-	// 关闭 runner token 数据库连接
+	// Close runner token database connection
 	if tokenDB != nil {
 		if err := tokenDB.Close(); err != nil {
 			log.WithError(err).Warn("Token DB close error")
@@ -786,7 +786,7 @@ func Run(args []string) error {
 	return nil
 }
 
-// createLLM 根据配置创建 LLM 客户端（带重试、指数退避和随机抖动）
+// createLLM creates an LLM client with retry, exponential backoff, and jitter
 func createLLM(cfg config.LLMConfig, retryCfg llm_pkg.RetryConfig) (llm_pkg.LLM, error) {
 	var inner llm_pkg.LLM
 	switch cfg.Provider {
@@ -809,17 +809,20 @@ func createLLM(cfg config.LLMConfig, retryCfg llm_pkg.RetryConfig) (llm_pkg.LLM,
 	return llm_pkg.NewRetryLLM(inner, retryCfg), nil
 }
 
-// setupLogger 配置日志
+// logMaxAge is the number of days to retain log files.
+const logMaxAge = 7
+
+// setupLogger configures the logger
 func setupLogger(cfg config.LogConfig, workDir string) error {
 	return log.Setup(log.SetupConfig{
 		Level:   cfg.Level,
 		Format:  cfg.Format,
 		WorkDir: workDir,
-		MaxAge:  7, // 保留 7 天日志
+		MaxAge:  logMaxAge,
 	})
 }
 
-// getChannels 获取分发器中的所有渠道（辅助函数）
+// getChannels returns all channels from the dispatcher (helper)
 func getChannels(disp *channel.Dispatcher) map[string]channel.Channel {
 	result := make(map[string]channel.Channel)
 	for _, name := range disp.EnabledChannels() {
@@ -830,9 +833,12 @@ func getChannels(disp *channel.Dispatcher) map[string]channel.Channel {
 	return result
 }
 
-// sendStartupNotify 发送启动上线通知
+// startupNotifyMaxRetries is the number of times to retry sending the startup notification.
+const startupNotifyMaxRetries = 3
+
+// sendStartupNotify sends the startup online notification
 func sendStartupNotify(disp *channel.Dispatcher, cfg *config.Config) {
-	// 等待渠道 WebSocket 连接建立（轮询，最多 10 秒）
+	// Wait for channel WebSocket connections (polling, max 10s)
 	const maxWait = 10 * time.Second
 	const pollInterval = 500 * time.Millisecond
 	deadline := time.Now().Add(maxWait)
@@ -854,7 +860,7 @@ func sendStartupNotify(disp *channel.Dispatcher, cfg *config.Config) {
 		cfg.Agent.MemoryProvider,
 	)
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < startupNotifyMaxRetries; i++ {
 		_, err := disp.SendDirect(bus.OutboundMessage{
 			Channel: cfg.StartupNotify.Channel,
 			ChatID:  cfg.StartupNotify.ChatID,
@@ -870,11 +876,11 @@ func sendStartupNotify(disp *channel.Dispatcher, cfg *config.Config) {
 		log.WithError(err).Warn("Failed to send startup notification, retrying...")
 		time.Sleep(2 * time.Second)
 	}
-	log.Error("Failed to send startup notification after 3 attempts")
+	log.Errorf("Failed to send startup notification after %d attempts", startupNotifyMaxRetries)
 }
 
-// feishuPromptAdapter 将 FeishuChannel 桥接为 agent.ChannelPromptProvider 接口。
-// 避免在 agent 包中直接依赖 channel 包。
+// feishuPromptAdapter bridges FeishuChannel to the agent.ChannelPromptProvider interface.
+// Avoids direct dependency on the channel package from the agent package.
 type feishuPromptAdapter struct {
 	ch *channel.FeishuChannel
 }

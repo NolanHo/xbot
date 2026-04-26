@@ -302,18 +302,137 @@ func (t *CardAddInteractiveTool) Parameters() []llm.ToolParam {
 	}
 }
 
-func (t *CardAddInteractiveTool) Execute(ctx *ToolContext, input string) (*ToolResult, error) {
-	var args struct {
-		CardID     string `json:"card_id"`
-		Type       string `json:"type"`
-		Name       string `json:"name"`
-		Text       string `json:"text"`
-		Options    string `json:"options"`
-		URL        string `json:"url"`
-		Value      string `json:"value"`
-		Properties string `json:"properties"`
-		ParentID   string `json:"parent_id"`
+// interactiveToolArgs holds parsed arguments for card_add_interactive.
+type interactiveToolArgs struct {
+	CardID     string `json:"card_id"`
+	Type       string `json:"type"`
+	Name       string `json:"name"`
+	Text       string `json:"text"`
+	Options    string `json:"options"`
+	URL        string `json:"url"`
+	Value      string `json:"value"`
+	Properties string `json:"properties"`
+	ParentID   string `json:"parent_id"`
+}
+
+// buildButtonElement constructs a button element with URL, value, and name handling.
+func buildButtonElement(args interactiveToolArgs, props map[string]any, elemID string) (*CardElement, error) {
+	if args.Text == "" {
+		return nil, fmt.Errorf("text is required for button")
 	}
+	btnType, _ := props["button_type"].(string)
+	if btnType == "" {
+		btnType = "default"
+	}
+	delete(props, "button_type")
+	if args.URL != "" {
+		props["url"] = args.URL
+	}
+	if args.Value != "" {
+		var val any
+		if err := json.Unmarshal([]byte(args.Value), &val); err != nil {
+			val = args.Value
+		}
+		if valMap, ok := val.(map[string]any); ok {
+			valMap["card_id"] = args.CardID
+			props["value"] = valMap
+		} else {
+			props["value"] = map[string]any{"card_id": args.CardID, "data": val}
+		}
+	} else {
+		props["value"] = map[string]any{"card_id": args.CardID}
+	}
+	if args.Name != "" {
+		props["name"] = args.Name
+	} else {
+		props["name"] = elemID
+	}
+	return BuildButton(args.Text, btnType, props), nil
+}
+
+// buildInteractiveElement dispatches to the appropriate element builder based on typeName.
+func buildInteractiveElement(typeName, elemID string, args interactiveToolArgs, props map[string]any) (*CardElement, error) {
+	switch typeName {
+	case "button":
+		return buildButtonElement(args, props, elemID)
+	case "input":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for input")
+		}
+		return BuildInput(args.Name, props), nil
+	case "select_static":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for select_static")
+		}
+		opts, err := ParseSelectOptions(args.Options)
+		if err != nil {
+			return nil, fmt.Errorf("select_static: %w", err)
+		}
+		return BuildSelectStatic(args.Name, opts, props), nil
+	case "multi_select_static":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for multi_select_static")
+		}
+		opts, err := ParseSelectOptions(args.Options)
+		if err != nil {
+			return nil, fmt.Errorf("multi_select_static: %w", err)
+		}
+		return BuildMultiSelectStatic(args.Name, opts, props), nil
+	case "select_person":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for select_person")
+		}
+		return BuildSelectPerson(args.Name, props), nil
+	case "multi_select_person":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for multi_select_person")
+		}
+		return BuildMultiSelectPerson(args.Name, props), nil
+	case "date_picker":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for date_picker")
+		}
+		return BuildDatePicker(args.Name, props), nil
+	case "picker_time":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for picker_time")
+		}
+		return BuildTimePicker(args.Name, props), nil
+	case "picker_datetime":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for picker_datetime")
+		}
+		return BuildDateTimePicker(args.Name, props), nil
+	case "overflow":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for overflow")
+		}
+		opts, err := ParseSelectOptions(args.Options)
+		if err != nil {
+			return nil, fmt.Errorf("overflow: %w", err)
+		}
+		return BuildOverflow(args.Name, opts, props), nil
+	case "checker":
+		if args.Name == "" || args.Text == "" {
+			return nil, fmt.Errorf("name and text are required for checker")
+		}
+		return BuildChecker(args.Name, args.Text, props), nil
+	case "select_img":
+		if args.Name == "" {
+			return nil, fmt.Errorf("name is required for select_img")
+		}
+		opts, err := ParseImgSelectOptions(args.Options)
+		if err != nil {
+			return nil, err
+		}
+		return BuildSelectImg(args.Name, opts, props), nil
+	default:
+		return nil, fmt.Errorf("unsupported interactive type '%s'. Supported: button, input, select_static, multi_select_static, select_person, multi_select_person, date_picker, picker_time, picker_datetime, overflow, checker, select_img", typeName)
+	}
+}
+
+func (t *CardAddInteractiveTool) Execute(ctx *ToolContext, input string) (*ToolResult, error) {
+	var args interactiveToolArgs
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return nil, fmt.Errorf("parse arguments: %w", err)
 	}
@@ -331,151 +450,16 @@ func (t *CardAddInteractiveTool) Execute(ctx *ToolContext, input string) (*ToolR
 	typeName := args.Type
 
 	// Enforce: form-required interactive types must be inside a form container.
-	// Placing them at root level causes per-interaction callbacks that don't
-	// return a Card field, causing Feishu to restore the card to original state.
 	if formRequiredTypes[typeName] {
-		if args.ParentID == "" {
-			return nil, fmt.Errorf(
-				"type '%s' MUST be placed inside a form container. "+
-					"First create a form with card_add_container(type='form'), "+
-					"then use the returned container ID as parent_id. "+
-					"If you need to collect user input, always use a form. "+
-					"If no input is needed, use pure markdown cards with buttons only",
-				typeName,
-			)
-		}
-		if parent, ok := session.Containers[args.ParentID]; !ok || parent.Tag != "form" {
-			return nil, fmt.Errorf(
-				"type '%s' must be inside a form container, but parent_id '%s' is not a form. "+
-					"First create a form with card_add_container(type='form'), "+
-					"then use the returned form ID as parent_id",
-				typeName, args.ParentID,
-			)
+		if err := validateFormParent(typeName, args.ParentID, session); err != nil {
+			return nil, err
 		}
 	}
 
-	var elem *CardElement
 	elemID := session.NextElementID(typeName)
-
-	switch typeName {
-	case "button":
-		if args.Text == "" {
-			return nil, fmt.Errorf("text is required for button")
-		}
-		btnType, _ := props["button_type"].(string)
-		if btnType == "" {
-			btnType = "default"
-		}
-		delete(props, "button_type")
-
-		if args.URL != "" {
-			props["url"] = args.URL
-		}
-		if args.Value != "" {
-			var val any
-			if err := json.Unmarshal([]byte(args.Value), &val); err != nil {
-				val = args.Value
-			}
-			if valMap, ok := val.(map[string]any); ok {
-				valMap["card_id"] = args.CardID
-				props["value"] = valMap
-			} else {
-				props["value"] = map[string]any{"card_id": args.CardID, "data": val}
-			}
-		} else {
-			props["value"] = map[string]any{"card_id": args.CardID}
-		}
-		if args.Name != "" {
-			props["name"] = args.Name
-		} else {
-			props["name"] = elemID
-		}
-		elem = BuildButton(args.Text, btnType, props)
-
-	case "input":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for input")
-		}
-		elem = BuildInput(args.Name, props)
-
-	case "select_static":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for select_static")
-		}
-		opts, err := ParseSelectOptions(args.Options)
-		if err != nil {
-			return nil, fmt.Errorf("select_static: %w", err)
-		}
-		elem = BuildSelectStatic(args.Name, opts, props)
-
-	case "multi_select_static":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for multi_select_static")
-		}
-		opts, err := ParseSelectOptions(args.Options)
-		if err != nil {
-			return nil, fmt.Errorf("multi_select_static: %w", err)
-		}
-		elem = BuildMultiSelectStatic(args.Name, opts, props)
-
-	case "select_person":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for select_person")
-		}
-		elem = BuildSelectPerson(args.Name, props)
-
-	case "multi_select_person":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for multi_select_person")
-		}
-		elem = BuildMultiSelectPerson(args.Name, props)
-
-	case "date_picker":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for date_picker")
-		}
-		elem = BuildDatePicker(args.Name, props)
-
-	case "picker_time":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for picker_time")
-		}
-		elem = BuildTimePicker(args.Name, props)
-
-	case "picker_datetime":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for picker_datetime")
-		}
-		elem = BuildDateTimePicker(args.Name, props)
-
-	case "overflow":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for overflow")
-		}
-		opts, err := ParseSelectOptions(args.Options)
-		if err != nil {
-			return nil, fmt.Errorf("overflow: %w", err)
-		}
-		elem = BuildOverflow(args.Name, opts, props)
-
-	case "checker":
-		if args.Name == "" || args.Text == "" {
-			return nil, fmt.Errorf("name and text are required for checker")
-		}
-		elem = BuildChecker(args.Name, args.Text, props)
-
-	case "select_img":
-		if args.Name == "" {
-			return nil, fmt.Errorf("name is required for select_img")
-		}
-		opts, err := ParseImgSelectOptions(args.Options)
-		if err != nil {
-			return nil, err
-		}
-		elem = BuildSelectImg(args.Name, opts, props)
-
-	default:
-		return nil, fmt.Errorf("unsupported interactive type '%s'. Supported: button, input, select_static, multi_select_static, select_person, multi_select_person, date_picker, picker_time, picker_datetime, overflow, checker, select_img", typeName)
+	elem, err := buildInteractiveElement(typeName, elemID, args, props)
+	if err != nil {
+		return nil, err
 	}
 
 	elem.ID = elemID
@@ -484,6 +468,29 @@ func (t *CardAddInteractiveTool) Execute(ctx *ToolContext, input string) (*ToolR
 	}
 
 	return NewResult(fmt.Sprintf("Added %s element (id: %s) to card %s", typeName, elem.ID, args.CardID)), nil
+}
+
+// validateFormParent checks that form-required types have a valid form parent.
+func validateFormParent(typeName, parentID string, session *CardSession) error {
+	if parentID == "" {
+		return fmt.Errorf(
+			"type '%s' MUST be placed inside a form container. "+
+				"First create a form with card_add_container(type='form'), "+
+				"then use the returned container ID as parent_id. "+
+				"If you need to collect user input, always use a form. "+
+				"If no input is needed, use pure markdown cards with buttons only",
+			typeName,
+		)
+	}
+	if parent, ok := session.Containers[parentID]; !ok || parent.Tag != "form" {
+		return fmt.Errorf(
+			"type '%s' must be inside a form container, but parent_id '%s' is not a form. "+
+				"First create a form with card_add_container(type='form'), "+
+				"then use the returned form ID as parent_id",
+			typeName, parentID,
+		)
+	}
+	return nil
 }
 
 // ============================================================

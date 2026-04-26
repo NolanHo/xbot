@@ -33,6 +33,8 @@ var napcatReconnectDelays = []time.Duration{
 const napcatMaxReconnectAttempts = 100
 const napcatQuickDisconnectWindow = 5 * time.Second
 const napcatQuickDisconnectCount = 3
+const napcatConnectTimeout = 30 * time.Second    // Max wait for initial WebSocket connection
+const napcatReconnectInterval = 60 * time.Second // Pause between reconnect attempts
 
 // ---------------------------------------------------------------------------
 // NapCatConfig 配置
@@ -108,7 +110,7 @@ func (n *NapCatChannel) Start() error {
 			return nil // graceful shutdown
 		}
 		// 连接持续超过 30s 说明不是立即断开，重置计数
-		if time.Since(connectStart) > 30*time.Second {
+		if time.Since(connectStart) > napcatConnectTimeout {
 			attempt = 0
 		}
 
@@ -119,7 +121,7 @@ func (n *NapCatChannel) Start() error {
 		// Quick disconnect detection
 		if n.isQuickDisconnectLoop() {
 			log.Warn("NapCat: rapid disconnect loop detected, waiting 60s")
-			if !n.sleepOrStop(60 * time.Second) {
+			if !n.sleepOrStop(napcatReconnectInterval) {
 				return nil
 			}
 			attempt++
@@ -759,7 +761,7 @@ func (n *NapCatChannel) callAPI(action string, params any) (*obAPIResponse, erro
 			return &resp, fmt.Errorf("api error: status=%s retcode=%d", resp.Status, resp.RetCode)
 		}
 		return &resp, nil
-	case <-time.After(30 * time.Second):
+	case <-time.After(napcatConnectTimeout):
 		n.pendingMu.Lock()
 		if ch, ok := n.pending[echo]; ok {
 			close(ch)

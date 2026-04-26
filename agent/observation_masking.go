@@ -35,6 +35,12 @@ const (
 	offloadEntryPrefix = "📂 [offload:" // Prefix identifying offloaded tool result entries
 )
 
+// Observation masking display limits.
+const (
+	maskArgsPreviewLen     = 80 // max runes for args preview in masked summary
+	maskListArgsPreviewLen = 60 // max runes for args preview in list view
+)
+
 // ObservationMaskStore manages observation masking storage and recall.
 // Zero-cost compression strategy: mask old tool results, don't send to LLM, but fully retain for tool-based recall.
 // Dual capacity limit: maxSize (entry count) + maxChars (total characters), evicts oldest entries when either is exceeded.
@@ -251,9 +257,7 @@ func (s *ObservationMaskStore) Mask(toolName, arguments, content string, message
 
 	// Generate placeholder
 	argsPreview := arguments
-	if len([]rune(argsPreview)) > 80 {
-		argsPreview = string([]rune(argsPreview)[:80]) + "..."
-	}
+	argsPreview = truncateRunes(argsPreview, maskArgsPreviewLen)
 	charCount := len([]rune(content))
 	placeholder := fmt.Sprintf("📂 [masked:%s] %s(%s) — %d chars — 结果已遮蔽，使用 recall_masked 可查看完整内容", id, toolName, argsPreview, charCount)
 
@@ -430,9 +434,7 @@ func (s *ObservationMaskStore) RecallMasked(id string) (string, string, error) {
 		return "", "", err
 	}
 	argsPreview := obs.Arguments
-	if len([]rune(argsPreview)) > 80 {
-		argsPreview = string([]rune(argsPreview)[:80]) + "..."
-	}
+	argsPreview = truncateRunes(argsPreview, maskArgsPreviewLen)
 	return fmt.Sprintf("%s(%s)", obs.ToolName, argsPreview), obs.Content, nil
 }
 
@@ -442,9 +444,7 @@ func (s *ObservationMaskStore) ListMasked() []map[string]interface{} {
 	result := make([]map[string]interface{}, len(entries))
 	for i, e := range entries {
 		argsPreview := e.Arguments
-		if len([]rune(argsPreview)) > 60 {
-			argsPreview = string([]rune(argsPreview)[:60]) + "..."
-		}
+		argsPreview = truncateRunes(argsPreview, maskListArgsPreviewLen)
 		result[i] = map[string]interface{}{
 			"id":           e.ID,
 			"tool_name":    e.ToolName,

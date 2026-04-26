@@ -307,6 +307,18 @@ func (m *cliModel) startAgentTurn() {
 	m.resetProgressState()
 }
 
+// restoreToolStartedAt bootstraps the StartedAt timestamp for tools that only
+// have an Elapsed duration (e.g. from a progress snapshot). Without StartedAt,
+// the live elapsed timer in the progress block would reset to 0.
+func restoreToolStartedAt(tools []CLIToolProgress) {
+	for i := range tools {
+		t := &tools[i]
+		if t.StartedAt.IsZero() && t.Elapsed > 0 {
+			t.StartedAt = time.Now().Add(-time.Duration(t.Elapsed) * time.Millisecond)
+		}
+	}
+}
+
 // restoreProgressSnapshot applies a progress snapshot to the model for seamless
 // reconnect/session-switch. Used when CLI reconnects to a running agent turn.
 // Sets the model into typing state with the full iteration history restored.
@@ -325,12 +337,7 @@ func (m *cliModel) restoreProgressSnapshot(payload *CLIProgressPayload) {
 	m.progress = payload
 
 	// Restore StartedAt for active tools so live elapsed timers work.
-	for i := range m.progress.ActiveTools {
-		t := &m.progress.ActiveTools[i]
-		if t.StartedAt.IsZero() && t.Elapsed > 0 {
-			t.StartedAt = time.Now().Add(-time.Duration(t.Elapsed) * time.Millisecond)
-		}
-	}
+	restoreToolStartedAt(m.progress.ActiveTools)
 
 	// Restore iteration history from the progress snapshot.
 	if len(payload.IterationHistory) > 0 {
@@ -341,12 +348,7 @@ func (m *cliModel) restoreProgressSnapshot(payload *CLIProgressPayload) {
 				Reasoning: ih.Reasoning,
 				Tools:     ih.CompletedTools,
 			}
-			for i := range snap.Tools {
-				t := &snap.Tools[i]
-				if t.StartedAt.IsZero() && t.Elapsed > 0 {
-					t.StartedAt = time.Now().Add(-time.Duration(t.Elapsed) * time.Millisecond)
-				}
-			}
+			restoreToolStartedAt(snap.Tools)
 			m.iterationHistory = append(m.iterationHistory, snap)
 		}
 		if len(m.iterationHistory) > 0 {

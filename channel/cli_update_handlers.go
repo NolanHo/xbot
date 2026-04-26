@@ -375,13 +375,7 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 				Reasoning: ih.Reasoning,
 				Tools:     ih.CompletedTools,
 			}
-			// Restore StartedAt for tools that have Elapsed but zero StartedAt.
-			for i := range snap.Tools {
-				t := &snap.Tools[i]
-				if t.StartedAt.IsZero() && t.Elapsed > 0 {
-					t.StartedAt = time.Now().Add(-time.Duration(t.Elapsed) * time.Millisecond)
-				}
-			}
+			restoreToolStartedAt(snap.Tools)
 			m.iterationHistory = append(m.iterationHistory, snap)
 		}
 		// Set lastSeenIteration to the latest restored iteration so we don't
@@ -765,12 +759,7 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 		m.progress = msg.activeProgress
 
 		// Restore StartedAt for active tools so live elapsed timers work.
-		for i := range m.progress.ActiveTools {
-			t := &m.progress.ActiveTools[i]
-			if t.StartedAt.IsZero() && t.Elapsed > 0 {
-				t.StartedAt = time.Now().Add(-time.Duration(t.Elapsed) * time.Millisecond)
-			}
-		}
+		restoreToolStartedAt(m.progress.ActiveTools)
 
 		// Rebuild iteration history from server snapshot (authoritative).
 		m.iterationHistory = nil
@@ -782,12 +771,7 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 					Reasoning: ih.Reasoning,
 					Tools:     ih.CompletedTools,
 				}
-				for i := range snap.Tools {
-					t := &snap.Tools[i]
-					if t.StartedAt.IsZero() && t.Elapsed > 0 {
-						t.StartedAt = time.Now().Add(-time.Duration(t.Elapsed) * time.Millisecond)
-					}
-				}
+				restoreToolStartedAt(snap.Tools)
 				m.iterationHistory = append(m.iterationHistory, snap)
 			}
 			if len(m.iterationHistory) > 0 {

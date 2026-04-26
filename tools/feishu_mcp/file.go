@@ -134,7 +134,7 @@ func (t *UploadFileTool) Execute(ctx *tools.ToolContext, input string) (*tools.T
 	}
 
 	// Validate data size (limited to 100MB to prevent OOM)
-	if len(data) > 100*1024*1024 {
+	if len(data) > maxFeishuDownloadSize {
 		return nil, fmt.Errorf("file size exceeds 100MB limit")
 	}
 

@@ -16,6 +16,9 @@ import (
 	log "xbot/logger"
 )
 
+// maxFeishuDownloadSize is the maximum file size for Feishu downloads (100MB).
+const maxFeishuDownloadSize = 100 * 1024 * 1024
+
 // Package-level HTTP clients to avoid creating new instances per request.
 var (
 	downloadClient = &http.Client{Timeout: 60 * time.Second}
@@ -109,11 +112,11 @@ func (t *DownloadFileTool) Execute(ctx *tools.ToolContext, input string) (*tools
 	}
 
 	// Read response body
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 100*1024*1024))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFeishuDownloadSize))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
-	if len(data) >= 100*1024*1024 {
+	if len(data) >= maxFeishuDownloadSize {
 		return nil, fmt.Errorf("downloaded file exceeds maximum size (100MB)")
 	}
 

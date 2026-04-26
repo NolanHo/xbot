@@ -366,11 +366,226 @@ func buildWebCallbacks(cfg *config.Config, backend agent.AgentBackend, webDB *sq
 	return callbacks
 }
 
+// --- Feishu settings callback helpers ---
+
+// feishuSubscriptionCallbacks builds the LLM subscription management callbacks.
+func feishuSubscriptionCallbacks(backend agent.AgentBackend) (
+	listSubscriptions func(senderID string) ([]channel.Subscription, error),
+	getDefaultSubscription func(senderID string) (*channel.Subscription, error),
+	addSubscription func(senderID string, sub *channel.Subscription) error,
+	removeSubscription func(id string) error,
+	setDefaultSubscription func(id string) error,
+	renameSubscription func(id, name string) error,
+) {
+	svc := backend.LLMFactory().GetSubscriptionSvc()
+
+	listSubscriptions = func(senderID string) ([]channel.Subscription, error) {
+		subs, err := svc.List(senderID)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]channel.Subscription, len(subs))
+		for i, s := range subs {
+			result[i] = subToChannel(s)
+		}
+		return result, nil
+	}
+
+	getDefaultSubscription = func(senderID string) (*channel.Subscription, error) {
+		sub, err := svc.GetDefault(senderID)
+		if err != nil || sub == nil {
+			return nil, err
+		}
+		// Return raw APIKey (not masked) — this is used for editing,
+		// and matches the original master behavior.
+		ch := channel.Subscription{
+			ID: sub.ID, Name: sub.Name, Provider: sub.Provider,
+			BaseURL: sub.BaseURL, APIKey: sub.APIKey,
+			Model: sub.Model, Active: sub.IsDefault,
+			MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode,
+		}
+		return &ch, nil
+	}
+
+	addSubscription = func(senderID string, sub *channel.Subscription) error {
+		err := svc.Add(&sqlite.LLMSubscription{
+			SenderID: senderID,
+			Name:     sub.Name,
+			Provider: sub.Provider,
+			BaseURL:  sub.BaseURL,
+			APIKey:   sub.APIKey,
+			Model:    sub.Model,
+		})
+		if err == nil {
+			backend.LLMFactory().Invalidate(senderID)
+		}
+		return err
+	}
+
+	removeSubscription = func(id string) error {
+		sub, err := svc.Get(id)
+		if err != nil {
+			return err
+		}
+		if err := svc.Remove(id); err != nil {
+			return err
+		}
+		backend.LLMFactory().Invalidate(sub.SenderID)
+		return nil
+	}
+
+	setDefaultSubscription = func(id string) error {
+		if err := svc.SetDefault(id); err != nil {
+			return err
+		}
+		sub, err := svc.Get(id)
+		if err == nil && sub != nil {
+			backend.LLMFactory().Invalidate(sub.SenderID)
+		}
+		return nil
+	}
+
+	renameSubscription = func(id, name string) error {
+		return svc.Rename(id, name)
+	}
+
+	return
+}
+
+// feishuModelTierCallbacks builds the model tier get/set and ListAllModels callbacks.
+func feishuModelTierCallbacks(cfg *config.Config, backend agent.AgentBackend) (
+	getModelTier func(tier string) string,
+	setModelTier func(tier, model string) error,
+	listAllModels func() []string,
+) {
+	getModelTier = func(tier string) string {
+		switch tier {
+		case "vanguard":
+			return cfg.LLM.VanguardModel
+		case "balance":
+			return cfg.LLM.BalanceModel
+		case "swift":
+			return cfg.LLM.SwiftModel
+		default:
+			return ""
+		}
+	}
+
+	setModelTier = func(tier, model string) error {
+		switch tier {
+		case "vanguard":
+			cfg.LLM.VanguardModel = model
+		case "balance":
+			cfg.LLM.BalanceModel = model
+		case "swift":
+			cfg.LLM.SwiftModel = model
+		default:
+			return fmt.Errorf("unknown tier: %s", tier)
+		}
+		backend.LLMFactory().SetModelTiers(cfg.LLM)
+		return saveServerConfig(cfg)
+	}
+
+	listAllModels = func() []string {
+		return backend.LLMFactory().ListAllModelsForUser("")
+	}
+
+	return
+}
+
+// feishuSandboxCallbacks builds the sandbox cleanup and export-status callbacks.
+func feishuSandboxCallbacks() (
+	cleanupTrigger func(senderID string) error,
+	isExporting func(senderID string) bool,
+) {
+	cleanupTrigger = func(senderID string) error {
+		sb := tools.GetSandbox()
+		if sb == nil {
+			return fmt.Errorf("sandbox not initialized")
+		}
+		return sb.ExportAndImport(senderID)
+	}
+
+	isExporting = func(senderID string) bool {
+		sb := tools.GetSandbox()
+		if sb == nil {
+			return false
+		}
+		return sb.IsExporting(senderID)
+	}
+
+	return
+}
+
+// feishuWebLinkCallbacks builds the Feishu-Web account linking callbacks.
+func feishuWebLinkCallbacks() (
+	link func(feishuUserID, username, password string) (string, error),
+	getLinked func(feishuUserID string) (string, bool),
+	unlink func(feishuUserID string) error,
+) {
+	link = func(feishuUserID, username, password string) (string, error) {
+		db := tools.GetRunnerTokenDB()
+		if db == nil {
+			return "", fmt.Errorf("web linking not enabled")
+		}
+		return channel.FeishuLinkUser(db, feishuUserID, username, password)
+	}
+
+	getLinked = func(feishuUserID string) (string, bool) {
+		db := tools.GetRunnerTokenDB()
+		if db == nil {
+			return "", false
+		}
+		return channel.FeishuGetLinkedUser(db, feishuUserID)
+	}
+
+	unlink = func(feishuUserID string) error {
+		db := tools.GetRunnerTokenDB()
+		if db == nil {
+			return fmt.Errorf("web linking not enabled")
+		}
+		return channel.FeishuUnlinkUser(db, feishuUserID)
+	}
+
+	return
+}
+
+// feishuMemoryCallbacks builds the memory clear and stats callbacks.
+func feishuMemoryCallbacks(backend agent.AgentBackend) (
+	clear func(senderID, chatID, targetType string) error,
+	getStats func(senderID, chatID string) map[string]string,
+) {
+	clear = func(senderID, chatID, targetType string) error {
+		return backend.MultiSession().ClearMemory(context.Background(), "feishu", chatID, targetType, senderID)
+	}
+
+	getStats = func(senderID, chatID string) map[string]string {
+		return backend.MultiSession().GetMemoryStats(context.Background(), "feishu", chatID, senderID)
+	}
+
+	return
+}
+
 // buildFeishuSettingsCallbacks builds SettingsCallbacks for Feishu using shared builders.
 func buildFeishuSettingsCallbacks(cfg *config.Config, backend agent.AgentBackend) channel.SettingsCallbacks {
 	rc := runnerCallbacks(cfg)
 	regc := registryCallbacks(backend)
 	llmc := llmCallbacks(backend)
+
+	// Subscription management
+	listSubs, getDefaultSub, addSub, removeSub, setDefaultSub, renameSub := feishuSubscriptionCallbacks(backend)
+
+	// Model tier
+	getModelTier, setModelTier, listAllModels := feishuModelTierCallbacks(cfg, backend)
+
+	// Sandbox
+	sandboxCleanup, sandboxIsExporting := feishuSandboxCallbacks()
+
+	// Feishu-Web linking
+	feishuWebLink, feishuWebGetLinked, feishuWebUnlink := feishuWebLinkCallbacks()
+
+	// Memory
+	memoryClear, memoryGetStats := feishuMemoryCallbacks(backend)
 
 	return channel.SettingsCallbacks{
 		// LLM basic callbacks
@@ -397,104 +612,17 @@ func buildFeishuSettingsCallbacks(cfg *config.Config, backend agent.AgentBackend
 		},
 
 		// Subscription management
-		LLMListSubscriptions: func(senderID string) ([]channel.Subscription, error) {
-			subs, err := backend.LLMFactory().GetSubscriptionSvc().List(senderID)
-			if err != nil {
-				return nil, err
-			}
-			result := make([]channel.Subscription, len(subs))
-			for i, s := range subs {
-				result[i] = subToChannel(s)
-			}
-			return result, nil
-		},
-		LLMGetDefaultSubscription: func(senderID string) (*channel.Subscription, error) {
-			sub, err := backend.LLMFactory().GetSubscriptionSvc().GetDefault(senderID)
-			if err != nil || sub == nil {
-				return nil, err
-			}
-			// Return raw APIKey (not masked) — this is used for editing,
-			// and matches the original master behavior.
-			ch := channel.Subscription{
-				ID: sub.ID, Name: sub.Name, Provider: sub.Provider,
-				BaseURL: sub.BaseURL, APIKey: sub.APIKey,
-				Model: sub.Model, Active: sub.IsDefault,
-				MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode,
-			}
-			return &ch, nil
-		},
-		LLMAddSubscription: func(senderID string, sub *channel.Subscription) error {
-			svc := backend.LLMFactory().GetSubscriptionSvc()
-			err := svc.Add(&sqlite.LLMSubscription{
-				SenderID: senderID,
-				Name:     sub.Name,
-				Provider: sub.Provider,
-				BaseURL:  sub.BaseURL,
-				APIKey:   sub.APIKey,
-				Model:    sub.Model,
-			})
-			if err == nil {
-				backend.LLMFactory().Invalidate(senderID)
-			}
-			return err
-		},
-		LLMRemoveSubscription: func(id string) error {
-			svc := backend.LLMFactory().GetSubscriptionSvc()
-			sub, err := svc.Get(id)
-			if err != nil {
-				return err
-			}
-			if err := svc.Remove(id); err != nil {
-				return err
-			}
-			backend.LLMFactory().Invalidate(sub.SenderID)
-			return nil
-		},
-		LLMSetDefaultSubscription: func(id string) error {
-			svc := backend.LLMFactory().GetSubscriptionSvc()
-			if err := svc.SetDefault(id); err != nil {
-				return err
-			}
-			sub, err := svc.Get(id)
-			if err == nil && sub != nil {
-				backend.LLMFactory().Invalidate(sub.SenderID)
-			}
-			return nil
-		},
-		LLMRenameSubscription: func(id, name string) error {
-			return backend.LLMFactory().GetSubscriptionSvc().Rename(id, name)
-		},
+		LLMListSubscriptions:      listSubs,
+		LLMGetDefaultSubscription: getDefaultSub,
+		LLMAddSubscription:        addSub,
+		LLMRemoveSubscription:     removeSub,
+		LLMSetDefaultSubscription: setDefaultSub,
+		LLMRenameSubscription:     renameSub,
 
 		// Model tier
-		LLMGetModelTier: func(tier string) string {
-			switch tier {
-			case "vanguard":
-				return cfg.LLM.VanguardModel
-			case "balance":
-				return cfg.LLM.BalanceModel
-			case "swift":
-				return cfg.LLM.SwiftModel
-			default:
-				return ""
-			}
-		},
-		LLMSetModelTier: func(tier, model string) error {
-			switch tier {
-			case "vanguard":
-				cfg.LLM.VanguardModel = model
-			case "balance":
-				cfg.LLM.BalanceModel = model
-			case "swift":
-				cfg.LLM.SwiftModel = model
-			default:
-				return fmt.Errorf("unknown tier: %s", tier)
-			}
-			backend.LLMFactory().SetModelTiers(cfg.LLM)
-			return saveServerConfig(cfg)
-		},
-		LLMListAllModels: func() []string {
-			return backend.LLMFactory().ListAllModelsForUser("")
-		},
+		LLMGetModelTier:  getModelTier,
+		LLMSetModelTier:  setModelTier,
+		LLMListAllModels: listAllModels,
 
 		// Context mode
 		ContextModeGet: func() string {
@@ -518,20 +646,8 @@ func buildFeishuSettingsCallbacks(cfg *config.Config, backend agent.AgentBackend
 		},
 
 		// Sandbox
-		SandboxCleanupTrigger: func(senderID string) error {
-			sb := tools.GetSandbox()
-			if sb == nil {
-				return fmt.Errorf("sandbox not initialized")
-			}
-			return sb.ExportAndImport(senderID)
-		},
-		SandboxIsExporting: func(senderID string) bool {
-			sb := tools.GetSandbox()
-			if sb == nil {
-				return false
-			}
-			return sb.IsExporting(senderID)
-		},
+		SandboxCleanupTrigger: sandboxCleanup,
+		SandboxIsExporting:    sandboxIsExporting,
 
 		// Runner callbacks
 		RunnerConnectCmdGet: func(senderID string) string {
@@ -552,34 +668,12 @@ func buildFeishuSettingsCallbacks(cfg *config.Config, backend agent.AgentBackend
 		RunnerSetActive:     rc.RunnerSetActive,
 
 		// Feishu-Web linking
-		FeishuWebLink: func(feishuUserID, username, password string) (string, error) {
-			db := tools.GetRunnerTokenDB()
-			if db == nil {
-				return "", fmt.Errorf("web linking not enabled")
-			}
-			return channel.FeishuLinkUser(db, feishuUserID, username, password)
-		},
-		FeishuWebGetLinked: func(feishuUserID string) (string, bool) {
-			db := tools.GetRunnerTokenDB()
-			if db == nil {
-				return "", false
-			}
-			return channel.FeishuGetLinkedUser(db, feishuUserID)
-		},
-		FeishuWebUnlink: func(feishuUserID string) error {
-			db := tools.GetRunnerTokenDB()
-			if db == nil {
-				return fmt.Errorf("web linking not enabled")
-			}
-			return channel.FeishuUnlinkUser(db, feishuUserID)
-		},
+		FeishuWebLink:      feishuWebLink,
+		FeishuWebGetLinked: feishuWebGetLinked,
+		FeishuWebUnlink:    feishuWebUnlink,
 
 		// Memory
-		MemoryClear: func(senderID, chatID, targetType string) error {
-			return backend.MultiSession().ClearMemory(context.Background(), "feishu", chatID, targetType, senderID)
-		},
-		MemoryGetStats: func(senderID, chatID string) map[string]string {
-			return backend.MultiSession().GetMemoryStats(context.Background(), "feishu", chatID, senderID)
-		},
+		MemoryClear:    memoryClear,
+		MemoryGetStats: memoryGetStats,
 	}
 }

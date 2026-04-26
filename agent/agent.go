@@ -2149,12 +2149,6 @@ func (a *Agent) buildPrompt(ctx context.Context, msg bus.InboundMessage, tenantS
 }
 
 // max returns the larger of a and b.
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
 
 // summarizeRetryError 将 LLM 错误简化为用户友好的描述。
 func summarizeRetryError(err error) string {

@@ -639,418 +639,448 @@ func (f *FeishuChannel) buildGeneralTabContent(senderID string, o SettingsCardOp
 
 	// ── Multi-Runner Management Section ──
 	if f.settingsCallbacks.RunnerList != nil {
-		elements = append(elements, map[string]any{
-			"tag":     "markdown",
-			"content": "**🖥️ 工作环境**",
-		})
-
-		if strings.TrimSpace(o.RunnerConnectBanner) != "" {
-			elements = append(elements, map[string]any{
-				"tag":     "markdown",
-				"content": fmt.Sprintf("✅ **连接命令**（在本地终端执行）：\n```\n%s\n```", strings.TrimSpace(o.RunnerConnectBanner)),
-			})
-		}
-
-		runners, err := f.settingsCallbacks.RunnerList(senderID)
-		if err != nil || len(runners) == 0 {
-			elements = append(elements, map[string]any{
-				"tag":     "markdown",
-				"content": "尚未添加工作环境。点击下方按钮添加 Runner。",
-			})
-		} else {
-			// Get active runner name
-			activeName := ""
-			if f.settingsCallbacks.RunnerGetActive != nil {
-				if name, err := f.settingsCallbacks.RunnerGetActive(senderID); err == nil {
-					activeName = name
-				}
-			}
-
-			for _, r := range runners {
-				isBuiltin := r.Name == tools.BuiltinDockerRunnerName
-				statusIcon := "🟢"
-				if !r.Online {
-					statusIcon = "⚫"
-				}
-				activeTag := ""
-				if r.Name == activeName {
-					activeTag = " ← 活跃"
-				}
-				displayName := r.Name
-				if isBuiltin {
-					displayName = "Docker Sandbox (内置)"
-				}
-				modeTag := "原生"
-				if r.Mode == "docker" {
-					modeTag = "🐳 Docker"
-				}
-				wsTag := ""
-				if r.Workspace != "" {
-					wsTag = fmt.Sprintf(" · %s", r.Workspace)
-				}
-				if isBuiltin && r.DockerImage != "" {
-					wsTag = fmt.Sprintf(" · %s", r.DockerImage)
-				}
-				elements = append(elements, map[string]any{
-					"tag":     "markdown",
-					"content": fmt.Sprintf("%s **%s**%s (%s%s)", statusIcon, displayName, activeTag, modeTag, wsTag),
-				})
-
-				// Buttons: set active + delete (builtin docker cannot be deleted)
-				var btns []map[string]any
-				if r.Name != activeName {
-					btns = append(btns, map[string]any{
-						"tag":  "button",
-						"text": map[string]any{"tag": "plain_text", "content": "切换"},
-						"type": "primary",
-						"value": map[string]string{
-							"action_data": mustMapToJSON(map[string]string{
-								"action":      "settings_runner_set_active",
-								"runner_name": r.Name,
-							}),
-						},
-					})
-				}
-				if !isBuiltin {
-					btns = append(btns, map[string]any{
-						"tag":  "button",
-						"text": map[string]any{"tag": "plain_text", "content": "🗑️ 删除"},
-						"type": "danger",
-						"value": map[string]string{
-							"action_data": mustMapToJSON(map[string]string{
-								"action":      "settings_runner_delete",
-								"runner_name": r.Name,
-							}),
-						},
-					})
-				}
-				if len(btns) > 0 {
-					elements = append(elements, wrapButtonsInColumns(btns))
-				}
-			}
-		}
-
-		elements = append(elements, map[string]any{
-			"tag":     "markdown",
-			"content": "添加 Runner：任选其一提交。**原生**无镜像字段；**Docker** 需填写镜像。",
-		})
-
-		formNative := []map[string]any{
-			{
-				"tag":  "input",
-				"name": "mr_native_name",
-				"label": map[string]any{
-					"tag":     "plain_text",
-					"content": "Runner 名称",
-				},
-				"placeholder": map[string]any{
-					"tag":     "plain_text",
-					"content": "例如：MacBook Pro",
-				},
-			},
-			{
-				"tag":  "input",
-				"name": "mr_native_workspace",
-				"label": map[string]any{
-					"tag":     "plain_text",
-					"content": "Working directory",
-				},
-				"placeholder": map[string]any{
-					"tag":     "plain_text",
-					"content": "/workspace",
-				},
-			},
-			{
-				"tag":         "button",
-				"name":        "runner_create_native_submit",
-				"text":        map[string]any{"tag": "plain_text", "content": "✨ 添加原生 Runner"},
-				"type":        "primary",
-				"action_type": "form_submit",
-				"value": map[string]string{
-					"action_data": mustMapToJSON(map[string]string{
-						"action":      "settings_runner_create",
-						"runner_mode": "native",
-					}),
-				},
-			},
-		}
-		elements = append(elements, map[string]any{
-			"tag":      "form",
-			"name":     "runner_create_form_native",
-			"elements": formNative,
-		})
-
-		formDocker := []map[string]any{
-			{
-				"tag":  "input",
-				"name": "mr_docker_name",
-				"label": map[string]any{
-					"tag":     "plain_text",
-					"content": "Runner 名称",
-				},
-				"placeholder": map[string]any{
-					"tag":     "plain_text",
-					"content": "例如：docker-dev",
-				},
-			},
-			{
-				"tag":  "input",
-				"name": "mr_docker_image",
-				"label": map[string]any{
-					"tag":     "plain_text",
-					"content": "Docker 镜像",
-				},
-				"placeholder": map[string]any{
-					"tag":     "plain_text",
-					"content": "ubuntu:22.04",
-				},
-			},
-			{
-				"tag":  "input",
-				"name": "mr_docker_workspace",
-				"label": map[string]any{
-					"tag":     "plain_text",
-					"content": "Working directory",
-				},
-				"placeholder": map[string]any{
-					"tag":     "plain_text",
-					"content": "/workspace",
-				},
-			},
-			{
-				"tag":         "button",
-				"name":        "runner_create_docker_submit",
-				"text":        map[string]any{"tag": "plain_text", "content": "✨ 添加 Docker Runner"},
-				"type":        "primary",
-				"action_type": "form_submit",
-				"value": map[string]string{
-					"action_data": mustMapToJSON(map[string]string{
-						"action":      "settings_runner_create",
-						"runner_mode": "docker",
-					}),
-				},
-			},
-		}
-		elements = append(elements, map[string]any{
-			"tag":      "form",
-			"name":     "runner_create_form_docker",
-			"elements": formDocker,
-		})
-
+		elements = append(elements, f.buildMultiRunnerSection(senderID, o)...)
 		elements = append(elements, map[string]any{"tag": "hr"})
 	} else {
 		// ── Legacy: fallback to old single-token runner ──
-		elements = append(elements, map[string]any{
-			"tag":     "markdown",
-			"content": "**远程 Runner**",
-		})
-
-		if f.settingsCallbacks.RunnerTokenGet != nil {
-			connectCmd := f.settingsCallbacks.RunnerTokenGet(senderID)
-			if connectCmd != "" {
-				elements = append(elements, map[string]any{
-					"tag":     "markdown",
-					"content": fmt.Sprintf("在本地机器上运行以下命令连接远程沙箱：\n```\n%s\n```", connectCmd),
-				})
-				elements = append(elements, wrapButtonsInColumns([]map[string]any{
-					{
-						"tag":  "button",
-						"text": map[string]any{"tag": "plain_text", "content": "🔄 重新生成"},
-						"type": "danger",
-						"value": map[string]string{
-							"action_data": mustMapToJSON(map[string]string{
-								"action": "settings_generate_token",
-							}),
-						},
-					},
-					{
-						"tag":  "button",
-						"text": map[string]any{"tag": "plain_text", "content": "🗑️ 撤销"},
-						"type": "danger",
-						"value": map[string]string{
-							"action_data": mustMapToJSON(map[string]string{
-								"action": "settings_revoke_token",
-							}),
-						},
-					},
-				}))
-			} else {
-				// No token — show generation forms (legacy): native vs docker
-				elements = append(elements, map[string]any{
-					"tag":     "markdown",
-					"content": "生成连接命令：**原生**仅Working directory；**Docker** 需填写镜像。",
-				})
-				formLegacyNative := []map[string]any{
-					{
-						"tag":  "input",
-						"name": "tok_native_ws",
-						"label": map[string]any{
-							"tag":     "plain_text",
-							"content": "Working directory",
-						},
-						"placeholder": map[string]any{
-							"tag":     "plain_text",
-							"content": "/workspace",
-						},
-					},
-					{
-						"tag":         "button",
-						"name":        "token_submit_native",
-						"text":        map[string]any{"tag": "plain_text", "content": "生成原生连接命令"},
-						"type":        "primary",
-						"action_type": "form_submit",
-						"value": map[string]string{
-							"action_data": mustMapToJSON(map[string]string{
-								"action":      "settings_generate_token",
-								"runner_mode": "native",
-							}),
-						},
-					},
-				}
-				elements = append(elements, map[string]any{
-					"tag":      "form",
-					"name":     "runner_token_form_native",
-					"elements": formLegacyNative,
-				})
-				formLegacyDocker := []map[string]any{
-					{
-						"tag":  "input",
-						"name": "tok_docker_image",
-						"label": map[string]any{
-							"tag":     "plain_text",
-							"content": "Docker 镜像",
-						},
-						"placeholder": map[string]any{
-							"tag":     "plain_text",
-							"content": "xbot-sandbox:latest",
-						},
-					},
-					{
-						"tag":  "input",
-						"name": "tok_docker_ws",
-						"label": map[string]any{
-							"tag":     "plain_text",
-							"content": "Working directory",
-						},
-						"placeholder": map[string]any{
-							"tag":     "plain_text",
-							"content": "/workspace",
-						},
-					},
-					{
-						"tag":         "button",
-						"name":        "token_submit_docker",
-						"text":        map[string]any{"tag": "plain_text", "content": "生成 Docker 连接命令"},
-						"type":        "primary",
-						"action_type": "form_submit",
-						"value": map[string]string{
-							"action_data": mustMapToJSON(map[string]string{
-								"action":      "settings_generate_token",
-								"runner_mode": "docker",
-							}),
-						},
-					},
-				}
-				elements = append(elements, map[string]any{
-					"tag":      "form",
-					"name":     "runner_token_form_docker",
-					"elements": formLegacyDocker,
-				})
-			}
-		} else if f.settingsCallbacks.RunnerConnectCmdGet != nil {
-			connectCmd := f.settingsCallbacks.RunnerConnectCmdGet(senderID)
-			if connectCmd != "" {
-				elements = append(elements, map[string]any{
-					"tag":     "markdown",
-					"content": fmt.Sprintf("在本地机器上运行以下命令连接远程沙箱：\n```\n%s\n```", connectCmd),
-				})
-			} else {
-				elements = append(elements, map[string]any{
-					"tag":     "markdown",
-					"content": "远程 Runner 功能未启用，请设置 `SANDBOX_AUTH_TOKEN`。",
-				})
-			}
-		}
-
+		elements = append(elements, f.buildLegacyRunnerSection(senderID)...)
 		elements = append(elements, map[string]any{"tag": "hr"})
 	}
 
 	// ── Feishu ↔ Web Account Linking Section ──
 	if f.settingsCallbacks.FeishuWebGetLinked != nil {
+		elements = append(elements, f.buildWebLinkingSection(senderID)...)
+		elements = append(elements, map[string]any{"tag": "hr"})
+	}
+
+	return elements
+}
+
+// buildMultiRunnerSection builds the modern multi-runner management UI.
+// It shows the list of configured runners with status, switch/delete buttons,
+// and forms to add new native or Docker runners.
+func (f *FeishuChannel) buildMultiRunnerSection(senderID string, o SettingsCardOpts) []map[string]any {
+	var elements []map[string]any
+
+	elements = append(elements, map[string]any{
+		"tag":     "markdown",
+		"content": "**🖥️ 工作环境**",
+	})
+
+	if strings.TrimSpace(o.RunnerConnectBanner) != "" {
 		elements = append(elements, map[string]any{
 			"tag":     "markdown",
-			"content": "**🔗 Web 账户关联**",
+			"content": fmt.Sprintf("✅ **连接命令**（在本地终端执行）：\n```\n%s\n```", strings.TrimSpace(o.RunnerConnectBanner)),
 		})
+	}
 
-		linkedUser, linked := f.settingsCallbacks.FeishuWebGetLinked(senderID)
-		if linked {
+	runners, err := f.settingsCallbacks.RunnerList(senderID)
+	if err != nil || len(runners) == 0 {
+		elements = append(elements, map[string]any{
+			"tag":     "markdown",
+			"content": "尚未添加工作环境。点击下方按钮添加 Runner。",
+		})
+	} else {
+		// Get active runner name
+		activeName := ""
+		if f.settingsCallbacks.RunnerGetActive != nil {
+			if name, err := f.settingsCallbacks.RunnerGetActive(senderID); err == nil {
+				activeName = name
+			}
+		}
+
+		for _, r := range runners {
+			isBuiltin := r.Name == tools.BuiltinDockerRunnerName
+			statusIcon := "🟢"
+			if !r.Online {
+				statusIcon = "⚫"
+			}
+			activeTag := ""
+			if r.Name == activeName {
+				activeTag = " ← 活跃"
+			}
+			displayName := r.Name
+			if isBuiltin {
+				displayName = "Docker Sandbox (内置)"
+			}
+			modeTag := "原生"
+			if r.Mode == "docker" {
+				modeTag = "🐳 Docker"
+			}
+			wsTag := ""
+			if r.Workspace != "" {
+				wsTag = fmt.Sprintf(" · %s", r.Workspace)
+			}
+			if isBuiltin && r.DockerImage != "" {
+				wsTag = fmt.Sprintf(" · %s", r.DockerImage)
+			}
 			elements = append(elements, map[string]any{
 				"tag":     "markdown",
-				"content": fmt.Sprintf("已关联 Web 账户：**%s**", linkedUser),
+				"content": fmt.Sprintf("%s **%s**%s (%s%s)", statusIcon, displayName, activeTag, modeTag, wsTag),
+			})
+
+			// Buttons: set active + delete (builtin docker cannot be deleted)
+			var btns []map[string]any
+			if r.Name != activeName {
+				btns = append(btns, map[string]any{
+					"tag":  "button",
+					"text": map[string]any{"tag": "plain_text", "content": "切换"},
+					"type": "primary",
+					"value": map[string]string{
+						"action_data": mustMapToJSON(map[string]string{
+							"action":      "settings_runner_set_active",
+							"runner_name": r.Name,
+						}),
+					},
+				})
+			}
+			if !isBuiltin {
+				btns = append(btns, map[string]any{
+					"tag":  "button",
+					"text": map[string]any{"tag": "plain_text", "content": "🗑️ 删除"},
+					"type": "danger",
+					"value": map[string]string{
+						"action_data": mustMapToJSON(map[string]string{
+							"action":      "settings_runner_delete",
+							"runner_name": r.Name,
+						}),
+					},
+				})
+			}
+			if len(btns) > 0 {
+				elements = append(elements, wrapButtonsInColumns(btns))
+			}
+		}
+	}
+
+	elements = append(elements, map[string]any{
+		"tag":     "markdown",
+		"content": "添加 Runner：任选其一提交。**原生**无镜像字段；**Docker** 需填写镜像。",
+	})
+
+	formNative := []map[string]any{
+		{
+			"tag":  "input",
+			"name": "mr_native_name",
+			"label": map[string]any{
+				"tag":     "plain_text",
+				"content": "Runner 名称",
+			},
+			"placeholder": map[string]any{
+				"tag":     "plain_text",
+				"content": "例如：MacBook Pro",
+			},
+		},
+		{
+			"tag":  "input",
+			"name": "mr_native_workspace",
+			"label": map[string]any{
+				"tag":     "plain_text",
+				"content": "Working directory",
+			},
+			"placeholder": map[string]any{
+				"tag":     "plain_text",
+				"content": "/workspace",
+			},
+		},
+		{
+			"tag":         "button",
+			"name":        "runner_create_native_submit",
+			"text":        map[string]any{"tag": "plain_text", "content": "✨ 添加原生 Runner"},
+			"type":        "primary",
+			"action_type": "form_submit",
+			"value": map[string]string{
+				"action_data": mustMapToJSON(map[string]string{
+					"action":      "settings_runner_create",
+					"runner_mode": "native",
+				}),
+			},
+		},
+	}
+	elements = append(elements, map[string]any{
+		"tag":      "form",
+		"name":     "runner_create_form_native",
+		"elements": formNative,
+	})
+
+	formDocker := []map[string]any{
+		{
+			"tag":  "input",
+			"name": "mr_docker_name",
+			"label": map[string]any{
+				"tag":     "plain_text",
+				"content": "Runner 名称",
+			},
+			"placeholder": map[string]any{
+				"tag":     "plain_text",
+				"content": "例如：docker-dev",
+			},
+		},
+		{
+			"tag":  "input",
+			"name": "mr_docker_image",
+			"label": map[string]any{
+				"tag":     "plain_text",
+				"content": "Docker 镜像",
+			},
+			"placeholder": map[string]any{
+				"tag":     "plain_text",
+				"content": "ubuntu:22.04",
+			},
+		},
+		{
+			"tag":  "input",
+			"name": "mr_docker_workspace",
+			"label": map[string]any{
+				"tag":     "plain_text",
+				"content": "Working directory",
+			},
+			"placeholder": map[string]any{
+				"tag":     "plain_text",
+				"content": "/workspace",
+			},
+		},
+		{
+			"tag":         "button",
+			"name":        "runner_create_docker_submit",
+			"text":        map[string]any{"tag": "plain_text", "content": "✨ 添加 Docker Runner"},
+			"type":        "primary",
+			"action_type": "form_submit",
+			"value": map[string]string{
+				"action_data": mustMapToJSON(map[string]string{
+					"action":      "settings_runner_create",
+					"runner_mode": "docker",
+				}),
+			},
+		},
+	}
+	elements = append(elements, map[string]any{
+		"tag":      "form",
+		"name":     "runner_create_form_docker",
+		"elements": formDocker,
+	})
+
+	return elements
+}
+
+// buildLegacyRunnerSection builds the legacy single-token runner UI.
+// This fallback path is used when RunnerList is nil, falling back to
+// RunnerTokenGet or RunnerConnectCmdGet for backward compatibility.
+func (f *FeishuChannel) buildLegacyRunnerSection(senderID string) []map[string]any {
+	var elements []map[string]any
+
+	elements = append(elements, map[string]any{
+		"tag":     "markdown",
+		"content": "**远程 Runner**",
+	})
+
+	if f.settingsCallbacks.RunnerTokenGet != nil {
+		connectCmd := f.settingsCallbacks.RunnerTokenGet(senderID)
+		if connectCmd != "" {
+			elements = append(elements, map[string]any{
+				"tag":     "markdown",
+				"content": fmt.Sprintf("在本地机器上运行以下命令连接远程沙箱：\n```\n%s\n```", connectCmd),
 			})
 			elements = append(elements, wrapButtonsInColumns([]map[string]any{
 				{
 					"tag":  "button",
-					"text": map[string]any{"tag": "plain_text", "content": "取消关联"},
+					"text": map[string]any{"tag": "plain_text", "content": "🔄 重新生成"},
 					"type": "danger",
 					"value": map[string]string{
 						"action_data": mustMapToJSON(map[string]string{
-							"action": "settings_feishu_web_unlink",
+							"action": "settings_generate_token",
+						}),
+					},
+				},
+				{
+					"tag":  "button",
+					"text": map[string]any{"tag": "plain_text", "content": "🗑️ 撤销"},
+					"type": "danger",
+					"value": map[string]string{
+						"action_data": mustMapToJSON(map[string]string{
+							"action": "settings_revoke_token",
 						}),
 					},
 				},
 			}))
 		} else {
+			// No token — show generation forms (legacy): native vs docker
 			elements = append(elements, map[string]any{
 				"tag":     "markdown",
-				"content": "关联 Web 账户后，可使用飞书身份登录 Web 端。",
+				"content": "生成连接命令：**原生**仅Working directory；**Docker** 需填写镜像。",
 			})
-			formWebLink := []map[string]any{
+			formLegacyNative := []map[string]any{
 				{
 					"tag":  "input",
-					"name": "web_username",
+					"name": "tok_native_ws",
 					"label": map[string]any{
 						"tag":     "plain_text",
-						"content": "用户名",
+						"content": "Working directory",
 					},
 					"placeholder": map[string]any{
 						"tag":     "plain_text",
-						"content": "输入 Web 用户名",
-					},
-				},
-				{
-					"tag":  "input",
-					"name": "web_password",
-					"label": map[string]any{
-						"tag":     "plain_text",
-						"content": "密码",
-					},
-					"placeholder": map[string]any{
-						"tag":     "plain_text",
-						"content": "输入密码",
+						"content": "/workspace",
 					},
 				},
 				{
 					"tag":         "button",
-					"name":        "web_link_submit",
-					"text":        map[string]any{"tag": "plain_text", "content": "关联账户"},
+					"name":        "token_submit_native",
+					"text":        map[string]any{"tag": "plain_text", "content": "生成原生连接命令"},
 					"type":        "primary",
 					"action_type": "form_submit",
 					"value": map[string]string{
 						"action_data": mustMapToJSON(map[string]string{
-							"action": "settings_feishu_web_link",
+							"action":      "settings_generate_token",
+							"runner_mode": "native",
 						}),
 					},
 				},
 			}
 			elements = append(elements, map[string]any{
 				"tag":      "form",
-				"name":     "feishu_web_link_form",
-				"elements": formWebLink,
+				"name":     "runner_token_form_native",
+				"elements": formLegacyNative,
+			})
+			formLegacyDocker := []map[string]any{
+				{
+					"tag":  "input",
+					"name": "tok_docker_image",
+					"label": map[string]any{
+						"tag":     "plain_text",
+						"content": "Docker 镜像",
+					},
+					"placeholder": map[string]any{
+						"tag":     "plain_text",
+						"content": "xbot-sandbox:latest",
+					},
+				},
+				{
+					"tag":  "input",
+					"name": "tok_docker_ws",
+					"label": map[string]any{
+						"tag":     "plain_text",
+						"content": "Working directory",
+					},
+					"placeholder": map[string]any{
+						"tag":     "plain_text",
+						"content": "/workspace",
+					},
+				},
+				{
+					"tag":         "button",
+					"name":        "token_submit_docker",
+					"text":        map[string]any{"tag": "plain_text", "content": "生成 Docker 连接命令"},
+					"type":        "primary",
+					"action_type": "form_submit",
+					"value": map[string]string{
+						"action_data": mustMapToJSON(map[string]string{
+							"action":      "settings_generate_token",
+							"runner_mode": "docker",
+						}),
+					},
+				},
+			}
+			elements = append(elements, map[string]any{
+				"tag":      "form",
+				"name":     "runner_token_form_docker",
+				"elements": formLegacyDocker,
 			})
 		}
+	} else if f.settingsCallbacks.RunnerConnectCmdGet != nil {
+		connectCmd := f.settingsCallbacks.RunnerConnectCmdGet(senderID)
+		if connectCmd != "" {
+			elements = append(elements, map[string]any{
+				"tag":     "markdown",
+				"content": fmt.Sprintf("在本地机器上运行以下命令连接远程沙箱：\n```\n%s\n```", connectCmd),
+			})
+		} else {
+			elements = append(elements, map[string]any{
+				"tag":     "markdown",
+				"content": "远程 Runner 功能未启用，请设置 `SANDBOX_AUTH_TOKEN`。",
+			})
+		}
+	}
 
-		elements = append(elements, map[string]any{"tag": "hr"})
+	return elements
+}
+
+// buildWebLinkingSection builds the Feishu ↔ Web account linking UI.
+// It shows the current linking status and provides forms/buttons for
+// linking or unlinking a Web account.
+func (f *FeishuChannel) buildWebLinkingSection(senderID string) []map[string]any {
+	var elements []map[string]any
+
+	elements = append(elements, map[string]any{
+		"tag":     "markdown",
+		"content": "**🔗 Web 账户关联**",
+	})
+
+	linkedUser, linked := f.settingsCallbacks.FeishuWebGetLinked(senderID)
+	if linked {
+		elements = append(elements, map[string]any{
+			"tag":     "markdown",
+			"content": fmt.Sprintf("已关联 Web 账户：**%s**", linkedUser),
+		})
+		elements = append(elements, wrapButtonsInColumns([]map[string]any{
+			{
+				"tag":  "button",
+				"text": map[string]any{"tag": "plain_text", "content": "取消关联"},
+				"type": "danger",
+				"value": map[string]string{
+					"action_data": mustMapToJSON(map[string]string{
+						"action": "settings_feishu_web_unlink",
+					}),
+				},
+			},
+		}))
+	} else {
+		elements = append(elements, map[string]any{
+			"tag":     "markdown",
+			"content": "关联 Web 账户后，可使用飞书身份登录 Web 端。",
+		})
+		formWebLink := []map[string]any{
+			{
+				"tag":  "input",
+				"name": "web_username",
+				"label": map[string]any{
+					"tag":     "plain_text",
+					"content": "用户名",
+				},
+				"placeholder": map[string]any{
+					"tag":     "plain_text",
+					"content": "输入 Web 用户名",
+				},
+			},
+			{
+				"tag":  "input",
+				"name": "web_password",
+				"label": map[string]any{
+					"tag":     "plain_text",
+					"content": "密码",
+				},
+				"placeholder": map[string]any{
+					"tag":     "plain_text",
+					"content": "输入密码",
+				},
+			},
+			{
+				"tag":         "button",
+				"name":        "web_link_submit",
+				"text":        map[string]any{"tag": "plain_text", "content": "关联账户"},
+				"type":        "primary",
+				"action_type": "form_submit",
+				"value": map[string]string{
+					"action_data": mustMapToJSON(map[string]string{
+						"action": "settings_feishu_web_link",
+					}),
+				},
+			},
+		}
+		elements = append(elements, map[string]any{
+			"tag":      "form",
+			"name":     "feishu_web_link_form",
+			"elements": formWebLink,
+		})
 	}
 
 	return elements

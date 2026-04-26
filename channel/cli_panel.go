@@ -1258,77 +1258,87 @@ func (m *cliModel) openDangerPanelFromSettings() {
 
 func (m *cliModel) updateSettingsPanel(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cmd) {
 	if m.panelEdit {
-		// Editing mode
-		switch msg.Code {
-		case tea.KeyEnter:
-			// Save value
-			newVal := strings.TrimSpace(m.panelEditTA.Value())
-			if m.panelCursor < len(m.panelSchema) {
-				key := m.panelSchema[m.panelCursor].Key
-				m.panelValues[key] = newVal
-			}
-			m.panelEdit = false
-			return true, m, nil
-		case tea.KeyEsc:
-			m.panelEdit = false
-			return true, m, nil
-		default:
-			// Delegate to textarea
-			var cmd tea.Cmd
-			m.panelEditTA, cmd = m.panelEditTA.Update(msg)
-			return true, m, cmd
-		}
+		return m.handleSettingsEditMode(msg)
 	}
-
-	// Combo dropdown mode
 	if m.panelCombo {
+		return m.handleSettingsComboMode(msg)
+	}
+	return m.handleSettingsNavMode(msg)
+}
+
+// handleSettingsEditMode handles key events while editing a setting value.
+func (m *cliModel) handleSettingsEditMode(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cmd) {
+	switch msg.Code {
+	case tea.KeyEnter:
+		// Save value
+		newVal := strings.TrimSpace(m.panelEditTA.Value())
 		if m.panelCursor < len(m.panelSchema) {
-			def := m.panelSchema[m.panelCursor]
-			opts := def.Options
-			switch msg.Code {
-			case tea.KeyEsc:
+			key := m.panelSchema[m.panelCursor].Key
+			m.panelValues[key] = newVal
+		}
+		m.panelEdit = false
+		return true, m, nil
+	case tea.KeyEsc:
+		m.panelEdit = false
+		return true, m, nil
+	default:
+		// Delegate to textarea
+		var cmd tea.Cmd
+		m.panelEditTA, cmd = m.panelEditTA.Update(msg)
+		return true, m, cmd
+	}
+}
+
+// handleSettingsComboMode handles key events while a combo dropdown is open.
+func (m *cliModel) handleSettingsComboMode(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cmd) {
+	if m.panelCursor < len(m.panelSchema) {
+		def := m.panelSchema[m.panelCursor]
+		opts := def.Options
+		switch msg.Code {
+		case tea.KeyEsc:
+			m.panelCombo = false
+			return true, m, nil
+		case tea.KeyUp:
+			if m.panelComboIdx > 0 {
+				m.panelComboIdx--
+			}
+			return true, m, nil
+		case tea.KeyDown:
+			if m.panelComboIdx < len(opts)-1 {
+				m.panelComboIdx++
+			}
+			return true, m, nil
+		case tea.KeyEnter:
+			if m.panelComboIdx < len(opts) {
+				m.panelValues[def.Key] = opts[m.panelComboIdx].Value
+			}
+			m.panelCombo = false
+			return true, m, nil
+		case tea.KeySpace:
+			m.panelCombo = false
+			// Switch to edit mode for custom input
+			m.panelEdit = true
+			ta := m.newPanelTextArea(m.panelValues[def.Key], 50, 1)
+			var cmd tea.Cmd
+			m.panelEditTA, cmd = ta.Update(msg)
+			return true, m, cmd
+		default:
+			// Any printable key: auto-switch to edit mode for custom input
+			if len(msg.Text) > 0 {
 				m.panelCombo = false
-				return true, m, nil
-			case tea.KeyUp:
-				if m.panelComboIdx > 0 {
-					m.panelComboIdx--
-				}
-				return true, m, nil
-			case tea.KeyDown:
-				if m.panelComboIdx < len(opts)-1 {
-					m.panelComboIdx++
-				}
-				return true, m, nil
-			case tea.KeyEnter:
-				if m.panelComboIdx < len(opts) {
-					m.panelValues[def.Key] = opts[m.panelComboIdx].Value
-				}
-				m.panelCombo = false
-				return true, m, nil
-			case tea.KeySpace:
-				m.panelCombo = false
-				// Switch to edit mode for custom input
 				m.panelEdit = true
 				ta := m.newPanelTextArea(m.panelValues[def.Key], 50, 1)
 				var cmd tea.Cmd
 				m.panelEditTA, cmd = ta.Update(msg)
 				return true, m, cmd
-			default:
-				// Any printable key: auto-switch to edit mode for custom input
-				if len(msg.Text) > 0 {
-					m.panelCombo = false
-					m.panelEdit = true
-					ta := m.newPanelTextArea(m.panelValues[def.Key], 50, 1)
-					var cmd tea.Cmd
-					m.panelEditTA, cmd = ta.Update(msg)
-					return true, m, cmd
-				}
 			}
 		}
-		return true, m, nil
 	}
+	return true, m, nil
+}
 
-	// Navigation mode
+// handleSettingsNavMode handles key events in navigation mode (no edit/combo active).
+func (m *cliModel) handleSettingsNavMode(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cmd) {
 	switch {
 	case msg.Code == tea.KeyEsc:
 		m.closePanel()
@@ -1355,88 +1365,93 @@ func (m *cliModel) updateSettingsPanel(msg tea.KeyPressMsg) (bool, tea.Model, te
 		}
 		return true, m, nil
 	case msg.Code == tea.KeyEnter:
-		if m.panelCursor < len(m.panelSchema) {
-			def := m.panelSchema[m.panelCursor]
-			// Runner panel entry
-			if def.Key == "runner_panel" {
-				m.openRunnerPanel()
-				return true, m, nil
-			}
-			// Danger zone entry
-			if def.Key == "danger_zone" {
-				m.openDangerPanelFromSettings()
-				return true, m, nil
-			}
-			// Subscription management entry — save panel state, open quick switch
-			if def.Key == "subscription_manage" {
-				// Backup current panel state so we can restore after quick switch
-				m.panelValuesBackup = make(map[string]string, len(m.panelValues))
-				for k, v := range m.panelValues {
-					m.panelValuesBackup[k] = v
-				}
-				m.panelCursorBackup = m.panelCursor
-				m.panelOnSubmitBackup = m.panelOnSubmit
-				m.panelMode = ""
-				m.relayoutViewport()
-				m.quickSwitchReturnToPanel = true
-				m.openQuickSwitch("subscription")
-				return true, m, nil
-			}
-			switch def.Type {
-			case SettingTypeToggle:
-				// Toggle on Enter
-				cur := m.panelValues[def.Key]
-				if cur == "true" {
-					m.panelValues[def.Key] = "false"
-				} else {
-					m.panelValues[def.Key] = "true"
-				}
-				return true, m, nil
-			case SettingTypeSelect:
-				// Cycle through options
-				cur := m.panelValues[def.Key]
-				if cur == "" && def.DefaultValue != "" {
-					cur = def.DefaultValue
-				}
-				found := false
-				for i, opt := range def.Options {
-					if opt.Value == cur && i < len(def.Options)-1 {
-						m.panelValues[def.Key] = def.Options[i+1].Value
-						found = true
-						break
-					}
-				}
-				if !found && len(def.Options) > 0 {
-					m.panelValues[def.Key] = def.Options[0].Value
-				}
-				return true, m, nil
-			case SettingTypeCombo:
-				// Open combo dropdown if options available, otherwise edit
-				if len(def.Options) > 0 {
-					m.panelCombo = true
-					m.panelComboIdx = 0
-					// Pre-select current value if it matches an option
-					cur := m.panelValues[def.Key]
-					for i, opt := range def.Options {
-						if opt.Value == cur {
-							m.panelComboIdx = i
-							break
-						}
-					}
-					return true, m, nil
-				}
-				// No options: fall through to default edit mode
-				fallthrough
-			default:
-				// Enter edit mode for text/number/textarea/combo(fallback)
-				m.panelEdit = true
-				m.panelEditTA = m.newPanelTextArea(m.panelValues[def.Key], 50, 1)
-				return true, m, nil
-			}
-		}
-		return true, m, nil
+		return m.handleSettingsNavEnter()
 	}
 	return true, m, nil
+}
+
+// handleSettingsNavEnter handles the Enter key in settings navigation mode.
+func (m *cliModel) handleSettingsNavEnter() (bool, tea.Model, tea.Cmd) {
+	if m.panelCursor >= len(m.panelSchema) {
+		return true, m, nil
+	}
+	def := m.panelSchema[m.panelCursor]
+	// Runner panel entry
+	if def.Key == "runner_panel" {
+		m.openRunnerPanel()
+		return true, m, nil
+	}
+	// Danger zone entry
+	if def.Key == "danger_zone" {
+		m.openDangerPanelFromSettings()
+		return true, m, nil
+	}
+	// Subscription management entry — save panel state, open quick switch
+	if def.Key == "subscription_manage" {
+		// Backup current panel state so we can restore after quick switch
+		m.panelValuesBackup = make(map[string]string, len(m.panelValues))
+		for k, v := range m.panelValues {
+			m.panelValuesBackup[k] = v
+		}
+		m.panelCursorBackup = m.panelCursor
+		m.panelOnSubmitBackup = m.panelOnSubmit
+		m.panelMode = ""
+		m.relayoutViewport()
+		m.quickSwitchReturnToPanel = true
+		m.openQuickSwitch("subscription")
+		return true, m, nil
+	}
+	switch def.Type {
+	case SettingTypeToggle:
+		// Toggle on Enter
+		cur := m.panelValues[def.Key]
+		if cur == "true" {
+			m.panelValues[def.Key] = "false"
+		} else {
+			m.panelValues[def.Key] = "true"
+		}
+		return true, m, nil
+	case SettingTypeSelect:
+		// Cycle through options
+		cur := m.panelValues[def.Key]
+		if cur == "" && def.DefaultValue != "" {
+			cur = def.DefaultValue
+		}
+		found := false
+		for i, opt := range def.Options {
+			if opt.Value == cur && i < len(def.Options)-1 {
+				m.panelValues[def.Key] = def.Options[i+1].Value
+				found = true
+				break
+			}
+		}
+		if !found && len(def.Options) > 0 {
+			m.panelValues[def.Key] = def.Options[0].Value
+		}
+		return true, m, nil
+	case SettingTypeCombo:
+		// Open combo dropdown if options available, otherwise edit
+		if len(def.Options) > 0 {
+			m.panelCombo = true
+			m.panelComboIdx = 0
+			// Pre-select current value if it matches an option
+			cur := m.panelValues[def.Key]
+			for i, opt := range def.Options {
+				if opt.Value == cur {
+					m.panelComboIdx = i
+					break
+				}
+			}
+			return true, m, nil
+		}
+		// No options: fall through to default edit mode
+		fallthrough
+	default:
+		// Enter edit mode for text/number/textarea/combo(fallback)
+		m.panelEdit = true
+		m.panelEditTA = m.newPanelTextArea(m.panelValues[def.Key], 50, 1)
+		return true, m, nil
+	}
 }
 
 func (m *cliModel) updateAskUserPanel(msg tea.KeyPressMsg) (bool, tea.Model, tea.Cmd) {

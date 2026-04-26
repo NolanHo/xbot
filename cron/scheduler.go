@@ -314,7 +314,9 @@ func nextCronTime(expr string, now time.Time) (time.Time, error) {
 
 	// Start searching from now+1 minute, max 4 years
 	t := now.Truncate(time.Minute).Add(time.Minute)
-	limit := t.Add(4 * 365 * 24 * time.Hour)
+	// cronLookupLimit is the maximum time ahead to search for the next cron occurrence (4 years).
+	const cronLookupLimit = 4 * 365 * 24 * time.Hour
+	limit := t.Add(cronLookupLimit)
 
 	for t.Before(limit) {
 		if !monSet[int(t.Month())] {

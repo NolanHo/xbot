@@ -623,6 +623,7 @@ type CLIChannelConfig struct {
 	IsAdminFn            func() bool                                                                                                    // Check if current user is admin
 }
 
+// AgentPanelEntry represents an entry in the agent panel display.
 type AgentPanelEntry struct {
 	Role       string
 	Instance   string

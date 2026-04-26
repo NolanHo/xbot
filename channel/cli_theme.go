@@ -591,6 +591,7 @@ func setTheme(name string) {
 	}
 }
 
+// ApplyTheme applies the given theme to the lipgloss renderer.
 func ApplyTheme(name string) {
 	setTheme(name)
 	// Non-blocking send; if model is already processing a theme change, skip.

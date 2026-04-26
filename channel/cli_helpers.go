@@ -102,6 +102,7 @@ func isUserScopedSettingKey(key string) bool {
 	return ok
 }
 
+// IsGlobalScopedSettingKey checks if a setting key is global (not channel-specific).
 func IsGlobalScopedSettingKey(key string) bool {
 	_, ok := cliGlobalScopedSettingKeys[key]
 	return ok

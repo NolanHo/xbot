@@ -30,6 +30,7 @@ import (
 	"xbot/version"
 )
 
+// NewCLIChannel creates a new CLI channel.
 func NewCLIChannel(cfg CLIChannelConfig, msgBus *bus.MessageBus) *CLIChannel {
 	return &CLIChannel{
 		config:     cfg,

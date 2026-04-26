@@ -23,31 +23,31 @@ import (
 	"xbot/tools"
 )
 
-// MultiTenantOption 配置选项
+// MultiTenantOption is a functional option for MultiTenantSession
 type MultiTenantOption func(*MultiTenantSession)
 
-// WithMCPTimeout 设置 MCP 不活跃超时时间
+// WithMCPTimeout sets the MCP inactivity timeout
 func WithMCPTimeout(timeout time.Duration) MultiTenantOption {
 	return func(m *MultiTenantSession) {
 		m.mcpInactivityTimeout = timeout
 	}
 }
 
-// WithCleanupInterval 设置清理扫描间隔
+// WithCleanupInterval sets the cleanup scan interval
 func WithCleanupInterval(interval time.Duration) MultiTenantOption {
 	return func(m *MultiTenantSession) {
 		m.mcpCleanupInterval = interval
 	}
 }
 
-// WithSessionCacheTimeout 设置会话缓存超时时间
+// WithSessionCacheTimeout sets the session cache timeout
 func WithSessionCacheTimeout(timeout time.Duration) MultiTenantOption {
 	return func(m *MultiTenantSession) {
 		m.sessionCacheTimeout = timeout
 	}
 }
 
-// WithMemoryProvider 设置记忆提供者 ("flat" 或 "letta")
+// WithMemoryProvider sets the memory provider ("flat" or "letta")
 func WithMemoryProvider(provider string) MultiTenantOption {
 	return func(m *MultiTenantSession) {
 		m.memoryProvider = provider
@@ -61,17 +61,17 @@ func WithPersonaIsolation(enabled bool) MultiTenantOption {
 	}
 }
 
-// WithArchivalService 设置向量归档服务（Letta 模式下使用）
-// 如果不设置，会在 NewMultiTenant 中根据 EmbeddingConfig 自动创建
+// WithArchivalService sets the vector archival service (used in Letta mode)
+// If not set, it will be auto-created in NewMultiTenant from EmbeddingConfig
 func WithArchivalService(svc *vectordb.ArchivalService) MultiTenantOption {
 	return func(m *MultiTenantSession) {
 		m.archivalSvc = svc
 	}
 }
 
-// EmbeddingConfig 嵌入向量配置（用于自动创建归档服务）
+// EmbeddingConfig holds embedding configuration (for auto-creating archival service)
 type EmbeddingConfig struct {
-	Provider   string // Embedding 提供者: "openai"(默认) 或 "ollama"
+	Provider   string // Embedding provider: "openai" (default) or "ollama"
 	BaseURL    string
 	APIKey     string
 	Model      string
@@ -81,14 +81,14 @@ type EmbeddingConfig struct {
 	TokenModel string  // Model name for token counting (default "gpt-4")
 }
 
-// WithEmbeddingConfig 设置嵌入向量配置，NewMultiTenant 将自动创建 chromem-go 归档服务
+// WithEmbeddingConfig sets embedding config; NewMultiTenant will auto-create chromem-go archival service
 func WithEmbeddingConfig(cfg EmbeddingConfig) MultiTenantOption {
 	return func(m *MultiTenantSession) {
 		m.embeddingConfig = &cfg
 	}
 }
 
-// WithToolIndexService 设置工具索引服务
+// WithToolIndexService sets the tool index service
 func WithToolIndexService(svc *vectordb.ToolIndexService) MultiTenantOption {
 	return func(m *MultiTenantSession) {
 		m.toolIndexSvc = svc
@@ -106,24 +106,24 @@ type MultiTenantSession struct {
 	coreSvc               *sqlite.CoreMemoryService
 	archivalSvc           *vectordb.ArchivalService
 	toolIndexSvc          *vectordb.ToolIndexService
-	recallTimeRangeFn     vectordb.RecallTimeRangeFunc // 时间范围会话历史搜索
+	recallTimeRangeFn     vectordb.RecallTimeRangeFunc // time-range session history search
 	embeddingConfig       *EmbeddingConfig             // for auto-creating archival service
 	memoryProvider        string                       // "flat" or "letta"
 	mu                    sync.RWMutex
 	tenantCache           map[string]*TenantSession // key: "channel:chat_id"
 	dbPath                string
-	mcpConfigPath         string          // MCP 配置文件路径
-	mcpInactivityTimeout  time.Duration   // MCP 不活跃超时配置
-	mcpCleanupInterval    time.Duration   // MCP 清理扫描间隔
-	sessionCacheTimeout   time.Duration   // 会话缓存超时配置
-	cleanupStopCh         chan struct{}   // 清理协程停止信号
-	cleanupWg             sync.WaitGroup  // 清理协程等待组
-	cleanupStopOnce       sync.Once       // 确保 StopCleanupRoutine 只执行一次
+	mcpConfigPath         string          // MCP config file path
+	mcpInactivityTimeout  time.Duration   // MCP inactivity timeout
+	mcpCleanupInterval    time.Duration   // MCP cleanup scan interval
+	sessionCacheTimeout   time.Duration   // session cache timeout
+	cleanupStopCh         chan struct{}   // cleanup goroutine stop signal
+	cleanupWg             sync.WaitGroup  // cleanup goroutine wait group
+	cleanupStopOnce       sync.Once       // ensures StopCleanupRoutine runs only once
 	shutdownCtx           context.Context // cancelled on StopCleanupRoutine; used as parent for background goroutines
 	shutdownCancel        context.CancelFunc
 	toolIndexFingerprints map[int64]string          // per-tenant catalog fingerprint (guarded by mu)
 	toolIndexPrevNames    map[int64]map[string]bool // per-tenant previous tool name set (guarded by mu)
-	onSessionEvict        func(sessionKey string)   // 会话被清理时的回调（用于 Registry 清理 sessionActivated/sessionRound）
+	onSessionEvict        func(sessionKey string)   // callback when session is evicted (for Registry cleanup of sessionActivated/sessionRound)
 }
 
 // NewMultiTenant creates a new multi-tenant session manager
@@ -147,7 +147,7 @@ func NewMultiTenant(dbPath string, opts ...MultiTenantOption) (*MultiTenantSessi
 		toolIndexFingerprints: make(map[int64]string),
 		toolIndexPrevNames:    make(map[int64]map[string]bool),
 		dbPath:                dbPath,
-		mcpConfigPath:         "mcp.json", // 默认在工作目录下
+		mcpConfigPath:         "mcp.json", // default in working directory
 		mcpInactivityTimeout:  30 * time.Minute,
 		mcpCleanupInterval:    5 * time.Minute,
 		sessionCacheTimeout:   24 * time.Hour,
@@ -156,7 +156,7 @@ func NewMultiTenant(dbPath string, opts ...MultiTenantOption) (*MultiTenantSessi
 		shutdownCancel:        shutdownCancel,
 	}
 
-	// 应用配置选项
+	// Apply configuration options
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -176,7 +176,7 @@ func NewMultiTenant(dbPath string, opts ...MultiTenantOption) (*MultiTenantSessi
 		}
 	}
 
-	// Letta 模式：自动创建 chromem-go 归档服务（如果未通过 WithArchivalService 注入）
+	// Letta mode: auto-create chromem-go archival service (if not injected via WithArchivalService)
 	if m.memoryProvider == "letta" && m.archivalSvc == nil && m.embeddingConfig != nil {
 		archivalDir := filepath.Join(filepath.Dir(dbPath), "archival")
 		embFunc := vectordb.NewEmbeddingFunc(m.embeddingConfig.BaseURL, m.embeddingConfig.APIKey, m.embeddingConfig.Model, m.embeddingConfig.Provider, m.embeddingConfig.MaxTokens)
@@ -189,7 +189,7 @@ func NewMultiTenant(dbPath string, opts ...MultiTenantOption) (*MultiTenantSessi
 		}
 	}
 
-	// Letta 模式：自动创建工具索引服务（如果未通过 WithToolIndexService 注入）
+	// Letta mode: auto-create tool index service (if not injected via WithToolIndexService)
 	if m.memoryProvider == "letta" && m.toolIndexSvc == nil && m.embeddingConfig != nil {
 		toolIndexDir := filepath.Join(filepath.Dir(dbPath), "tool_index")
 		embFunc := vectordb.NewEmbeddingFunc(m.embeddingConfig.BaseURL, m.embeddingConfig.APIKey, m.embeddingConfig.Model, m.embeddingConfig.Provider, m.embeddingConfig.MaxTokens)
@@ -211,7 +211,7 @@ func NewMultiTenant(dbPath string, opts ...MultiTenantOption) (*MultiTenantSessi
 		}
 	}
 
-	// Letta 模式：创建时间范围搜索函数
+	// Letta mode: create time-range search function
 	if m.memoryProvider == "letta" {
 		m.recallTimeRangeFn = vectordb.NewSQLiteRecallTimeRangeFunc(db.Conn())
 	}
@@ -219,12 +219,12 @@ func NewMultiTenant(dbPath string, opts ...MultiTenantOption) (*MultiTenantSessi
 	return m, nil
 }
 
-// NewMultiTenantWithOptions 创建带配置选项的会话管理器（向后兼容）
+// NewMultiTenantWithOptions creates a session manager with options (backward compatible alias)
 func NewMultiTenantWithOptions(dbPath string, opts ...MultiTenantOption) (*MultiTenantSession, error) {
 	return NewMultiTenant(dbPath, opts...)
 }
 
-// SetMCPConfigPath 设置 MCP 配置文件路径
+// SetMCPConfigPath sets the MCP config file path
 func (m *MultiTenantSession) SetMCPConfigPath(path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -273,7 +273,7 @@ func (m *MultiTenantSession) GetOrCreateSession(channel, chatID string) (*Tenant
 	m.mu.RUnlock()
 
 	if ok {
-		// 标记会话为活跃
+		// Mark session as active
 		sess.MarkActive()
 		return sess, nil
 	}
@@ -294,17 +294,17 @@ func (m *MultiTenantSession) GetOrCreateSession(channel, chatID string) (*Tenant
 		return nil, fmt.Errorf("get/create tenant: %w", err)
 	}
 
-	// 创建会话 MCP 管理器（用户作用域由 ConfigureSessionMCP 在消息处理时注入）
+	// Create session MCP manager (user scope injected by ConfigureSessionMCP at message time)
 	sessionKey := channel + ":" + chatID
 	mcpManager := tools.NewSessionMCPManager(sessionKey, "", m.mcpConfigPath, "", "", m.mcpInactivityTimeout)
 
-	// Letta 模式：创建 LettaMemory（userID 通过 context 传递，不存储在结构体中）
-	// 根据配置选择记忆提供者
+	// Letta mode: create LettaMemory (userID passed via context, not stored in struct)
+	// Select memory provider based on configuration
 	var memProvider memory.MemoryProvider
 	switch m.memoryProvider {
 	case "letta":
 		memProvider = letta.New(tenantID, m.coreSvc, m.archivalSvc, m.memorySvc, m.toolIndexSvc)
-		// 前向兼容：一次性迁移 user_profiles → core memory blocks
+		// Forward compat: one-time migration from user_profiles → core memory blocks
 		m.migrateProfileToCoreMemory(tenantID)
 	default:
 		// Flat memory: file-based storage under ~/.xbot/memory/{tenantID}/
@@ -328,8 +328,8 @@ func (m *MultiTenantSession) GetOrCreateSession(channel, chatID string) (*Tenant
 	return sess, nil
 }
 
-// ConfigureSessionMCP 根据当前用户更新会话 MCP 作用域。
-// 返回新注册的个人 MCP 工具名列表（用于立即激活），catalog 未变化时返回 nil。
+// ConfigureSessionMCP updates the session MCP scope for the current user.
+// Returns newly registered personal MCP tool names (for immediate activation), or nil if catalog unchanged.
 func (m *MultiTenantSession) ConfigureSessionMCP(channel, chatID, senderID, workDir string) ([]string, error) {
 	sess, err := m.GetOrCreateSession(channel, chatID)
 	if err != nil {
@@ -574,7 +574,7 @@ func (m *MultiTenantSession) NewLettaMemory(tenantID int64) *letta.LettaMemory {
 	return letta.New(tenantID, m.coreSvc, m.archivalSvc, m.memorySvc, m.toolIndexSvc)
 }
 
-// GetSessionMCPManager 实现 SessionMCPManagerProvider 接口
+// GetSessionMCPManager implements SessionMCPManagerProvider interface
 func (m *MultiTenantSession) GetSessionMCPManager(sessionKey string) *tools.SessionMCPManager {
 	m.mu.RLock()
 	sess, ok := m.tenantCache[sessionKey]
@@ -586,7 +586,7 @@ func (m *MultiTenantSession) GetSessionMCPManager(sessionKey string) *tools.Sess
 	return nil
 }
 
-// StartCleanupRoutine 启动后台清理协程
+// StartCleanupRoutine starts the background cleanup goroutine
 func (m *MultiTenantSession) StartCleanupRoutine() {
 	m.cleanupWg.Add(1)
 	go func() {
@@ -609,7 +609,7 @@ func (m *MultiTenantSession) StartCleanupRoutine() {
 	}).Info("MCP cleanup routine started")
 }
 
-// StopCleanupRoutine 停止清理协程并取消后台任务（可安全重复调用）
+// StopCleanupRoutine stops the cleanup goroutine and cancels background tasks (safe to call multiple times)
 func (m *MultiTenantSession) StopCleanupRoutine() {
 	m.cleanupStopOnce.Do(func() {
 		m.shutdownCancel()
@@ -618,30 +618,30 @@ func (m *MultiTenantSession) StopCleanupRoutine() {
 	})
 }
 
-// SetOnSessionEvict 设置会话被清理时的回调（用于 Registry 清理 sessionActivated/sessionRound）
+// SetOnSessionEvict sets the callback for when a session is evicted (for Registry cleanup of sessionActivated/sessionRound)
 func (m *MultiTenantSession) SetOnSessionEvict(cb func(sessionKey string)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onSessionEvict = cb
 }
 
-// cleanupInactiveResources 清理不活跃的资源（MCP 连接和会话缓存）
+// cleanupInactiveResources cleans up inactive resources (MCP connections and session cache)
 func (m *MultiTenantSession) cleanupInactiveResources() {
 	m.mu.Lock()
 
 	now := time.Now()
 	var sessionsToDelete []string
 
-	// 收集需要清理的会话（持锁期间只做轻量操作，不执行 I/O）
+	// Collect sessions to clean (only lightweight ops under lock, no I/O)
 	for key, sess := range m.tenantCache {
-		// 使用 lastActive 字段判断是否超时（避免在锁内调用 CleanupInactiveMCPs 的 I/O）
+		// Use lastActive field for timeout check (avoids calling CleanupInactiveMCPs I/O under lock)
 		lastActive := sess.LastActive()
 		if now.Sub(lastActive) > m.sessionCacheTimeout {
 			sessionsToDelete = append(sessionsToDelete, key)
 		}
 	}
 
-	// 收集要关闭的会话并从缓存中移除（持锁期间只做轻量操作）
+	// Collect sessions to close and evict from cache (only lightweight ops under lock)
 	type sessionToClose struct {
 		key  string
 		sess *TenantSession
@@ -654,17 +654,17 @@ func (m *MultiTenantSession) cleanupInactiveResources() {
 		}
 	}
 
-	// 获取回调并释放锁
+	// Get callback and release lock
 	onEvict := m.onSessionEvict
 	m.mu.Unlock()
 
-	// 释放锁后执行所有 I/O 操作（关闭 MCP 连接）和回调
+	// Execute all I/O operations outside lock (close MCP connections) and callbacks
 	for _, item := range toClose {
-		// CleanupInactiveMCPs 和 Close 都包含 I/O，在锁外执行
+		// CleanupInactiveMCPs and Close both involve I/O, executed outside lock
 		item.sess.CleanupInactiveMCPs()
 		item.sess.Close()
 		log.WithField("session", item.key).Info("Removed session from cache due to inactivity")
-		// 通知 Registry 清理该会话的激活状态
+		// Notify Registry to clean up this session's activation state
 		if onEvict != nil {
 			onEvict(item.key)
 		}
@@ -715,7 +715,7 @@ func (m *MultiTenantSession) DestroySession(channel, chatID string) error {
 	return nil
 }
 
-// InvalidateAll 使所有缓存会话的 MCP 连接失效，强制下次使用时重新加载
+// InvalidateAll invalidates all cached sessions' MCP connections, forcing reload on next use
 func (m *MultiTenantSession) InvalidateAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -728,8 +728,8 @@ func (m *MultiTenantSession) InvalidateAll() {
 	log.Info("All session MCP connections invalidated, will reload on next use")
 }
 
-// InvalidateSessionMCP 使特定会话的 MCP 连接失效
-// 用于 token 刷新等场景，需要重新建立特定 MCP 服务器的连接
+// InvalidateSessionMCP invalidates a specific session's MCP connections
+// Used for token refresh scenarios that require re-establishing specific MCP server connections
 func (m *MultiTenantSession) InvalidateSessionMCP(sessionKey string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -813,7 +813,7 @@ func (m *MultiTenantSession) ClearMemory(ctx context.Context, channel, chatID, t
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("部分清空失败: %s", strings.Join(errs, "; "))
+		return fmt.Errorf("partial clear failed: %s", strings.Join(errs, "; "))
 	}
 
 	log.WithFields(log.Fields{
@@ -834,7 +834,7 @@ func (m *MultiTenantSession) GetMemoryStats(ctx context.Context, channel, chatID
 
 	// Session message count
 	if count, err := m.sessionSvc.GetMessagesCount(tenantID); err == nil {
-		stats["session"] = fmt.Sprintf("%d 条消息", count)
+		stats["session"] = fmt.Sprintf("%d messages", count)
 	}
 
 	// Core memory blocks
@@ -849,18 +849,18 @@ func (m *MultiTenantSession) GetMemoryStats(ctx context.Context, channel, chatID
 	// Archival memory count
 	if m.archivalSvc != nil {
 		if count, err := m.archivalSvc.Count(tenantID); err == nil && count > 0 {
-			stats["archival"] = fmt.Sprintf("%d 条", count)
+			stats["archival"] = fmt.Sprintf("%d entries", count)
 		}
 	}
 
 	// Long-term memory
 	if content, err := m.memorySvc.ReadLongTerm(ctx, tenantID); err == nil && content != "" {
-		stats["long_term"] = "有内容"
+		stats["long_term"] = "has content"
 	}
 
 	// Event history count
 	if count, err := m.memorySvc.GetHistoryCount(ctx, tenantID); err == nil && count > 0 {
-		stats["event_history"] = fmt.Sprintf("%d 条", count)
+		stats["event_history"] = fmt.Sprintf("%d entries", count)
 	}
 
 	return stats

@@ -20,10 +20,10 @@ type TenantSession struct {
 	sessionSvc *sqlite.SessionService
 	memorySvc  *sqlite.MemoryService // for consolidation state (LastConsolidated)
 	memory     memory.MemoryProvider
-	mcpManager *tools.SessionMCPManager // 会话 MCP 管理器
-	lastActive time.Time                // 会话活跃时间
-	mu         sync.RWMutex             // 保护 lastActive 和 cwd
-	cwd        string                   // 当前工作目录（PWD 工具优化）
+	mcpManager *tools.SessionMCPManager // session MCP manager
+	lastActive time.Time                // session last active time
+	mu         sync.RWMutex             // guards lastActive and cwd
+	cwd        string                   // current working directory (PWD tool optimization)
 }
 
 // AddMessage adds a message to this tenant's session
@@ -121,41 +121,41 @@ func (s *TenantSession) String() string {
 	return fmt.Sprintf("%s:%s (tenant_id=%d)", s.channel, s.chatID, s.tenantID)
 }
 
-// GetSessionKey 返回会话唯一标识
+// GetSessionKey returns the session's unique key
 func (s *TenantSession) GetSessionKey() string {
 	return s.channel + ":" + s.chatID
 }
 
-// MarkActive 更新会话活跃时间
+// MarkActive updates the session's last active time
 func (s *TenantSession) MarkActive() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastActive = time.Now()
 }
 
-// SetMCPManager 设置会话 MCP 管理器
+// SetMCPManager sets the session MCP manager
 func (s *TenantSession) SetMCPManager(mgr *tools.SessionMCPManager) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mcpManager = mgr
 }
 
-// GetMCPManager 获取 MCP 管理器
+// GetMCPManager returns the MCP manager
 func (s *TenantSession) GetMCPManager() *tools.SessionMCPManager {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.mcpManager
 }
 
-// LastActive 返回会话最后活跃时间
+// LastActive returns the session's last active time
 func (s *TenantSession) LastActive() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lastActive
 }
 
-// CleanupInactiveMCPs 清理不活跃的 MCP 连接
-// 返回会话最后活跃时间（用于判断会话是否需要从缓存中移除）
+// CleanupInactiveMCPs cleans up inactive MCP connections
+// Returns the session's last active time (used to determine if session should be evicted from cache)
 func (s *TenantSession) CleanupInactiveMCPs() time.Time {
 	s.mu.RLock()
 	mgr := s.mcpManager
@@ -167,7 +167,7 @@ func (s *TenantSession) CleanupInactiveMCPs() time.Time {
 	return s.LastActive()
 }
 
-// Close 关闭会话资源
+// Close releases session resources
 func (s *TenantSession) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -178,7 +178,7 @@ func (s *TenantSession) Close() {
 	}
 }
 
-// InvalidateMCP 使会话的 MCP 连接失效，强制下次使用时重新加载
+// InvalidateMCP invalidates the session's MCP connections, forcing reload on next use
 func (s *TenantSession) InvalidateMCP() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -188,14 +188,14 @@ func (s *TenantSession) InvalidateMCP() {
 	}
 }
 
-// GetCurrentDir 获取当前工作目录（PWD 工具优化）
+// GetCurrentDir returns the current working directory (PWD tool optimization)
 func (s *TenantSession) GetCurrentDir() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cwd
 }
 
-// SetCurrentDir 设置当前工作目录（PWD 工具优化）
+// SetCurrentDir sets the current working directory (PWD tool optimization)
 func (s *TenantSession) SetCurrentDir(dir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

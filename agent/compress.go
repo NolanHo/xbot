@@ -12,6 +12,18 @@ import (
 	"xbot/session"
 )
 
+// Compression and truncation constants.
+const (
+	maxToolSummaryRunes    = 200  // max runes per tool summary in pending output
+	maxCmdDisplayRunes     = 80   // max runes for command display before truncation
+	maxArgsDisplayRunes    = 60   // max runes for args display before truncation
+	maxHistoryContentRunes = 2000 // max runes for tool result content in history
+	minHistoryBudget       = 1000 // minimum rune budget for message history
+	minCompressTargetRunes = 500  // minimum target after compression
+	maxCompressTargetRunes = 5000 // maximum target after compression
+	maxToolRoundsPerMsg    = 10   // max tool call rounds per message
+)
+
 // CompressResult holds the compaction output.
 type CompressResult struct {
 	LLMView     []llm.ChatMessage // Full messages for continuing the current Run()
@@ -117,7 +129,7 @@ func extractDialogueFromTail(tail []llm.ChatMessage) []llm.ChatMessage {
 		case msg.Role == "tool":
 			stripped := stripOffloadMaskPrefix(msg.Content)
 			if stripped != "" {
-				pendingToolSummary.WriteString("  → " + truncateRunes(stripped, 200) + "\n")
+				pendingToolSummary.WriteString("  → " + truncateRunes(stripped, maxToolSummaryRunes) + "\n")
 			}
 		}
 	}
@@ -135,8 +147,8 @@ func summarizeToolCall(name, args string) string {
 			return fmt.Sprintf("- **%s**: ...", name)
 		}
 		// Strip common prefixes for brevity
-		if len(cmd) > 80 {
-			cmd = cmd[:80] + "..."
+		if len(cmd) > maxCmdDisplayRunes {
+			cmd = cmd[:maxCmdDisplayRunes] + "..."
 		}
 		return fmt.Sprintf("- **%s**: `%s`", name, cmd)
 	case "Read":
@@ -169,7 +181,7 @@ func summarizeToolCall(name, args string) string {
 		return fmt.Sprintf("- **%s**: `%s`", name, path)
 	default:
 		// Generic: show name + truncated args
-		truncated := truncateArgs(args, 60)
+		truncated := truncateArgs(args, maxArgsDisplayRunes)
 		return fmt.Sprintf("- **%s**: %s", name, truncated)
 	}
 }
@@ -333,8 +345,8 @@ func formatCompactLine(msg llm.ChatMessage) string {
 		content += fmt.Sprintf(" [called tools: %s]", strings.Join(toolNames, ", "))
 	}
 	runes := []rune(content)
-	if len(runes) > 2000 {
-		content = string(runes[:2000]) + "..."
+	if len(runes) > maxHistoryContentRunes {
+		content = string(runes[:maxHistoryContentRunes]) + "..."
 	}
 	return fmt.Sprintf("[%s] %s\n\n", role, content)
 }
@@ -437,8 +449,8 @@ func compactMessages(
 	// output budget ~1000t).  Use 1500 as a safe reserve.
 	const compactionOverhead = 1500
 	historyBudget := maxContextTokens - compactionOverhead
-	if historyBudget < 1000 {
-		historyBudget = 1000
+	if historyBudget < minHistoryBudget {
+		historyBudget = minHistoryBudget
 	}
 
 	// Scan backwards to find how many messages fit.
@@ -471,11 +483,11 @@ func compactMessages(
 	// Compute target budget
 	originalTokens, _ := llm.CountMessagesTokens(messages, model)
 	targetRunes := int(float64(originalTokens) * 0.3 * 1.5) // tokens → runes estimate
-	if targetRunes < 500 {
-		targetRunes = 500
+	if targetRunes < minCompressTargetRunes {
+		targetRunes = minCompressTargetRunes
 	}
-	if targetRunes > 5000 {
-		targetRunes = 5000
+	if targetRunes > maxCompressTargetRunes {
+		targetRunes = maxCompressTargetRunes
 	}
 
 	prompt := compactionPrompt + fmt.Sprintf(`
@@ -497,7 +509,7 @@ Output the structured working state directly.`
 	var compressed string
 	var totalInput, totalOutput, totalCached int64
 	var llmCalls int
-	maxToolRounds := 10
+	maxToolRounds := maxToolRoundsPerMsg
 	for round := 0; round <= maxToolRounds; round++ {
 		resp, err := client.Generate(ctx, model, compactionMsgs, memTools, "")
 		if err != nil {

@@ -646,7 +646,7 @@ func (m *cliModel) viewBgTaskList() string {
 	// Calculate dynamic truncation width.
 	contentW := m.contentWidth()
 	if contentW < panelMinContentWidth {
-		contentW = 20
+		contentW = panelMinContentWidth
 	}
 
 	totalItems := len(m.panelBgTasks)
@@ -713,7 +713,7 @@ func (m *cliModel) viewBgTaskLog() string {
 
 	contentW := m.contentWidth()
 	if contentW < panelMinContentWidth {
-		contentW = 20
+		contentW = panelMinContentWidth
 	}
 
 	var title string
@@ -942,7 +942,7 @@ func (m *cliModel) viewSessionsList() string {
 
 	contentW := m.contentWidth()
 	if contentW < panelMinContentWidth {
-		contentW = 20
+		contentW = panelMinContentWidth
 	}
 
 	if len(m.panelSessionItems) == 0 {
@@ -2853,7 +2853,7 @@ func (m *cliModel) viewChannelPanel() string {
 
 	contentW := m.contentWidth()
 	if contentW < panelMinContentWidth {
-		contentW = 20
+		contentW = panelMinContentWidth
 	}
 
 	for i, ch := range m.panelChannelItems {

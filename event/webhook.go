@@ -13,6 +13,15 @@ import (
 	log "xbot/logger"
 )
 
+// webhookReadTimeout and webhookWriteTimeout are HTTP server timeouts for the webhook server.
+const (
+	webhookReadTimeout  = 15 * time.Second
+	webhookWriteTimeout = 15 * time.Second
+)
+
+// defaultWebhookRateLimit is the default max requests per minute per trigger.
+const defaultWebhookRateLimit = 60
+
 // WebhookConfig holds configuration for the webhook server.
 type WebhookConfig struct {
 	Host        string `json:"host"`
@@ -36,7 +45,7 @@ func NewWebhookServer(router *Router, cfg WebhookConfig) *WebhookServer {
 		cfg.MaxBodySize = 1 << 20 // 1 MB
 	}
 	if cfg.RateLimit == 0 {
-		cfg.RateLimit = 60
+		cfg.RateLimit = defaultWebhookRateLimit
 	}
 	return &WebhookServer{
 		router:  router,
@@ -54,8 +63,8 @@ func (ws *WebhookServer) Start() error {
 	ws.server = &http.Server{
 		Addr:         addr,
 		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  webhookReadTimeout,
+		WriteTimeout: webhookWriteTimeout,
 	}
 
 	log.WithField("addr", addr).Info("Webhook server starting")
@@ -227,7 +236,11 @@ func (rl *rateLimiter) allow(key string) bool {
 
 	// Periodic cleanup: remove empty windows to prevent unbounded map growth.
 	// Only runs periodically (every ~256 calls) to amortize cost.
-	if len(rl.windows) > 64 && now.Unix()%64 == 0 {
+	// rateWindowEvictThreshold triggers periodic cleanup of empty windows
+	// to prevent unbounded map growth.
+	const rateWindowEvictThreshold = 64
+
+	if len(rl.windows) > rateWindowEvictThreshold && now.Unix()%int64(rateWindowEvictThreshold) == 0 {
 		rl.evictEmpty()
 	}
 

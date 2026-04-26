@@ -178,7 +178,8 @@ var (
 )
 
 // errorKeywords — error detection keywords in system messages
-var errorKeywords = []string{"error", "failed", "失败", "Error", "exception", "denied", "refused"}
+// Keep both Chinese and English keywords since user-facing messages may be in either language.
+var errorKeywords = []string{"error", "failed", "失败", "错误", "Error", "exception", "denied", "refused"}
 
 // Terminal CSI escape sequences for modified keys not recognized by Bubble Tea.
 // Some terminals use the CSI u protocol (kitty, Ghostty, Windows Terminal),

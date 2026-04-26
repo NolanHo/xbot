@@ -327,7 +327,7 @@ func TestRun_LLMError_GracefulDegradation(t *testing.T) {
 	if out.Content == "" || !strings.HasPrefix(out.Content, "Let me check...") {
 		t.Errorf("content = %q, want partial result with warning", out.Content)
 	}
-	if !strings.Contains(out.Content, "⚠️ LLM 调用失败") {
+	if !strings.Contains(out.Content, "⚠️ LLM call failed") {
 		t.Errorf("content = %q, want partial result to contain warning", out.Content)
 	}
 }

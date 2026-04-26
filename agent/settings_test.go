@@ -51,7 +51,7 @@ func TestSettingsServiceGetSettingsUI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get settings ui: %v", err)
 	}
-	if ui != "当前渠道没有可配置的设置项。" {
+	if ui != "The current channel has no configurable settings." {
 		t.Errorf("expected no settings message, got %q", ui)
 	}
 }

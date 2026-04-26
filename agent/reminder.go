@@ -53,18 +53,18 @@ func BuildSystemReminder(messages []llm.ChatMessage, roundToolCalls []llm.ToolCa
 
 	if taskGoal != "" {
 		if isSubAgent {
-			parts = append(parts, fmt.Sprintf("Executing task:: %s", taskGoal))
+			parts = append(parts, fmt.Sprintf("Executing task: %s", taskGoal))
 		} else {
-			parts = append(parts, fmt.Sprintf("User requirement:: %s", taskGoal))
+			parts = append(parts, fmt.Sprintf("User requirement: %s", taskGoal))
 		}
 	}
 
 	if cwd != "" {
-		parts = append(parts, fmt.Sprintf("Current directory:: %s", cwd))
+		parts = append(parts, fmt.Sprintf("Current directory: %s", cwd))
 	}
 
 	parts = append(parts, fmt.Sprintf("Completed %d tool calls", toolCount))
-	parts = append(parts, fmt.Sprintf("This round used:: %s", strings.Join(roundToolNames, ", ")))
+	parts = append(parts, fmt.Sprintf("This round used: %s", strings.Join(roundToolNames, ", ")))
 
 	if todoSummary != "" {
 		parts = append(parts, fmt.Sprintf("TODO: %s", todoSummary))

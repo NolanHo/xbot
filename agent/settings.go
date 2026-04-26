@@ -108,7 +108,7 @@ func (s *SettingsService) GetSettingsUI(channelName, senderID string) (string, e
 	}
 
 	if len(schema) == 0 {
-		return "当前渠道没有可Configuration的设置项。", nil
+		return "The current channel has no configurable settings.", nil
 	}
 
 	// Check if channel implements UIBuilder for interactive UI

@@ -158,11 +158,11 @@ func TestFormatMarkdown(t *testing.T) {
 
 	// 验证五段式能力维度分组标题
 	checks := []string{
-		"⏱️ **运行概览**",
-		"🎯 **任务执行效果**",
-		"🧠 **记忆质量**",
-		"📦 **压缩效率**",
-		"🛡️ **四层防御效能**",
+		"⏱️ **Runtime Overview**",
+		"🎯 **Task Execution Effectiveness**",
+		"🧠 **Memory Quality**",
+		"📦 **Compression efficiency**",
+		"🛡️ **Four-Layer Defense Effectiveness**",
 		"3h 25m",
 		"42 次",
 		"97.4%",
@@ -193,17 +193,17 @@ func TestFormatMarkdown_ZeroValues(t *testing.T) {
 	s := MetricsSnapshot{}
 	md := s.FormatMarkdown()
 
-	// 零值时应显示"暂无数据"而非 panic
-	if !strings.Contains(md, "暂无数据") {
-		t.Error("zero-value markdown should contain '暂无数据'")
+	// 零值时应显示"No data available"而非 panic
+	if !strings.Contains(md, "No data available") {
+		t.Error("zero-value markdown should contain 'No data available'")
 	}
 	// 五个段落标题都应存在
 	sections := []string{
-		"⏱️ **运行概览**",
-		"🎯 **任务执行效果**",
-		"🧠 **记忆质量**",
-		"📦 **压缩效率**",
-		"🛡️ **四层防御效能**",
+		"⏱️ **Runtime Overview**",
+		"🎯 **Task Execution Effectiveness**",
+		"🧠 **Memory Quality**",
+		"📦 **Compression efficiency**",
+		"🛡️ **Four-Layer Defense Effectiveness**",
 	}
 	for _, sec := range sections {
 		if !strings.Contains(md, sec) {

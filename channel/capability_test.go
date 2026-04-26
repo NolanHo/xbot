@@ -58,7 +58,7 @@ func TestBuildTextSettingsUI(t *testing.T) {
 
 func TestBuildTextSettingsUIEmpty(t *testing.T) {
 	ui := BuildTextSettingsUI(nil, nil)
-	if ui != "没有可配置的设置项。" {
+	if ui != "No configurable settings available." {
 		t.Errorf("expected empty message, got %q", ui)
 	}
 }

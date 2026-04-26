@@ -12,18 +12,18 @@ func TestSummarizeRetryError(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"nil", nil, "未知错误"},
-		{"TLS handshake timeout", errors.New("TLS handshake timeout"), "网络超时"},
-		{"connection refused", errors.New("dial tcp: connection refused"), "连接被拒绝"},
-		{"429", errors.New(`POST "url": 429 Too Many Requests`), "请求限流"},
-		{"rate limit", errors.New("rate limit exceeded"), "请求限流"},
-		{"502", errors.New(`POST "url": 502 Bad Gateway`), "服务暂时不可用"},
-		{"503", errors.New(`POST "url": 503 Service Unavailable`), "服务暂时不可用"},
-		{"500", errors.New(`POST "url": 500 Internal Server Error`), "服务端错误"},
-		{"504", errors.New(`POST "url": 504 Gateway Timeout`), "服务端错误"},
-		{"net.OpError timeout", &net.OpError{Op: "dial", Net: "tcp", Err: &timeoutErr{}}, "网络超时"},
-		{"net.OpError non-timeout", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}, "网络错误"},
-		{"generic error", errors.New("something went wrong"), "临时错误"},
+		{"nil", nil, "unknown error"},
+		{"TLS handshake timeout", errors.New("TLS handshake timeout"), "network timeout"},
+		{"connection refused", errors.New("dial tcp: connection refused"), "connection refused"},
+		{"429", errors.New(`POST "url": 429 Too Many Requests`), "rate limited"},
+		{"rate limit", errors.New("rate limit exceeded"), "rate limited"},
+		{"502", errors.New(`POST "url": 502 Bad Gateway`), "service temporarily unavailable"},
+		{"503", errors.New(`POST "url": 503 Service Unavailable`), "service temporarily unavailable"},
+		{"500", errors.New(`POST "url": 500 Internal Server Error`), "server error"},
+		{"504", errors.New(`POST "url": 504 Gateway Timeout`), "server error"},
+		{"net.OpError timeout", &net.OpError{Op: "dial", Net: "tcp", Err: &timeoutErr{}}, "network timeout"},
+		{"net.OpError non-timeout", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}, "network error"},
+		{"generic error", errors.New("something went wrong"), "temporary error"},
 	}
 
 	for _, tt := range tests {

@@ -20,10 +20,10 @@ func TestBuildSystemReminder_Basic(t *testing.T) {
 	if !strings.Contains(result, "<system-reminder>") {
 		t.Error("expected system-reminder tag")
 	}
-	if !strings.Contains(result, "用户需求: Hello") {
+	if !strings.Contains(result, "User requirement: Hello") {
 		t.Errorf("expected user goal, got:\n%s", result)
 	}
-	if !strings.Contains(result, "已完成 1 次工具调用") {
+	if !strings.Contains(result, "Completed 1 tool calls") {
 		t.Errorf("expected tool count, got:\n%s", result)
 	}
 	if !strings.Contains(result, "Shell") {
@@ -39,7 +39,7 @@ func TestBuildSystemReminder_SubAgent(t *testing.T) {
 
 	result := BuildSystemReminder(messages, []llm.ToolCall{{Name: "Read"}}, "", "main/worker", "")
 
-	if !strings.Contains(result, "执行任务: Do task X") {
+	if !strings.Contains(result, "Executing task: Do task X") {
 		t.Errorf("SubAgent should show task prefix, got:\n%s", result)
 	}
 }
@@ -50,9 +50,9 @@ func TestBuildSystemReminder_WithTodo(t *testing.T) {
 		{Role: "user", Content: "hi"},
 	}
 
-	result := BuildSystemReminder(messages, []llm.ToolCall{{Name: "Read"}}, "2/5 完成", "main", "")
+	result := BuildSystemReminder(messages, []llm.ToolCall{{Name: "Read"}}, "2/5 completed", "main", "")
 
-	if !strings.Contains(result, "TODO: 2/5 完成") {
+	if !strings.Contains(result, "TODO: 2/5 completed") {
 		t.Errorf("expected TODO summary, got:\n%s", result)
 	}
 }

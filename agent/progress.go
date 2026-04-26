@@ -43,6 +43,7 @@ type StructuredProgress struct {
 type ProgressPhase string
 
 const (
+	quotePrefix                    = "> " // Markdown blockquote prefix
 	PhaseThinking    ProgressPhase = "thinking"
 	PhaseToolExec    ProgressPhase = "tool_exec"
 	PhaseCompressing ProgressPhase = "compressing"
@@ -200,7 +201,7 @@ func extractRoleName(path []string) string {
 // countFullWidthIndent 计算一行（去掉 "> " 前缀后）的全角空格缩进层数。
 // 用于从扁平文本行重建子 Agent 层级树。
 func countFullWidthIndent(line string) int {
-	for strings.HasPrefix(line, "> ") {
+	for strings.HasPrefix(line, quotePrefix) {
 		line = strings.TrimPrefix(line, "> ")
 	}
 	count := 0
@@ -276,7 +277,7 @@ type childAgentStatus struct {
 //  3. 占位行格式（子 Agent 初始占位）："> ⏳ SubAgent [role]..."
 func isSubAgentLine(line string) bool {
 	// 清理引用前缀
-	for strings.HasPrefix(line, "> ") {
+	for strings.HasPrefix(line, quotePrefix) {
 		line = strings.TrimPrefix(line, "> ")
 	}
 	line = strings.TrimSpace(line)
@@ -365,7 +366,7 @@ func isPlausibleAgentRole(name string) bool {
 //  3. 占位行格式: "⏳ SubAgent [ministry-works]..."
 func parseSubAgentLine(line string) (childAgentStatus, bool) {
 	// 清理引用前缀
-	for strings.HasPrefix(line, "> ") {
+	for strings.HasPrefix(line, quotePrefix) {
 		line = strings.TrimPrefix(line, "> ")
 	}
 
@@ -572,7 +573,7 @@ func emojiToStatus(emoji string) string {
 // 与子 Agent 完成行（如 "✅ ministry-works: 执行完成"）的区别是：工具完成行以耗时结尾。
 func isToolCompletionLine(line string) bool {
 	// 清理引用前缀
-	for strings.HasPrefix(line, "> ") {
+	for strings.HasPrefix(line, quotePrefix) {
 		line = strings.TrimPrefix(line, "> ")
 	}
 	line = strings.TrimLeft(line, "　 \t")
@@ -612,7 +613,7 @@ func extractOwnAndChildProgress(flat []string) (string, []childAgentStatus) {
 			}
 			continue
 		}
-		if strings.HasPrefix(line, "> ") {
+		if strings.HasPrefix(line, quotePrefix) {
 			continue
 		}
 		cleaned := strings.TrimSpace(line)

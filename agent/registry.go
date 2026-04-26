@@ -82,7 +82,7 @@ func (rm *RegistryManager) globalSyncedAgentsDir(senderID string) string {
 // sandboxCtx returns a context with a 30-second timeout for sandbox I/O operations.
 // This prevents indefinite blocking when the Runner is disconnected in remote mode.
 func (rm *RegistryManager) sandboxCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 30*time.Second)
+	return context.WithTimeout(context.Background(), registryHTTPTimeout)
 }
 
 func (rm *RegistryManager) userSkillsDir(senderID string) string {
@@ -131,7 +131,7 @@ func (rm *RegistryManager) publishSkill(name, author string) error {
 	var err error
 	if rm.useSandbox() {
 		// skillDir is a sandbox path when sandboxed
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), registryHTTPTimeout)
 		defer cancel()
 		data, err = rm.sandbox.ReadFile(ctx, filepath.Join(skillDir, "SKILL.md"), author)
 	} else {
@@ -182,7 +182,7 @@ func (rm *RegistryManager) publishAgent(name, author string) error {
 	var role tools.SubAgentRole
 	var err error
 	if rm.useSandbox() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), registryHTTPTimeout)
 		defer cancel()
 		data, ferr := rm.sandbox.ReadFile(ctx, agentFile, author)
 		if ferr != nil {
@@ -536,7 +536,7 @@ func scanAgentDir(dir string, out *[]string, seen map[string]bool) {
 
 // scanSkillDirSandbox scans for skill directories using Sandbox.
 func scanSkillDirSandbox(sb tools.Sandbox, dir, userID string, out *[]string, seen map[string]bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), registryHTTPTimeout)
 	defer cancel()
 	entries, err := sb.ReadDir(ctx, dir, userID)
 	if err != nil {
@@ -559,7 +559,7 @@ func scanSkillDirSandbox(sb tools.Sandbox, dir, userID string, out *[]string, se
 
 // scanAgentDirSandbox scans for agent .md files using Sandbox.
 func scanAgentDirSandbox(sb tools.Sandbox, dir, userID string, out *[]string, seen map[string]bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), registryHTTPTimeout)
 	defer cancel()
 	entries, err := sb.ReadDir(ctx, dir, userID)
 	if err != nil {
@@ -812,4 +812,7 @@ func copyDir(src, dst string) error {
 
 		return os.WriteFile(targetPath, data, fi.Mode())
 	})
-}
+} // Registry HTTP timeout constants.
+const (
+	registryHTTPTimeout = 30 * time.Second
+)

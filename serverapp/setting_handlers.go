@@ -137,6 +137,21 @@ var serverKnownNonRuntimeKeys = map[string]bool{
 	"default_user": true, "privileged_user": true,
 }
 
+// dispatchHandler executes a setting handler's ApplyFull or ApplyConfig+ApplyBackend path.
+// Extracted to avoid repeating the same branching logic in every caller.
+func dispatchHandler(cfg *config.Config, backend agent.AgentBackend, senderID string, handler settingHandler, value string) {
+	if handler.ApplyFull != nil && backend != nil {
+		handler.ApplyFull(cfg, backend, senderID, value)
+	} else {
+		if handler.ApplyConfig != nil {
+			handler.ApplyConfig(cfg, value)
+		}
+		if handler.ApplyBackend != nil && backend != nil {
+			handler.ApplyBackend(backend, senderID, value)
+		}
+	}
+}
+
 // applyRuntimeSetting applies a single setting change to the in-memory config and backend.
 // Used by admin RPC handler after the setting is persisted to DB.
 // For batch operations (startup sync), use applyRuntimeSettings instead.
@@ -149,16 +164,7 @@ func applyRuntimeSetting(cfg *config.Config, backend agent.AgentBackend, senderI
 		}
 		return
 	}
-	if handler.ApplyFull != nil && backend != nil {
-		handler.ApplyFull(cfg, backend, senderID, value)
-	} else {
-		if handler.ApplyConfig != nil {
-			handler.ApplyConfig(cfg, value)
-		}
-		if handler.ApplyBackend != nil && backend != nil {
-			handler.ApplyBackend(backend, senderID, value)
-		}
-	}
+	dispatchHandler(cfg, backend, senderID, handler, value)
 	if backend != nil && backend.LLMFactory() != nil {
 		backend.LLMFactory().SetModelTiers(cfg.LLM)
 	}

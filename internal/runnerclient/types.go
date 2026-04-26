@@ -3,24 +3,24 @@ package runnerclient
 import "time"
 
 const (
-	// PingPeriod 心跳发送间隔
+	// PingPeriod is the interval between heartbeat pings
 	PingPeriod = 30 * time.Second
-	// PongWait 等待 pong 响应超时
+	// PongWait is the timeout for waiting for a pong response
 	PongWait = 60 * time.Second
-	// WriteWait 写操作超时
+	// WriteWait is the timeout for write operations
 	WriteWait = 10 * time.Second
 )
 
-// WriteMsg 是通过单一写协程发送的消息。
+// WriteMsg is a message sent through the single writer goroutine.
 type WriteMsg struct {
 	Data []byte
-	Err  chan error // 非 nil 表示控制消息（如 ping），需要错误回报
+	Err  chan error // non-nil means control message (e.g. ping) that needs error reporting
 }
 
-// LogFunc 是日志回调函数类型。
+// LogFunc is the log callback function type.
 type LogFunc func(format string, args ...interface{})
 
-// callLogf 安全调用日志函数（nil 保护）。
+// callLogf safely calls the log function (nil-safe).
 func callLogf(logf LogFunc, format string, args ...interface{}) {
 	if logf != nil {
 		logf(format, args...)

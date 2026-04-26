@@ -11,14 +11,14 @@ import (
 	"xbot/internal/runnerproto"
 )
 
-// ConnectOptions 连接选项。
+// ConnectOptions holds connection options.
 type ConnectOptions struct {
-	LLMProvider string  // LLM provider，空 = 无 LLM
-	LLMModel    string  // 默认模型名
-	LogFunc     LogFunc // 日志回调（nil 时静默）
+	LLMProvider string  // LLM provider; empty = no LLM
+	LLMModel    string  // default model name
+	LogFunc     LogFunc // log callback (silent when nil)
 }
 
-// Connect 建立 WebSocket 连接并发送注册消息。
+// Connect establishes a WebSocket connection and sends a registration message.
 func Connect(serverURL, userID, authToken, workspace, shell string, opts ...ConnectOptions) (*websocket.Conn, error) {
 	var opt ConnectOptions
 	if len(opts) > 0 {
@@ -35,7 +35,7 @@ func Connect(serverURL, userID, authToken, workspace, shell string, opts ...Conn
 		return nil, fmt.Errorf("dial server: %w", err)
 	}
 
-	// 收到 server 心跳时重置读超时
+	// Reset read timeout on server heartbeat
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(PongWait))
 		return nil
@@ -64,7 +64,7 @@ func Connect(serverURL, userID, authToken, workspace, shell string, opts ...Conn
 		return nil, fmt.Errorf("send registration: %w", err)
 	}
 
-	// 等待 server 确认或拒绝
+	// Wait for server confirmation or rejection
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
@@ -83,15 +83,15 @@ func Connect(serverURL, userID, authToken, workspace, shell string, opts ...Conn
 		return nil, fmt.Errorf("registration rejected: %s", e.Message)
 	}
 
-	// 重置读超时为正常操作的 pongWait
+	// Reset read timeout to normal-operation pongWait
 	conn.SetReadDeadline(time.Now().Add(PongWait))
 
 	callLogf(opt.LogFunc, "Registration sent  user=%s  workspace=%s", userID, workspace)
 	return conn, nil
 }
 
-// WritePump 是唯一向 WebSocket 连接写入的协程。
-// 所有写入（响应、心跳）都通过 writeCh 进行，避免并发写入。
+// WritePump is the only goroutine that writes to the WebSocket connection.
+// All writes (responses, heartbeats) go through writeCh to avoid concurrent writes.
 func WritePump(conn *websocket.Conn, writeCh <-chan WriteMsg, stop <-chan struct{}, done chan<- struct{}, logf LogFunc) {
 	ticker := time.NewTicker(PingPeriod)
 	defer func() {
@@ -104,7 +104,7 @@ func WritePump(conn *websocket.Conn, writeCh <-chan WriteMsg, stop <-chan struct
 		select {
 		case msg := <-writeCh:
 			if msg.Err != nil {
-				// 控制消息（ping）— 使用 WriteControl
+				// Control message (ping) — use WriteControl
 				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(WriteWait))
 				msg.Err <- err
 			} else {
@@ -125,8 +125,8 @@ func WritePump(conn *websocket.Conn, writeCh <-chan WriteMsg, stop <-chan struct
 	}
 }
 
-// ReadLoop 从 server 读取消息并分发到 handler。
-// 请求异步处理，使读循环可以在长时间操作期间继续处理 WebSocket 控制帧（ping/pong）。
+// ReadLoop reads messages from the server and dispatches to handler.
+// Requests are processed asynchronously so the read loop can continue handling WebSocket control frames (ping/pong) during long operations.
 func ReadLoop(conn *websocket.Conn, handler *Handler, writeCh chan<- WriteMsg, writeDone <-chan struct{}, logf LogFunc) {
 	for {
 		_, message, err := conn.ReadMessage()
@@ -149,7 +149,7 @@ func ReadLoop(conn *websocket.Conn, handler *Handler, writeCh chan<- WriteMsg, w
 			callLogf(logf, "→ %s [id=%s]", msg.Type, msg.ID)
 		}
 
-		// Fire-and-forget 消息（无需响应）
+		// Fire-and-forget messages (no response needed)
 		if msg.Type == runnerproto.ProtoStdioWrite {
 			go handler.DispatchFireAndForget(msg)
 			continue

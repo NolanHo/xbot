@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// DetectShell 检测最佳可用的 shell。
-// Docker 模式：查询容器内的 /etc/passwd（与 DockerSandbox.detectShell 相同）。
-// Native 模式：检查宿主机文件系统。
+// DetectShell detects the best available shell.
+// Docker mode: queries /etc/passwd inside the container (same as DockerSandbox.detectShell).
+// Native mode: checks the host filesystem.
 func DetectShell(dockerMode bool, executor Executor) string {
 	if dockerMode {
 		de, ok := executor.(*DockerExecutor)

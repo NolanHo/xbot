@@ -12,7 +12,7 @@ import (
 	"xbot/llm"
 )
 
-// Handler 处理从 server 收到的请求。
+// Handler processes requests received from the server.
 type Handler struct {
 	Executor        Executor
 	PathGuard       *PathGuard
@@ -21,41 +21,41 @@ type Handler struct {
 	LLMProviderName string // provider name for self-reporting (e.g. "openai", "anthropic")
 	Verbose         bool
 
-	// 内部管理
+	// Internal management
 	stdioMgr *stdioManager
 	bgMgr    *bgTaskManager
 
-	// 日志回调（nil 时静默）
+	// Log callback (silent when nil)
 	LogFunc LogFunc
 
-	// 模式标记
+	// Mode flags
 	dockerMode bool
 }
 
-// HandlerOption 是 Handler 的可选配置函数。
+// HandlerOption is a functional option for Handler.
 type HandlerOption func(*Handler)
 
-// WithVerbose 设置详细日志。
+// WithVerbose enables verbose logging.
 func WithVerbose(v bool) HandlerOption {
 	return func(h *Handler) { h.Verbose = v }
 }
 
-// WithPathGuard 设置 PathGuard。
+// WithPathGuard sets the PathGuard.
 func WithPathGuard(pg *PathGuard) HandlerOption {
 	return func(h *Handler) { h.PathGuard = pg }
 }
 
-// WithDockerMode 设置 Docker 模式。
+// WithDockerMode enables Docker mode.
 func WithDockerMode(v bool) HandlerOption {
 	return func(h *Handler) { h.dockerMode = v }
 }
 
-// WithLogFunc 设置日志回调函数（nil 时静默）。
+// WithLogFunc sets the log callback (silent when nil).
 func WithLogFunc(f LogFunc) HandlerOption {
 	return func(h *Handler) { h.LogFunc = f }
 }
 
-// NewHandler 创建一个 Handler。
+// NewHandler creates a new Handler.
 func NewHandler(exec Executor, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		Executor: exec,
@@ -66,7 +66,7 @@ func NewHandler(exec Executor, opts ...HandlerOption) *Handler {
 	return h
 }
 
-// InitLLM 初始化 LLM 客户端。
+// InitLLM initializes the LLM client.
 func (h *Handler) InitLLM(provider, baseURL, apiKey, model string) error {
 	client, models, err := InitLLMClient(provider, baseURL, apiKey, model, h.LogFunc)
 	if err != nil {
@@ -80,8 +80,8 @@ func (h *Handler) InitLLM(provider, baseURL, apiKey, model string) error {
 	return nil
 }
 
-// SetLLMClient 直接设置 LLM 客户端（用于 TUI runner 复用已有客户端）。
-// provider 参数用于 runner 自报告 LLM 能力（传空字符串表示无 LLM）。
+// SetLLMClient directly sets the LLM client (for TUI runner to reuse an existing client).
+// provider is used for the runner to self-report LLM capability (empty string = no LLM).
 func (h *Handler) SetLLMClient(client llm.LLM, models []string, provider string) {
 	h.LLMClient = client
 	h.LLMModels = models
@@ -90,7 +90,7 @@ func (h *Handler) SetLLMClient(client llm.LLM, models []string, provider string)
 	}
 }
 
-// LLMProvider 返回 LLM provider 名称（空 = 无 LLM）。
+// LLMProvider returns the LLM provider name (empty = no LLM).
 func (h *Handler) LLMProvider() string {
 	if h.LLMClient == nil {
 		return ""
@@ -98,7 +98,7 @@ func (h *Handler) LLMProvider() string {
 	return h.LLMProviderName
 }
 
-// LLMModel 返回默认模型名称。
+// LLMModel returns the default model name.
 func (h *Handler) LLMModel() string {
 	if len(h.LLMModels) > 0 {
 		return h.LLMModels[0]
@@ -106,13 +106,13 @@ func (h *Handler) LLMModel() string {
 	return ""
 }
 
-// SetWriteChannels 设置写通道（在启动 ReadLoop 前调用）。
+// SetWriteChannels sets the write channels (call before starting ReadLoop).
 func (h *Handler) SetWriteChannels(writeCh chan<- WriteMsg, writeDone <-chan struct{}) {
 	h.ensureManagers()
 	h.stdioMgr.SetWriteChannels(writeCh, writeDone)
 }
 
-// Cleanup 清理所有资源（stdio 进程、后台任务）。
+// Cleanup releases all resources (stdio processes, background tasks).
 func (h *Handler) Cleanup() {
 	if h.stdioMgr != nil {
 		h.stdioMgr.Cleanup()
@@ -122,7 +122,7 @@ func (h *Handler) Cleanup() {
 	}
 }
 
-// ensureManagers 确保 stdio 和 bg task 管理器已初始化。
+// ensureManagers ensures the stdio and bg task managers are initialized.
 func (h *Handler) ensureManagers() {
 	if h.stdioMgr == nil {
 		h.stdioMgr = newStdioManager(h.Verbose, h.dockerMode, h.LogFunc)
@@ -138,7 +138,7 @@ func (h *Handler) ensureManagers() {
 	}
 }
 
-// HandleRequest 处理一个请求并返回响应。
+// HandleRequest processes a request and returns a response.
 func (h *Handler) HandleRequest(msg runnerproto.RunnerMessage) *runnerproto.RunnerMessage {
 	resp := h.Dispatch(msg)
 
@@ -154,7 +154,7 @@ func (h *Handler) HandleRequest(msg runnerproto.RunnerMessage) *runnerproto.Runn
 	return resp
 }
 
-// Dispatch 根据消息类型分发到对应的处理函数。
+// Dispatch routes a message to the appropriate handler based on its type.
 func (h *Handler) Dispatch(msg runnerproto.RunnerMessage) *runnerproto.RunnerMessage {
 	h.ensureManagers()
 
@@ -196,7 +196,7 @@ func (h *Handler) Dispatch(msg runnerproto.RunnerMessage) *runnerproto.RunnerMes
 	}
 }
 
-// DispatchFireAndForget 处理不需要响应的消息。
+// DispatchFireAndForget handles messages that don't need a response.
 func (h *Handler) DispatchFireAndForget(msg runnerproto.RunnerMessage) {
 	h.ensureManagers()
 
@@ -231,7 +231,7 @@ func (h *Handler) handleExec(msg runnerproto.RunnerMessage) *runnerproto.RunnerM
 		RunAsUser: req.RunAsUser,
 	}
 
-	// pathguard 检查工作目录
+	// pathguard checks working directory
 	if spec.Dir != "" && h.PathGuard != nil {
 		if err := h.PathGuard.Validate(spec.Dir); err != nil {
 			return runnerproto.MakeError(msg.ID, "EPERM", err.Error())
@@ -408,7 +408,7 @@ func (h *Handler) handleDownloadFile(msg runnerproto.RunnerMessage) *runnerproto
 		return runnerproto.MakeError(msg.ID, "EPERM", err.Error())
 	}
 
-	// 5 分钟超时
+	// 5-minute timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -427,7 +427,7 @@ func (h *Handler) handleBgExec(msg runnerproto.RunnerMessage) *runnerproto.Runne
 		return runnerproto.MakeError(msg.ID, "EINVAL", "invalid bg_exec request: "+err.Error())
 	}
 
-	// pathguard 检查工作目录
+	// pathguard checks working directory
 	if req.Dir != "" && h.PathGuard != nil {
 		if err := h.PathGuard.Validate(req.Dir); err != nil {
 			return runnerproto.MakeError(msg.ID, "EPERM", err.Error())
@@ -469,7 +469,7 @@ func (h *Handler) handleBgStatus(msg runnerproto.RunnerMessage) *runnerproto.Run
 	return runnerproto.MakeResponse(msg.ID, runnerproto.ProtoBgOutput, resp)
 }
 
-// safePath 是 PathGuard.SafePath 的便捷方法。
+// safePath is a convenience method for PathGuard.SafePath.
 func (h *Handler) safePath(path string) (string, error) {
 	if h.PathGuard == nil {
 		return path, nil

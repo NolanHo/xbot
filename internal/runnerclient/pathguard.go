@@ -6,19 +6,19 @@ import (
 	"strings"
 )
 
-// PathGuard 封装路径验证逻辑。
+// PathGuard encapsulates path validation logic.
 type PathGuard struct {
-	// Workspace 工作区根路径
+	// Workspace is the root workspace path
 	Workspace string
-	// FullControl 禁用所有路径限制
+	// FullControl disables all path restrictions
 	FullControl bool
-	// DockerMode Docker 模式下仅做字符串级前缀检查
+	// DockerMode: in Docker mode, only does string-level prefix checks
 	DockerMode bool
 }
 
-// Validate 检查 path 是否在 workspace 内，不在则返回错误。
-// FullControl 为 true 时跳过所有检查。
-// DockerMode 时仅做字符串级前缀检查（不 EvalSymlinks）。
+// Validate checks if path is within the workspace; returns error if not.
+// Skips all checks when FullControl is true.
+// In DockerMode, only does string-level prefix check (no EvalSymlinks).
 func (pg *PathGuard) Validate(path string) error {
 	if pg.FullControl || pg.DockerMode {
 		return nil
@@ -30,10 +30,10 @@ func (pg *PathGuard) Validate(path string) error {
 		cleaned = filepath.Join(ws, cleaned)
 	}
 
-	// Native 模式：保留 EvalSymlinks 检查
+	// Native mode: keep EvalSymlinks check
 	real, err := filepath.EvalSymlinks(cleaned)
 	if err != nil {
-		// 文件可能还不存在（如写入目标），用 cleaned 路径作为回退
+		// File may not exist yet (e.g. write target), use cleaned path as fallback
 		real = cleaned
 	}
 
@@ -43,8 +43,8 @@ func (pg *PathGuard) Validate(path string) error {
 	return nil
 }
 
-// SafePath 返回清理并验证后的绝对路径。
-// FullControl 为 true 时仅返回清理后的路径。
+// SafePath returns a cleaned and validated absolute path.
+// When FullControl is true, only returns the cleaned path.
 func (pg *PathGuard) SafePath(path string) (string, error) {
 	ws := pg.Workspace
 	cleaned := filepath.Clean(path)

@@ -19,14 +19,14 @@ import (
 const maxDownloadSize = 100 * 1024 * 1024
 
 // httpClient 是下载操作的专用 HTTP 客户端。
-var httpClient = &http.Client{Timeout: 0} // 使用 context timeout
+var httpClient = &http.Client{Timeout: 0} // uses context timeout
 
-// NativeExecutor 使用 os.* 原生 API 执行操作。
+// NativeExecutor executes operations using native os.* APIs.
 type NativeExecutor struct {
 	Workspace string
 }
 
-// NewNativeExecutor 创建一个 NativeExecutor。
+// NewNativeExecutor creates a new NativeExecutor.
 func NewNativeExecutor(workspace string) *NativeExecutor {
 	return &NativeExecutor{Workspace: workspace}
 }
@@ -40,7 +40,7 @@ func (e *NativeExecutor) Exec(ctx context.Context, spec ExecSpec) (*ExecResult, 
 		return nil, err
 	}
 
-	// 创建新进程组，超时时可以 kill 所有子进程
+	// Create new process group so all child processes can be killed on timeout
 	setProcessAttrs(cmd)
 	if spec.Dir != "" {
 		cmd.Dir = filepath.Clean(spec.Dir)

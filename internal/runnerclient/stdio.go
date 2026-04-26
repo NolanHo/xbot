@@ -15,14 +15,14 @@ import (
 	"xbot/internal/runnerproto"
 )
 
-// stdioProcess 表示一个正在运行的 stdio 进程。
+// stdioProcess represents a running stdio process.
 type stdioProcess struct {
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
-	done  chan struct{} // stdout 转发完成时关闭
+	done  chan struct{} // closed when stdout forwarding completes
 }
 
-// stdioManager 管理 stdio 进程的生命周期。
+// stdioManager manages the lifecycle of stdio processes.
 type stdioManager struct {
 	mu    sync.Mutex
 	procs map[string]*stdioProcess
@@ -44,13 +44,13 @@ func newStdioManager(verbose, dockerMode bool, logf LogFunc) *stdioManager {
 	}
 }
 
-// SetWriteChannels 设置写通道（由 ReadLoop 在启动时调用）。
+// SetWriteChannels sets the write channels (called by ReadLoop at startup).
 func (sm *stdioManager) SetWriteChannels(writeCh chan<- WriteMsg, writeDone <-chan struct{}) {
 	sm.writeCh = writeCh
 	sm.writeDone = writeDone
 }
 
-// HandleStart 处理 stdio_start 请求。
+// HandleStart handles the stdio_start request.
 func (sm *stdioManager) HandleStart(msg runnerproto.RunnerMessage) *runnerproto.RunnerMessage {
 	var req runnerproto.StdioStartRequest
 	if err := json.Unmarshal(msg.Body, &req); err != nil {
@@ -99,20 +99,20 @@ func (sm *stdioManager) HandleStart(msg runnerproto.RunnerMessage) *runnerproto.
 	sm.procs[req.StreamID] = proc
 	sm.mu.Unlock()
 
-	// 转发 stdout → server（stdio_data 推送消息）
+	// Forward stdout → server (stdio_data push message)
 	go sm.forwardOutput(req.StreamID, stdoutPipe, proc)
 
-	// 排空 stderr（runner 端日志）
+	// Drain stderr (runner-side logs)
 	go sm.drainStderr(req.StreamID, stderrPipe)
 
-	// 等待进程退出并通知 server
+	// Wait for process exit and notify server
 	go sm.waitExit(req.StreamID, proc)
 
 	callLogf(sm.logf, "  stdio_start stream=%s cmd=%s", req.StreamID, req.Command)
 	return runnerproto.MakeResponse(msg.ID, runnerproto.ProtoOK, runnerproto.StdioStartResponse{StreamID: req.StreamID})
 }
 
-// HandleWrite 处理 stdio_write 请求（fire-and-forget，无响应）。
+// HandleWrite handles the stdio_write request (fire-and-forget, no response).
 func (sm *stdioManager) HandleWrite(msg runnerproto.RunnerMessage) {
 	var req runnerproto.StdioWriteRequest
 	if err := json.Unmarshal(msg.Body, &req); err != nil {
@@ -133,7 +133,7 @@ func (sm *stdioManager) HandleWrite(msg runnerproto.RunnerMessage) {
 	proc.stdin.Write(data) //nolint:errcheck
 }
 
-// HandleClose 处理 stdio_close 请求。
+// HandleClose handles the stdio_close request.
 func (sm *stdioManager) HandleClose(msg runnerproto.RunnerMessage) *runnerproto.RunnerMessage {
 	var req runnerproto.StdioCloseRequest
 	if err := json.Unmarshal(msg.Body, &req); err != nil {
@@ -147,10 +147,10 @@ func (sm *stdioManager) HandleClose(msg runnerproto.RunnerMessage) *runnerproto.
 		return runnerproto.MakeError(msg.ID, "ENOENT", "stream not found: "+req.StreamID)
 	}
 
-	// 先关闭 stdin（向进程发信号 EOF）
+	// Close stdin first (signal EOF to process)
 	proc.stdin.Close()
 
-	// 给进程优雅退出的时间，然后 kill
+	// Give process time for graceful exit, then kill
 	select {
 	case <-proc.done:
 	case <-time.After(5 * time.Second):
@@ -166,7 +166,7 @@ func (sm *stdioManager) HandleClose(msg runnerproto.RunnerMessage) *runnerproto.
 	return runnerproto.MakeOK(msg.ID)
 }
 
-// buildCmd 根据请求构建命令。
+// buildCmd builds a command from the request.
 func (sm *stdioManager) buildCmd(req runnerproto.StdioStartRequest) (*exec.Cmd, error) {
 	if sm.dockerMode {
 		de, ok := sm.executor.(*DockerExecutor)
@@ -201,7 +201,7 @@ func (sm *stdioManager) buildCmd(req runnerproto.StdioStartRequest) (*exec.Cmd, 
 		args = append(args, de.ContainerName, "sh", "-c", shellCmd)
 		return exec.Command("docker", args...), nil
 	}
-	// Native 模式
+	// Native mode
 	cmd := exec.Command(req.Command, req.Args...)
 	cmd.Env = append(cmd.Environ(), req.Env...)
 	return cmd, nil
@@ -259,7 +259,7 @@ func (sm *stdioManager) drainStderr(streamID string, r io.Reader) {
 }
 
 func (sm *stdioManager) waitExit(streamID string, proc *stdioProcess) {
-	// 先等 stdout 转发完成
+	// Wait for stdout forwarding to complete first
 	<-proc.done
 
 	exitCode := 0
@@ -294,7 +294,7 @@ func (sm *stdioManager) waitExit(streamID string, proc *stdioProcess) {
 	callLogf(sm.logf, "  stdio_exit stream=%s exit=%d", streamID, exitCode)
 }
 
-// Cleanup 杀死所有活跃的 stdio 进程（session 断开时调用）。
+// Cleanup kills all active stdio processes (called on session disconnect).
 func (sm *stdioManager) Cleanup() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()

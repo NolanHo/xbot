@@ -12,7 +12,7 @@ import (
 	"xbot/internal/runnerproto"
 )
 
-// bgTask 表示一个后台任务。
+// bgTask represents a background task.
 type bgTask struct {
 	id        string
 	command   string
@@ -26,13 +26,13 @@ type bgTask struct {
 	startedAt time.Time
 }
 
-// bgTaskManager 管理后台任务。
+// bgTaskManager manages background tasks.
 type bgTaskManager struct {
 	mu      sync.RWMutex
 	tasks   map[string]*bgTask
 	verbose bool
 
-	// 用于构建 docker 命令
+	// used to build docker commands
 	dockerMode bool
 	workspace  string
 	executor   Executor
@@ -49,7 +49,7 @@ func newBgTaskManager(verbose, dockerMode bool, workspace string, logf LogFunc) 
 	}
 }
 
-// Start 启动一个后台命令（native 模式直接后台运行，docker 模式用 goroutine 包装）。
+// Start starts a background command (native mode runs in background, docker mode wraps in goroutine).
 func (m *bgTaskManager) Start(req runnerproto.BgExecRequest) (*runnerproto.BgStartedResponse, error) {
 	t := &bgTask{
 		id:        req.TaskID,
@@ -69,7 +69,7 @@ func (m *bgTaskManager) Start(req runnerproto.BgExecRequest) (*runnerproto.BgSta
 	return &runnerproto.BgStartedResponse{TaskID: req.TaskID}, nil
 }
 
-// run 执行命令并在完成时更新任务状态。
+// run executes the command and updates task status on completion.
 func (t *bgTask) run(m *bgTaskManager) {
 	var exitCode int
 	var status string
@@ -89,7 +89,7 @@ func (t *bgTask) run(m *bgTaskManager) {
 		t.id, t.status, t.exitCode, t.stdout.Len(), t.stderr.Len())
 }
 
-// runNative 以原生方式执行命令，支持进程组。
+// runNative executes a command natively with process group support.
 func (t *bgTask) runNative(m *bgTaskManager) (int, string) {
 	var cmd *exec.Cmd
 	if t.req.Shell {
@@ -101,7 +101,7 @@ func (t *bgTask) runNative(m *bgTaskManager) (int, string) {
 		cmd = exec.Command(t.req.Args[0], t.req.Args[1:]...)
 	}
 
-	// 创建进程组以便 kill 整个进程树
+	// Create process group to kill entire process tree
 	setProcessAttrs(cmd)
 
 	dir := t.req.Dir
@@ -131,7 +131,7 @@ func (t *bgTask) runNative(m *bgTaskManager) (int, string) {
 	return 0, "completed"
 }
 
-// runDocker 在 docker 容器内同步执行命令。
+// runDocker executes a command synchronously inside a Docker container.
 func (t *bgTask) runDocker(m *bgTaskManager) (int, string) {
 	de := m.executor.(*DockerExecutor)
 
@@ -147,7 +147,7 @@ func (t *bgTask) runDocker(m *bgTaskManager) (int, string) {
 	return t.dockerRun(de, args, t.req.Stdin)
 }
 
-// dockerRun 执行 docker 命令并捕获输出。
+// dockerRun executes a docker command and captures its output.
 func (t *bgTask) dockerRun(de *DockerExecutor, args []string, stdin string) (int, string) {
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = de.HostWorkspace
@@ -168,7 +168,7 @@ func (t *bgTask) dockerRun(de *DockerExecutor, args []string, stdin string) (int
 	return 0, "completed"
 }
 
-// Kill 发送 SIGKILL 给后台任务的进程组（native）或 docker exec 进程（docker）。
+// Kill sends SIGKILL to the background task's process group (native) or docker exec process (docker).
 func (m *bgTaskManager) Kill(req runnerproto.BgKillRequest) error {
 	m.mu.RLock()
 	t, ok := m.tasks[req.TaskID]
@@ -188,7 +188,7 @@ func (m *bgTaskManager) Kill(req runnerproto.BgKillRequest) error {
 		if m.dockerMode {
 			t.cmd.Process.Kill()
 		} else {
-			// Kill 整个进程组
+			// Kill entire process group
 			killProcessTree(t.cmd.Process.Pid)
 		}
 		t.status = "killed"
@@ -198,7 +198,7 @@ func (m *bgTaskManager) Kill(req runnerproto.BgKillRequest) error {
 	return nil
 }
 
-// Status 返回后台任务的当前状态和输出快照。
+// Status returns the background task's current status and output snapshot.
 func (m *bgTaskManager) Status(req runnerproto.BgStatusRequest) (*runnerproto.BgOutputResponse, error) {
 	m.mu.RLock()
 	t, ok := m.tasks[req.TaskID]
@@ -220,7 +220,7 @@ func (m *bgTaskManager) Status(req runnerproto.BgStatusRequest) (*runnerproto.Bg
 	return resp, nil
 }
 
-// Cleanup 杀死所有运行中的后台任务（断开连接时调用）。
+// Cleanup kills all running background tasks (called on disconnect).
 func (m *bgTaskManager) Cleanup() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -241,7 +241,7 @@ func (m *bgTaskManager) Cleanup() {
 	callLogf(m.logf, "  bg_tasks: cleaned up all tasks on disconnect")
 }
 
-// getBaseEnv 返回原生命令执行的基础环境。
+// getBaseEnv returns the base environment for native command execution.
 func getBaseEnv() []string {
 	return nil // exec.Command uses os.Environ by default when Env is nil
 }

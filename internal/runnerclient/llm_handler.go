@@ -10,7 +10,7 @@ import (
 	"xbot/llm"
 )
 
-// LLMProxyRequest 镜像服务端的 LLM 代理请求。
+// LLMProxyRequest mirrors the server-side LLM proxy request.
 type LLMProxyRequest struct {
 	Model        string            `json:"model"`
 	Messages     []llm.ChatMessage `json:"messages"`
@@ -18,7 +18,7 @@ type LLMProxyRequest struct {
 	ThinkingMode string            `json:"thinking_mode,omitempty"`
 }
 
-// handleLLMGenerate 处理 "llm_generate" 请求。
+// handleLLMGenerate handles the "llm_generate" request.
 func handleLLMGenerate(msg runnerproto.RunnerMessage, llmClient llm.LLM, logf LogFunc) *runnerproto.RunnerMessage {
 	if llmClient == nil {
 		return runnerproto.MakeError(msg.ID, "ENOTSUP", "local LLM not configured on this runner")
@@ -29,7 +29,7 @@ func handleLLMGenerate(msg runnerproto.RunnerMessage, llmClient llm.LLM, logf Lo
 		return runnerproto.MakeError(msg.ID, "EINVAL", "invalid llm_generate request: "+err.Error())
 	}
 
-	// 将 ToolDefJSON 转回 ChatMessage 格式用于 LLM 调用
+	// Convert ToolDefJSON back to ChatMessage format for LLM call
 	var tools []llm.ToolDefinition
 	if len(req.Tools) > 0 {
 		tools = make([]llm.ToolDefinition, len(req.Tools))
@@ -38,7 +38,7 @@ func handleLLMGenerate(msg runnerproto.RunnerMessage, llmClient llm.LLM, logf Lo
 		}
 	}
 
-	// 使用宽松的超时 — LLM 调用可能较慢
+	// Use generous timeout — LLM calls can be slow
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
@@ -50,7 +50,7 @@ func handleLLMGenerate(msg runnerproto.RunnerMessage, llmClient llm.LLM, logf Lo
 	return runnerproto.MakeResponse(msg.ID, "llm_response", resp)
 }
 
-// handleLLMModels 处理 "llm_models" 请求。
+// handleLLMModels handles the "llm_models" request.
 func handleLLMModels(msg runnerproto.RunnerMessage, llmClient llm.LLM, llmModels []string, logf LogFunc) *runnerproto.RunnerMessage {
 	if llmClient == nil {
 		return runnerproto.MakeError(msg.ID, "ENOTSUP", "local LLM not configured on this runner")
@@ -61,7 +61,7 @@ func handleLLMModels(msg runnerproto.RunnerMessage, llmClient llm.LLM, llmModels
 	})
 }
 
-// toolDefAdapter 将 ToolDefJSON 适配为 llm.ToolDefinition 接口。
+// toolDefAdapter adapts ToolDefJSON to the llm.ToolDefinition interface.
 type toolDefAdapter struct {
 	name   string
 	desc   string
@@ -72,8 +72,8 @@ func (t *toolDefAdapter) Name() string                { return t.name }
 func (t *toolDefAdapter) Description() string         { return t.desc }
 func (t *toolDefAdapter) Parameters() []llm.ToolParam { return t.params }
 
-// InitLLMClient 从 provider/baseURL/apiKey/model 初始化 LLM 客户端。
-// provider 为空时表示纯 sandbox 模式，不配置 LLM。
+// InitLLMClient initializes the LLM client from provider/baseURL/apiKey/model.
+// Empty provider means sandbox-only mode, no LLM configured.
 func InitLLMClient(provider, baseURL, apiKey, model string, logf LogFunc) (llm.LLM, []string, error) {
 	if provider == "" || apiKey == "" {
 		callLogf(logf, "  Local LLM: not configured (pure sandbox mode)")

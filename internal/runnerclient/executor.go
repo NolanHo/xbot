@@ -6,12 +6,12 @@ import (
 	"time"
 )
 
-// Executor 抽象 runner 的操作后端（native 或 docker）。
+// Executor abstracts the runner's operation backend (native or docker).
 type Executor interface {
-	// 命令执行
+	// Command execution
 	Exec(ctx context.Context, spec ExecSpec) (*ExecResult, error)
 
-	// 文件操作
+	// File operations
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte, perm os.FileMode) error
 	Stat(path string) (FileInfo, error)
@@ -20,14 +20,14 @@ type Executor interface {
 	Remove(path string) error
 	RemoveAll(path string) error
 
-	// 端侧下载
+	// Edge download
 	DownloadFile(ctx context.Context, url, outputPath string) (int64, error)
 
-	// 生命周期
+	// Lifecycle
 	Close() error
 }
 
-// ExecSpec 是命令执行参数。
+// ExecSpec holds command execution parameters.
 type ExecSpec struct {
 	Command string
 	Args    []string
@@ -43,7 +43,7 @@ type ExecSpec struct {
 	RunAsUser string
 }
 
-// ExecResult 是命令执行结果。
+// ExecResult holds the command execution result.
 type ExecResult struct {
 	Stdout   string
 	Stderr   string
@@ -51,7 +51,7 @@ type ExecResult struct {
 	TimedOut bool
 }
 
-// FileInfo 是文件元信息（对标服务端 SandboxFileInfo）。
+// FileInfo holds file metadata (mirrors server-side SandboxFileInfo).
 type FileInfo struct {
 	Name    string
 	Size    int64
@@ -60,7 +60,7 @@ type FileInfo struct {
 	IsDir   bool
 }
 
-// DirEntry 是目录条目。
+// DirEntry is a directory entry.
 type DirEntry struct {
 	Name  string
 	IsDir bool

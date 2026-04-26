@@ -43,6 +43,7 @@ Creates a moderated group discussion among multiple SubAgents.
 4. SendMessage(to="group:g1", message="@agent:tester/t1 Any concerns about testability?") → tester responds with full context`
 }
 
+// CreateChatParams holds the parameters for creating a new chat.
 type CreateChatParams struct {
 	// Type: "agent" or "group"
 	Type string `json:"type" jsonschema:"required,description=Conversation type: agent or group"`

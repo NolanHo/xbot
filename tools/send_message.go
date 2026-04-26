@@ -45,6 +45,7 @@ Examples:
 Sends message immediately (fire-and-forget).`
 }
 
+// SendMessageParams holds the parameters for the send_message tool.
 type SendMessageParams struct {
 	To      string `json:"to" jsonschema:"required,description=Target address (agent:xxx, group:xxx, feishu:xxx)"`
 	Message string `json:"message" jsonschema:"required,description=Message content to send"`

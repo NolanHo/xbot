@@ -39,6 +39,7 @@ type CardCreateTool struct {
 	builder *CardBuilder
 }
 
+// NewCardCreateTool creates a new card creation tool.
 func NewCardCreateTool(builder *CardBuilder) *CardCreateTool {
 	return &CardCreateTool{builder: builder}
 }

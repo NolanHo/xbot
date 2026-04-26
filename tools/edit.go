@@ -44,6 +44,7 @@ func (t *FileCreateTool) Parameters() []llm.ToolParam {
 	}
 }
 
+// FileCreateParams holds the parameters for the file create tool.
 type FileCreateParams struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
@@ -162,6 +163,7 @@ func (t *FileReplaceTool) Parameters() []llm.ToolParam {
 	}
 }
 
+// FileReplaceParams holds the parameters for the file replace tool.
 type FileReplaceParams struct {
 	Path       string `json:"path"`
 	OldString  string `json:"old_string"`

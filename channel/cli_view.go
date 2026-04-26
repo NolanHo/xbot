@@ -13,6 +13,14 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// appendHint appends a styled hint to the status string, with separator spacing.
+func appendHint(status, hint string) string {
+	if status != "" {
+		return status + "  " + hint
+	}
+	return hint
+}
+
 // View 渲染界面
 func (m *cliModel) View() tea.View {
 	// §14 启动画面：品牌展示动画（~2.4 秒后自动消失）
@@ -263,51 +271,26 @@ func (m *cliModel) View() tea.View {
 		}
 		// 临时状态提示（自动过期）
 		if m.tempStatus != "" {
-			ts := m.styles.WarningSt.Render(m.tempStatus)
-			if status != "" {
-				status += "  " + ts
-			} else {
-				status = ts
-			}
+			status = appendHint(status, m.styles.WarningSt.Render(m.tempStatus))
 		}
 		// 新消息提示：用户上滚且有新内容时显示
 		if m.newContentHint {
-			hint := m.styles.InfoSt.Render(m.locale.NewContentHint)
-			if status != "" {
-				status += "  " + hint
-			} else {
-				status = hint
-			}
+			status = appendHint(status, m.styles.InfoSt.Render(m.locale.NewContentHint))
 		}
 		// Background task indicator
 		if m.bgTaskCount > 0 {
-			bgHint := m.styles.WarningSt.Render(
-				fmt.Sprintf(m.locale.BgTaskRunning, m.bgTaskCount))
-			if status != "" {
-				status += "  " + bgHint
-			} else {
-				status = bgHint
-			}
+			status = appendHint(status, m.styles.WarningSt.Render(
+				fmt.Sprintf(m.locale.BgTaskRunning, m.bgTaskCount)))
 		}
 		// Agent indicator
 		if m.agentCount > 0 {
-			agentHint := m.styles.WarningSt.Render(
-				fmt.Sprintf(m.locale.AgentRunning, m.agentCount))
-			if status != "" {
-				status += "  " + agentHint
-			} else {
-				status = agentHint
-			}
+			status = appendHint(status, m.styles.WarningSt.Render(
+				fmt.Sprintf(m.locale.AgentRunning, m.agentCount)))
 		}
 		// Message queue indicator (persistent, not temp status)
 		if len(m.messageQueue) > 0 {
-			queueHint := m.styles.InfoSt.Render(
-				fmt.Sprintf(m.locale.QueuePending, len(m.messageQueue)))
-			if status != "" {
-				status += "  " + queueHint
-			} else {
-				status = queueHint
-			}
+			status = appendHint(status, m.styles.InfoSt.Render(
+				fmt.Sprintf(m.locale.QueuePending, len(m.messageQueue))))
 		}
 
 		todoBar := m.renderTodoBar()
@@ -517,6 +500,27 @@ var xbotLogo = []string{
 	"/_/|_|  /_____/  \\____/   /_/",
 }
 
+// centerLine centers a styled text line within the given screen width.
+func centerLine(screenW int, text string, style lipgloss.Style) string {
+	styled := style.Render(text)
+	w := lipgloss.Width(styled)
+	pad := (screenW - w) / 2
+	if pad < 0 {
+		pad = 0
+	}
+	return strings.Repeat(" ", pad) + styled
+}
+
+// centerLinePlain centers a pre-rendered string within the given screen width.
+func centerLinePlain(screenW int, styled string) string {
+	w := lipgloss.Width(styled)
+	pad := (screenW - w) / 2
+	if pad < 0 {
+		pad = 0
+	}
+	return strings.Repeat(" ", pad) + styled
+}
+
 // renderSplash 渲染启动画面 — 品牌 logo + 版本号 + 加载动画
 func (m *cliModel) renderSplash() string {
 	// 中心化计算
@@ -557,39 +561,21 @@ func (m *cliModel) renderSplash() string {
 	lines = append(lines, "")
 
 	// 版本号居中
-	versionText := versionStyle.Render(fmt.Sprintf("xbot %s · %s", version.Version, version.Commit))
-	vW := lipgloss.Width(versionText)
-	vPad := (screenW - vW) / 2
-	if vPad < 0 {
-		vPad = 0
-	}
-	lines = append(lines, strings.Repeat(" ", vPad)+versionText)
+	lines = append(lines, centerLine(screenW, fmt.Sprintf("xbot %s · %s", version.Version, version.Commit), versionStyle))
 
 	// 描述居中（节日版彩蛋）
 	splashDesc := m.locale.SplashDesc
 	if holidayDesc := getHolidaySplashDesc(); holidayDesc != "" {
 		splashDesc = holidayDesc
 	}
-	descText := descStyle.Render(splashDesc)
-	dW := lipgloss.Width(descText)
-	dPad := (screenW - dW) / 2
-	if dPad < 0 {
-		dPad = 0
-	}
-	lines = append(lines, strings.Repeat(" ", dPad)+descText)
+	lines = append(lines, centerLine(screenW, splashDesc, descStyle))
 
 	// 空行
 	lines = append(lines, "")
 
 	// 加载动画
 	frame := splashFrames[m.splashFrame%len(splashFrames)]
-	loadingText := loadingStyle.Render(fmt.Sprintf(m.locale.SplashLoading, frame))
-	lW := lipgloss.Width(loadingText)
-	lPad := (screenW - lW) / 2
-	if lPad < 0 {
-		lPad = 0
-	}
-	lines = append(lines, strings.Repeat(" ", lPad)+loadingText)
+	lines = append(lines, centerLine(screenW, fmt.Sprintf(m.locale.SplashLoading, frame), loadingStyle))
 
 	// 垂直居中
 	emptyLinesBefore := (screenH - len(lines)) / 2
@@ -628,25 +614,13 @@ func (m *cliModel) renderSuLoading() string {
 	frame := splashFrames[m.splashFrame%len(splashFrames)]
 
 	// 切换目标提示
-	suText := descStyle.Render(fmt.Sprintf(m.locale.SuSwitching, m.senderID))
-	suW := lipgloss.Width(suText)
-	suPad := (screenW - suW) / 2
-	if suPad < 0 {
-		suPad = 0
-	}
-	lines = append(lines, strings.Repeat(" ", suPad)+suText)
+	lines = append(lines, centerLine(screenW, fmt.Sprintf(m.locale.SuSwitching, m.senderID), descStyle))
 
 	// 空行
 	lines = append(lines, "")
 
 	// 加载动画
-	loadingText := loadingStyle.Render(fmt.Sprintf(m.locale.SuLoadingHistory, frame))
-	lW := lipgloss.Width(loadingText)
-	lPad := (screenW - lW) / 2
-	if lPad < 0 {
-		lPad = 0
-	}
-	lines = append(lines, strings.Repeat(" ", lPad)+loadingText)
+	lines = append(lines, centerLine(screenW, fmt.Sprintf(m.locale.SuLoadingHistory, frame), loadingStyle))
 
 	// 垂直居中
 	emptyLinesBefore := (screenH - len(lines)) / 2

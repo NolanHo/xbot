@@ -215,6 +215,19 @@ func truncateArgs(args string, maxLen int) string {
 }
 
 // handleCompress handles the /compress command: manually trigger context compaction.
+// formatCompressResult formats a human-readable compression summary.
+func formatCompressResult(persisted bool, oldTokens, newTokens int, result *CompressResult) string {
+	mode := "内存"
+	if persisted {
+		mode = ""
+	}
+	if mode != "" {
+		mode = " (" + mode + ")"
+	}
+	return fmt.Sprintf("上下文压缩完成%s: %d → %d tokens (LLM %d 条, Session %d 条)",
+		mode, oldTokens, newTokens, len(result.LLMView), len(result.SessionView))
+}
+
 func (a *Agent) handleCompress(ctx context.Context, msg bus.InboundMessage, tenantSession *session.TenantSession) (*bus.OutboundMessage, error) {
 	llmClient, model, _, _ := a.llmFactory.GetLLM(msg.SenderID)
 
@@ -278,7 +291,7 @@ func (a *Agent) handleCompress(ctx context.Context, msg bus.InboundMessage, tena
 		return &bus.OutboundMessage{
 			Channel: msg.Channel,
 			ChatID:  msg.ChatID,
-			Content: fmt.Sprintf("上下文压缩完成 (内存): %d → %d tokens (LLM %d 条, Session %d 条)", tokenCount, newTokenCount, len(result.LLMView), len(result.SessionView)),
+			Content: formatCompressResult(false, tokenCount, newTokenCount, result),
 		}, nil
 	}
 	allOk := true
@@ -298,13 +311,13 @@ func (a *Agent) handleCompress(ctx context.Context, msg bus.InboundMessage, tena
 		return &bus.OutboundMessage{
 			Channel: msg.Channel,
 			ChatID:  msg.ChatID,
-			Content: fmt.Sprintf("上下文压缩完成: %d → %d tokens (LLM %d 条, Session %d 条)", tokenCount, newTokenCount, len(result.LLMView), len(result.SessionView)),
+			Content: formatCompressResult(true, tokenCount, newTokenCount, result),
 		}, nil
 	}
 	return &bus.OutboundMessage{
 		Channel: msg.Channel,
 		ChatID:  msg.ChatID,
-		Content: fmt.Sprintf("上下文压缩完成 (内存): %d → %d tokens (LLM %d 条, Session %d 条)", tokenCount, newTokenCount, len(result.LLMView), len(result.SessionView)),
+		Content: formatCompressResult(false, tokenCount, newTokenCount, result),
 	}, nil
 }
 

@@ -17,6 +17,9 @@ type ActiveFile struct {
 	Functions    []string // 涉及的函数签名（从 tool result 中提取）
 }
 
+// semanticMatchThreshold is the minimum word overlap ratio for a semantic match.
+const semanticMatchThreshold = 0.6
+
 // containsSemanticMatch 语义模糊匹配：归一化子串 + 关键词重叠度。
 func containsSemanticMatch(text, target string) bool {
 	if text == "" || target == "" {
@@ -47,7 +50,7 @@ func containsSemanticMatch(text, target string) bool {
 			matchedWords++
 		}
 	}
-	return float64(matchedWords)/float64(len(targetWords)) >= 0.6
+	return float64(matchedWords)/float64(len(targetWords)) >= semanticMatchThreshold
 }
 
 // ----------------------------------------------------------------

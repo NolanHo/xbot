@@ -1822,13 +1822,8 @@ func (m *cliModel) viewPanel() string {
 }
 
 func (m *cliModel) viewSettingsPanel() string {
-
 	// §20 Use cached styles
 	s := &m.styles
-	valueStyle := s.InfoSt
-	cursorStyle := s.PanelCursor
-	descStyle := s.PanelDesc
-	hintStyle := s.PanelHint
 
 	var sb strings.Builder
 	sb.WriteString(s.PanelHeader.Render(m.locale.PanelSettingsTitle))
@@ -1839,14 +1834,12 @@ func (m *cliModel) viewSettingsPanel() string {
 
 	// Group by category
 	lastCat := ""
-	ln := 0 // Current render line number
 	for i, def := range m.panelSchema {
 		if def.Category != lastCat {
 			lastCat = def.Category
 			sb.WriteString("\n")
 			sb.WriteString(s.SettingsCat.Render("▸ " + lastCat))
 			sb.WriteString("\n")
-			ln += 2
 		}
 
 		cur := m.panelValues[def.Key]
@@ -1856,114 +1849,18 @@ func (m *cliModel) viewSettingsPanel() string {
 		}
 		var prefix string
 		if i == m.panelCursor && !m.panelEdit {
-			prefix = cursorStyle.Render("▸")
+			prefix = s.PanelCursor.Render("▸")
 		} else {
 			prefix = "  "
 		}
 
-		// Runner panel entry: render with connection status
-		if def.Key == "runner_panel" {
-			statusHint := ""
-			if m.runnerBridge != nil {
-				switch m.runnerBridge.Status() {
-				case RunnerConnected:
-					statusHint = " " + s.ProgressDone.Render("● "+m.locale.RunnerStatusConnected)
-				case RunnerConnecting:
-					statusHint = " " + s.ProgressRunning.Render("● "+m.locale.RunnerConnecting)
-				}
-			}
-			line := fmt.Sprintf("%s %s%s", prefix, s.ProgressDone.Render(def.Label), statusHint)
-			if i == m.panelCursor && !m.panelEdit {
-				line = m.renderSelLine(line, m.width-6)
-			}
-			sb.WriteString(line)
-			sb.WriteString("\n")
-			ln++
-			continue
-		}
-
-		// Danger zone entry: render with warning style
-		if def.Key == "danger_zone" {
-			line := fmt.Sprintf("%s %s", prefix, s.WarningSt.Render(def.Label))
-			if i == m.panelCursor && !m.panelEdit {
-				line = m.renderSelLine(line, m.width-6)
-			}
-			sb.WriteString(line)
-			sb.WriteString("\n")
-			ln++
-			continue
-		}
-
-		// Subscription management entry: show count + active subscription
-		if def.Key == "subscription_manage" {
-			subHint := ""
-			if m.subscriptionMgr != nil {
-				if subs, err := m.subscriptionMgr.List(""); err == nil && len(subs) > 0 {
-					var activeName string
-					for _, sub := range subs {
-						if sub.Active {
-							activeName = sub.Name
-							break
-						}
-					}
-					if activeName != "" {
-						subHint = " " + s.ProgressDone.Render("● "+activeName)
-					}
-					subHint += descStyle.Render(fmt.Sprintf(" (%d)", len(subs)))
-				}
-			}
-			line := fmt.Sprintf("%s %s%s", prefix, s.ProgressDone.Render(def.Label), subHint)
-			if i == m.panelCursor && !m.panelEdit {
-				line = m.renderSelLine(line, m.width-6)
-			}
-			sb.WriteString(line)
-			sb.WriteString("\n")
-			ln++
+		// Special entries (runner, danger zone, subscription)
+		if m.renderSettingsSpecialEntry(&sb, def, prefix, i) {
 			continue
 		}
 
 		// Format value display
-		var displayVal string
-		switch def.Type {
-		case SettingTypeToggle:
-			if cur == "true" {
-				displayVal = valueStyle.Render(m.locale.PanelToggleOn)
-			} else {
-				displayVal = valueStyle.Render(m.locale.PanelToggleOff)
-			}
-		case SettingTypeSelect:
-			// Find label for current value
-			displayVal = cur
-			for _, opt := range def.Options {
-				if opt.Value == cur {
-					displayVal = valueStyle.Render(opt.Label)
-					break
-				}
-			}
-		case SettingTypeCombo:
-			// Show current value with dropdown hint
-			if cur == "" {
-				displayVal = descStyle.Render(m.locale.PanelNotSet)
-			} else {
-				displayVal = valueStyle.Render(cur)
-			}
-			if len(def.Options) > 0 {
-				displayVal += descStyle.Render(" ▾")
-			}
-		case SettingTypePassword:
-			if cur == "" {
-				displayVal = descStyle.Render(m.locale.PanelNotSet)
-			} else {
-				displayVal = valueStyle.Render("••••••")
-			}
-		default:
-			if cur == "" {
-				displayVal = descStyle.Render(m.locale.PanelNotSet)
-			} else {
-				displayVal = valueStyle.Render(cur)
-			}
-		}
-
+		displayVal := m.formatSettingValue(def, cur)
 		line := fmt.Sprintf("%s %s: %s", prefix, def.Label, displayVal)
 		if i == m.panelCursor && !m.panelEdit {
 			line = m.renderSelLine(line, m.width-6)
@@ -1972,7 +1869,122 @@ func (m *cliModel) viewSettingsPanel() string {
 		sb.WriteString("\n")
 	}
 
-	// Editing overlay
+	// Footer: edit overlay, combo dropdown, or navigation hint
+	m.renderSettingsFooter(&sb)
+
+	return sb.String()
+}
+
+// renderSettingsSpecialEntry renders special setting entries (runner, danger, subscription).
+// Returns true if the entry was handled as a special entry.
+func (m *cliModel) renderSettingsSpecialEntry(sb *strings.Builder, def SettingDefinition, prefix string, idx int) bool {
+	s := &m.styles
+	if def.Key == "runner_panel" {
+		statusHint := ""
+		if m.runnerBridge != nil {
+			switch m.runnerBridge.Status() {
+			case RunnerConnected:
+				statusHint = " " + s.ProgressDone.Render("● "+m.locale.RunnerStatusConnected)
+			case RunnerConnecting:
+				statusHint = " " + s.ProgressRunning.Render("● "+m.locale.RunnerConnecting)
+			}
+		}
+		line := fmt.Sprintf("%s %s%s", prefix, s.ProgressDone.Render(def.Label), statusHint)
+		if idx == m.panelCursor && !m.panelEdit {
+			line = m.renderSelLine(line, m.width-6)
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+		return true
+	}
+	if def.Key == "danger_zone" {
+		line := fmt.Sprintf("%s %s", prefix, s.WarningSt.Render(def.Label))
+		if idx == m.panelCursor && !m.panelEdit {
+			line = m.renderSelLine(line, m.width-6)
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+		return true
+	}
+	if def.Key == "subscription_manage" {
+		subHint := ""
+		if m.subscriptionMgr != nil {
+			if subs, err := m.subscriptionMgr.List(""); err == nil && len(subs) > 0 {
+				var activeName string
+				for _, sub := range subs {
+					if sub.Active {
+						activeName = sub.Name
+						break
+					}
+				}
+				if activeName != "" {
+					subHint = " " + s.ProgressDone.Render("● "+activeName)
+				}
+				subHint += s.PanelDesc.Render(fmt.Sprintf(" (%d)", len(subs)))
+			}
+		}
+		line := fmt.Sprintf("%s %s%s", prefix, s.ProgressDone.Render(def.Label), subHint)
+		if idx == m.panelCursor && !m.panelEdit {
+			line = m.renderSelLine(line, m.width-6)
+		}
+		sb.WriteString(line)
+		sb.WriteString("\n")
+		return true
+	}
+	return false
+}
+
+// formatSettingValue formats the display value for a setting based on its type.
+func (m *cliModel) formatSettingValue(def SettingDefinition, cur string) string {
+	s := &m.styles
+	valueStyle := s.InfoSt
+	descStyle := s.PanelDesc
+	switch def.Type {
+	case SettingTypeToggle:
+		if cur == "true" {
+			return valueStyle.Render(m.locale.PanelToggleOn)
+		}
+		return valueStyle.Render(m.locale.PanelToggleOff)
+	case SettingTypeSelect:
+		// Find label for current value
+		for _, opt := range def.Options {
+			if opt.Value == cur {
+				return valueStyle.Render(opt.Label)
+			}
+		}
+		return cur
+	case SettingTypeCombo:
+		// Show current value with dropdown hint
+		var displayVal string
+		if cur == "" {
+			displayVal = descStyle.Render(m.locale.PanelNotSet)
+		} else {
+			displayVal = valueStyle.Render(cur)
+		}
+		if len(def.Options) > 0 {
+			displayVal += descStyle.Render(" ▾")
+		}
+		return displayVal
+	case SettingTypePassword:
+		if cur == "" {
+			return descStyle.Render(m.locale.PanelNotSet)
+		}
+		return valueStyle.Render("••••••")
+	default:
+		if cur == "" {
+			return descStyle.Render(m.locale.PanelNotSet)
+		}
+		return valueStyle.Render(cur)
+	}
+}
+
+// renderSettingsFooter renders the footer section of the settings panel:
+// either the editing overlay, combo dropdown, or navigation hint.
+func (m *cliModel) renderSettingsFooter(sb *strings.Builder) {
+	s := &m.styles
+	cursorStyle := s.PanelCursor
+	descStyle := s.PanelDesc
+	hintStyle := s.PanelHint
 	if m.panelEdit && m.panelCursor < len(m.panelSchema) {
 		def := m.panelSchema[m.panelCursor]
 		sb.WriteString("\n")
@@ -2016,8 +2028,6 @@ func (m *cliModel) viewSettingsPanel() string {
 		sb.WriteString("\n")
 		sb.WriteString(hintStyle.Render("  " + m.locale.PanelNavHint))
 	}
-
-	return sb.String()
 }
 
 func (m *cliModel) viewAskUserPanel() string {

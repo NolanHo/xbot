@@ -1,7 +1,6 @@
 package channel
 
 import (
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +11,7 @@ import (
 	"xbot/agent/hooks"
 	"xbot/bus"
 	"xbot/clipanic"
+	"xbot/internal/textarea"
 	"xbot/storage/sqlite"
 	"xbot/tools"
 	"xbot/version"

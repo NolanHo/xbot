@@ -73,6 +73,55 @@ func (c *CLIChannel) Start() error {
 		}()
 	}
 
+	// Initialize model, apply pending state, propagate services and locale.
+	c.initCLIModel()
+
+	// Load session history from HistoryLoader (if configured).
+	c.loadSessionHistory()
+
+	// First run: open setup panel
+	if c.config.IsFirstRun {
+		c.model.openSetupPanel()
+	}
+
+	// Create Bubble Tea program and wire approval handler.
+	c.createProgram(origStdout)
+
+	// Ctrl+Z emergency quit: double insurance
+	// 1) Key event handler (cli_update.go): In raw mode, terminal may directly pass 0x1A byte
+	// 2) SIGTSTP signal fallback: some terminal emulators still send signal in raw mode
+	// Note: SIGTSTP is Unix-only; handled by handleCtrlZSuspend (platform-specific).
+	setupCtrlZSuspend(c, origStdout, origStderr)
+
+	// Launch background goroutines for message handling.
+	c.startBackgroundGoroutines()
+
+	// Runner auto-connect: inject RunnerBridge into model and connect.
+	c.connectRunner()
+
+	// --debug: start Unix socket for key injection.
+	debugSock := c.startDebugServices()
+
+	// Run Bubble Tea (blocking)
+	if _, err := c.program.Run(); err != nil {
+		log.WithError(err).Error("CLI channel exited with error")
+		if debugSock != nil {
+			debugSock.Stop()
+		}
+		return err
+	}
+
+	if debugSock != nil {
+		debugSock.Stop()
+	}
+	log.Info("CLI channel stopped")
+	return nil
+}
+
+// initCLIModel creates the Bubble Tea model, applies all pending injections
+// (callbacks, history, progress), propagates late-injected services, and
+// initializes locale and background task callbacks.
+func (c *CLIChannel) initCLIModel() {
 	// Initialize Bubble Tea model
 	c.model = newCLIModel()
 	c.model.channel = c
@@ -146,39 +195,45 @@ func (c *CLIChannel) Start() error {
 
 	// Setup bg task count callback
 	c.updateBgTaskCountFn()
+}
 
-	// Load history messages (session restore)
-	if c.config.HistoryLoader != nil {
-		if history, err := c.config.HistoryLoader(); err == nil && len(history) > 0 {
-			for _, hm := range history {
-				cm := cliMessage{
-					role:      hm.Role,
-					content:   hm.Content,
-					timestamp: hm.Timestamp,
-					isPartial: false,
-					dirty:     true,
-				}
-				// Map iteration snapshots
-				if len(hm.Iterations) > 0 {
-					cm.iterations = make([]cliIterationSnapshot, len(hm.Iterations))
-					for i, hi := range hm.Iterations {
-						cm.iterations[i] = cliIterationSnapshot(hi)
-					}
-				}
-				c.model.messages = append(c.model.messages, cm)
-			}
-			log.WithField("count", len(history)).Info("Restored session history")
-		} else if err != nil {
-			log.WithError(err).Warn("Failed to load session history")
+// loadSessionHistory loads history messages from the configured HistoryLoader
+// into the model for session restore.
+func (c *CLIChannel) loadSessionHistory() {
+	if c.config.HistoryLoader == nil {
+		return
+	}
+	history, err := c.config.HistoryLoader()
+	if err != nil {
+		log.WithError(err).Warn("Failed to load session history")
+		return
+	}
+	if len(history) == 0 {
+		return
+	}
+	for _, hm := range history {
+		cm := cliMessage{
+			role:      hm.Role,
+			content:   hm.Content,
+			timestamp: hm.Timestamp,
+			isPartial: false,
+			dirty:     true,
 		}
+		// Map iteration snapshots
+		if len(hm.Iterations) > 0 {
+			cm.iterations = make([]cliIterationSnapshot, len(hm.Iterations))
+			for i, hi := range hm.Iterations {
+				cm.iterations[i] = cliIterationSnapshot(hi)
+			}
+		}
+		c.model.messages = append(c.model.messages, cm)
 	}
+	log.WithField("count", len(history)).Info("Restored session history")
+}
 
-	// First run: open setup panel
-	if c.config.IsFirstRun {
-		c.model.openSetupPanel()
-	}
-
-	// Create Bubble Tea program
+// createProgram creates the Bubble Tea program with appropriate options
+// and wires the CLIApprovalHandler into the ApprovalState.
+func (c *CLIChannel) createProgram(origStdout *os.File) {
 	programOpts := []tea.ProgramOption{
 		tea.WithOutput(origStdout),
 	}
@@ -193,13 +248,11 @@ func (c *CLIChannel) Start() error {
 	if c.approvalState != nil {
 		c.approvalState.SetHandler(NewCLIApprovalHandler(c.program))
 	}
+}
 
-	// Ctrl+Z emergency quit: double insurance
-	// 1) Key event handler (cli_update.go): In raw mode, terminal may directly pass 0x1A byte
-	// 2) SIGTSTP signal fallback: some terminal emulators still send signal in raw mode
-	// Note: SIGTSTP is Unix-only; handled by handleCtrlZSuspend (platform-specific).
-	setupCtrlZSuspend(c, origStdout, origStderr)
-
+// startBackgroundGoroutines launches the outbound message handler, progress
+// coalescing goroutine, unified async drain, and the async update checker.
+func (c *CLIChannel) startBackgroundGoroutines() {
 	// Start outbound message handling goroutine
 	c.wg.Add(1)
 	go c.handleOutbound()
@@ -215,69 +268,64 @@ func (c *CLIChannel) Start() error {
 
 	// §13 Async check for updates (doesn't block TUI startup)
 	c.CheckUpdateAsync()
+}
 
-	// Runner auto-connect: inject RunnerBridge into model and connect
-	if c.runnerAutoConnect != nil {
+// connectRunner injects the RunnerBridge into the model and initiates an
+// asynchronous connection to the runner server (if configured).
+func (c *CLIChannel) connectRunner() {
+	if c.runnerAutoConnect == nil {
+		return
+	}
+	c.programMu.Lock()
+	if c.model != nil && c.program != nil {
+		rb := NewRunnerBridge(c.program)
+		c.model.runnerBridge = rb
+	}
+	c.programMu.Unlock()
+	// Delay connection slightly to let TUI render first
+	clipanic.Go("channel.CLIChannel.runnerAutoConnect", func() {
+		time.Sleep(500 * time.Millisecond)
 		c.programMu.Lock()
-		if c.model != nil && c.program != nil {
-			rb := NewRunnerBridge(c.program)
-			c.model.runnerBridge = rb
-		}
+		model := c.model
 		c.programMu.Unlock()
-		// Delay connection slightly to let TUI render first
-		clipanic.Go("channel.CLIChannel.runnerAutoConnect", func() {
-			time.Sleep(500 * time.Millisecond)
-			c.programMu.Lock()
-			model := c.model
-			c.programMu.Unlock()
-			if model != nil && model.runnerBridge != nil {
-				cfg := c.runnerAutoConnect
-				model.runnerBridge.Connect(
-					cfg.serverURL,
-					cfg.token,
-					cfg.workspace,
-					c.getLLMClient(),
-					c.getModelList(),
-					c.getLLMProvider(),
-				)
-			}
-		})
-	}
+		if model != nil && model.runnerBridge != nil {
+			cfg := c.runnerAutoConnect
+			model.runnerBridge.Connect(
+				cfg.serverURL,
+				cfg.token,
+				cfg.workspace,
+				c.getLLMClient(),
+				c.getModelList(),
+				c.getLLMProvider(),
+			)
+		}
+	})
+}
 
-	// --debug: start Unix socket for key injection
+// startDebugServices starts the debug Unix socket for key injection and
+// the auto-input replay (if --debug and --debug-input are set).
+// Returns the debug socket listener for cleanup, or nil if not in debug mode.
+func (c *CLIChannel) startDebugServices() *debugSockListener {
+	if !c.config.DebugMode {
+		return nil
+	}
 	var debugSock *debugSockListener
-	if c.config.DebugMode {
-		sockPath, err := debugSockPath()
-		if err == nil {
-			debugSock, err = startDebugSock(sockPath, func(msg tea.Msg) {
-				c.program.Send(msg)
-			})
-			if err != nil {
-				log.WithError(err).Warn("Failed to start debug socket")
-			} else {
-				log.WithField("socket", sockPath).Info("Debug socket listening")
-			}
-		}
-		// --debug-input: auto-inject key sequence after startup
-		if c.config.DebugInput != "" {
-			startAutoInput(c.config.DebugInput, c.asyncCh, c.stopCh)
+	sockPath, err := debugSockPath()
+	if err == nil {
+		debugSock, err = startDebugSock(sockPath, func(msg tea.Msg) {
+			c.program.Send(msg)
+		})
+		if err != nil {
+			log.WithError(err).Warn("Failed to start debug socket")
+		} else {
+			log.WithField("socket", sockPath).Info("Debug socket listening")
 		}
 	}
-
-	// Run Bubble Tea (blocking)
-	if _, err := c.program.Run(); err != nil {
-		log.WithError(err).Error("CLI channel exited with error")
-		if debugSock != nil {
-			debugSock.Stop()
-		}
-		return err
+	// --debug-input: auto-inject key sequence after startup
+	if c.config.DebugInput != "" {
+		startAutoInput(c.config.DebugInput, c.asyncCh, c.stopCh)
 	}
-
-	if debugSock != nil {
-		debugSock.Stop()
-	}
-	log.Info("CLI channel stopped")
-	return nil
+	return debugSock
 }
 
 // Stop Stop CLI channel

@@ -15,8 +15,14 @@ import (
 
 // Type aliases
 type Fields = log.Fields
+
+// Entry is a log entry.
 type Entry = log.Entry
+
+// Formatter formats log entries.
 type Formatter = log.Formatter
+
+// Level represents a log level.
 type Level = log.Level
 
 // Level constants

@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+// Pre-compiled regexes for think/reasoning block extraction.
+var (
+	thinkBlockRe     = regexp.MustCompile(`(?s)<think\b[^>]*>(.*?)</think\s*>`)
+	reasoningBlockRe = regexp.MustCompile(`(?s)<reasoning>(.*?)</reasoning>`)
+	thinkingBlockRe  = regexp.MustCompile(`(?s)<thinking>(.*?)</thinking>`)
+)
+
 // ExtractThinkBlocks extracts thinking/reasoning content from text.
 // Supports: <think...</think, <reasoning>...</reasoning>, <thinking>...</thinking>
 // Also considers response.ReasoningContent from structured API fields.
@@ -22,11 +29,8 @@ func ExtractThinkBlocks(content string) string {
 			}
 		}
 	}
-	// <think...</think blocks (DeepSeek-style)
-	extract(regexp.MustCompile(`(?s)<think\b[^>]*>(.*?)</think\s*>`))
-	// <reasoning>...</reasoning> blocks
-	extract(regexp.MustCompile(`(?s)<reasoning>(.*?)</reasoning>`))
-	// <thinking>...</thinking> blocks
-	extract(regexp.MustCompile(`(?s)<thinking>(.*?)</thinking>`))
+	extract(thinkBlockRe)
+	extract(reasoningBlockRe)
+	extract(thinkingBlockRe)
 	return strings.Join(parts, "\n")
 }

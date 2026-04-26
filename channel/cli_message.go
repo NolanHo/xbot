@@ -938,30 +938,8 @@ func (m *cliModel) renderProgressBlock() string {
 	for _, snap := range m.iterationHistory {
 		sb.WriteString(dimStyle.Render(iterStyle.Render(fmt.Sprintf("#%d", snap.Iteration))))
 		sb.WriteString("\n")
-		if snap.Reasoning != "" {
-			for _, line := range strings.Split(snap.Reasoning, "\n") {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-reasoningW), "\n") {
-					sb.WriteString(dimStyle.Render(reasoningGuide.Render("  │ ") + reasoningStyle.Render(wl)))
-					sb.WriteString("\n")
-				}
-			}
-		}
-		if snap.Thinking != "" {
-			for _, line := range strings.Split(snap.Thinking, "\n") {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n") {
-					sb.WriteString(dimStyle.Render(thinkingGuide.Render("  │ ") + thinkingStyle.Render(wl)))
-					sb.WriteString("\n")
-				}
-			}
-		}
+		renderWrappedBlockDimmed(&sb, snap.Reasoning, innerWidth-reasoningW, reasoningGuide, reasoningStyle, dimStyle)
+		renderWrappedBlockDimmed(&sb, snap.Thinking, innerWidth-thinkingW, thinkingGuide, thinkingStyle, dimStyle)
 		for _, tool := range snap.Tools {
 			label, icon, sty := toolDisplayInfo(tool, toolDoneStyle, toolErrorStyle)
 			line := fmt.Sprintf("  │ %s %s", icon, label)
@@ -1021,18 +999,7 @@ func (m *cliModel) renderProgressBlock() string {
 			}
 		}
 
-		if m.progress.Thinking != "" {
-			for _, line := range strings.Split(m.progress.Thinking, "\n") {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n") {
-					sb.WriteString(thinkingGuide.Render("  │ ") + thinkingStyle.Render(wl))
-					sb.WriteString("\n")
-				}
-			}
-		}
+		renderWrappedBlock(&sb, m.progress.Thinking, innerWidth-thinkingW, thinkingGuide, thinkingStyle)
 
 		// Completed tools in current iteration — filter by Iteration field
 		for _, tool := range m.progress.CompletedTools {
@@ -1354,30 +1321,8 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 					}
 					toolSb.WriteString(s.ProgressIter.Render(iterLabel))
 					toolSb.WriteString("\n")
-					if it.Reasoning != "" {
-						for _, line := range strings.Split(it.Reasoning, "\n") {
-							line = strings.TrimRight(line, " \t\r")
-							if line == "" {
-								continue
-							}
-							for _, wl := range strings.Split(hardWrapRunes(line, textW), "\n") {
-								toolSb.WriteString(reasoningGuide.Render("  │ ") + reasoningStyle.Render(wl))
-								toolSb.WriteString("\n")
-							}
-						}
-					}
-					if it.Thinking != "" {
-						for _, line := range strings.Split(it.Thinking, "\n") {
-							line = strings.TrimRight(line, " \t\r")
-							if line == "" {
-								continue
-							}
-							for _, wl := range strings.Split(hardWrapRunes(line, textW), "\n") {
-								toolSb.WriteString(thinkingGuide.Render("  │ ") + thinkingStyle.Render(wl))
-								toolSb.WriteString("\n")
-							}
-						}
-					}
+					renderWrappedBlock(&toolSb, it.Reasoning, textW, reasoningGuide, reasoningStyle)
+					renderWrappedBlock(&toolSb, it.Thinking, textW, thinkingGuide, thinkingStyle)
 					for _, tool := range it.Tools {
 						label, icon, sty := toolDisplayInfo(tool, toolItemStyle, toolErrorItemStyle)
 						elapsed := ""

@@ -444,6 +444,10 @@ func New() Model {
 	m.SetHeight(defaultHeight)
 	m.SetWidth(defaultWidth)
 
+	// Pre-warm the CJK segmenter in the background so the first
+	// Ctrl+Arrow keypress doesn't block on dictionary loading.
+	go getCJKSegmenter()
+
 	return m
 }
 

@@ -1728,13 +1728,17 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 	}
 
 	cfg := a.buildMainRunConfig(ctx, msg, messages, tenantSession, preReplyNotify)
-	// 恢复上次 Run() 的 token 计数，确保 maybeCompress 在重启后仍能使用 API 精确值。
-	// 必须从当前 tenant 的 DB 读取 — Agent 级别的 lastPromptTokens 是全局共享的，
-	// 跨 chat 会导致新窗口误用其他 chat 的 token 计数而触发压缩。
-	if extras := cfg.ToolContextExtras; extras != nil && extras.MemorySvc != nil && extras.TenantID != 0 {
-		if pt, ct, err := extras.MemorySvc.GetTokenState(ctx, extras.TenantID); err == nil && pt > 0 {
-			cfg.LastPromptTokens = pt
-			cfg.LastCompletionTokens = ct
+	// 恢复 token 计数，优先从 session_messages.context_tokens 读取精确值。
+	// tenant_state 可能被旧版 DetectTruncation 的估算值污染，context_tokens 永远是 API 精确值。
+	if extras := cfg.ToolContextExtras; extras != nil && extras.TenantID != 0 {
+		if lastCtx, err := tenantSession.GetLastContextTokens(); err == nil && lastCtx > 0 {
+			cfg.LastPromptTokens = lastCtx
+			cfg.LastCompletionTokens = 0
+		} else if extras.MemorySvc != nil {
+			if pt, ct, err := extras.MemorySvc.GetTokenState(ctx, extras.TenantID); err == nil && pt > 0 {
+				cfg.LastPromptTokens = pt
+				cfg.LastCompletionTokens = ct
+			}
 		}
 	}
 	// Mark Run as active so bgNotifyLoop buffers notifications instead of processing idle

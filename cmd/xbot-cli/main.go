@@ -1312,8 +1312,18 @@ func main() {
 			}
 			// Restore token state from DB so the context bar shows immediately
 			// on startup (not just after the first LLM call of the new session).
+			// Restore token state for context bar display, preferring exact
+			// per-message context_tokens over tenant_state (which may contain
+			// stale estimated values from the old DetectTruncation code).
 			cliMemSvc := sqlite.NewMemoryService(app.db)
 			cliCfg.TokenStateLoader = func() (promptTokens, completionTokens int64) {
+				// Prefer exact context_tokens from last user message
+				if cliSessionSvc != nil && cliTenantID != 0 {
+					if lastCtx, err := cliSessionSvc.GetLastUserMessageContextTokens(cliTenantID); err == nil && lastCtx > 0 {
+						return lastCtx, 0
+					}
+				}
+				// Fallback to tenant_state
 				pt, ct, err := cliMemSvc.GetTokenState(context.Background(), cliTenantID)
 				if err != nil {
 					log.WithError(err).Warn("Failed to load token state")

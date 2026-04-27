@@ -94,12 +94,12 @@ func (m *cliModel) renderInputArea(borderColor color.Color) string {
 	if newTop := m.renderContextTopBorder(borderColor, inputRendered); newTop != "" {
 		_, rest, found := strings.Cut(inputRendered, "\n")
 		if found {
-		return newTop + "\n" + rest
+			return newTop + "\n" + rest
 		}
 	}
 
 	return inputRendered
-	}
+}
 
 // renderReadyStatus builds the "Ready" status bar line with message count,
 // model name, agent session indicator, and right-aligned context usage bar.
@@ -928,17 +928,17 @@ func (m *cliModel) renderContextTopBorder(borderColor color.Color, renderedBox s
 	emptyEnd := outputStart
 	if emptyEnd > emptyStart {
 		if compressPos >= emptyStart && compressPos < emptyEnd {
-		before := compressPos - emptyStart
-		after := emptyEnd - compressPos - 1
-		if before > 0 {
-			sb.WriteString(ctxBarStyles.empty.Render(strings.Repeat("─", before)))
-		}
-		sb.WriteString(ctxBarStyles.threshold.Render("┊"))
-		if after > 0 {
-			sb.WriteString(ctxBarStyles.empty.Render(strings.Repeat("─", after)))
-		}
+			before := compressPos - emptyStart
+			after := emptyEnd - compressPos - 1
+			if before > 0 {
+				sb.WriteString(ctxBarStyles.empty.Render(strings.Repeat("─", before)))
+			}
+			sb.WriteString(ctxBarStyles.threshold.Render("┊"))
+			if after > 0 {
+				sb.WriteString(ctxBarStyles.empty.Render(strings.Repeat("─", after)))
+			}
 		} else {
-		sb.WriteString(ctxBarStyles.empty.Render(strings.Repeat("─", emptyEnd-emptyStart)))
+			sb.WriteString(ctxBarStyles.empty.Render(strings.Repeat("─", emptyEnd-emptyStart)))
 		}
 	}
 
@@ -949,22 +949,6 @@ func (m *cliModel) renderContextTopBorder(borderColor color.Color, renderedBox s
 
 	sb.WriteString(cornerSty.Render("╮"))
 	return sb.String()
-}
-
-// formatTokenCompact formats token counts as compact human-readable strings.
-// e.g. 12500 → "12.5K", 128000 → "128K", 500 → "500"
-func formatTokenCompact(tokens int64) string {
-	if tokens >= 1_000_000 {
-		return fmt.Sprintf("%.1fM", float64(tokens)/1_000_000)
-	}
-	if tokens >= 1000 {
-		val := float64(tokens) / 1000
-		if val == float64(int(val)) {
-			return fmt.Sprintf("%dK", int(val))
-		}
-		return fmt.Sprintf("%.1fK", val)
-	}
-	return fmt.Sprintf("%d", tokens)
 }
 
 // ---------------------------------------------------------------------------

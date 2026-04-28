@@ -43,10 +43,10 @@ func (nr *NativeRuntime) Create(manifest *PluginManifest, dir string) (Plugin, e
 // gRPC Runtime — external process plugins
 // ---------------------------------------------------------------------------
 
-// gRPCPluginProcess manages an external plugin process communicating via
+// grpcPluginProcess manages an external plugin process communicating via
 // JSON-over-stdin/stdout protocol. Full gRPC with protobuf will be added
 // in a future iteration when the proto definition is finalized.
-type gRPCPluginProcess struct {
+type grpcPluginProcess struct {
 	cmd     *exec.Cmd
 	stdin   *jsonLineWriter
 	stdout  *jsonLineReader
@@ -75,7 +75,7 @@ func (f *grpcRuntimeFactory) Create(manifest *PluginManifest, dir string) (Plugi
 type grpcPlugin struct {
 	manifest PluginManifest
 	dir      string
-	process  *gRPCPluginProcess
+	process  *grpcPluginProcess
 }
 
 func (g *grpcPlugin) Manifest() PluginManifest {
@@ -199,7 +199,7 @@ func (g *grpcPlugin) makeRemoteEnricher(name string) ContextEnricher {
 type remoteTool struct {
 	def      ToolDef
 	pluginID string
-	process  *gRPCPluginProcess
+	process  *grpcPluginProcess
 }
 
 func (rt *remoteTool) Definition() ToolDef {
@@ -255,7 +255,7 @@ type enricherReg struct {
 // Process lifecycle
 // ---------------------------------------------------------------------------
 
-func startPluginProcess(entry, executable string, args []string, dir string) (*gRPCPluginProcess, error) {
+func startPluginProcess(entry, executable string, args []string, dir string) (*grpcPluginProcess, error) {
 	var cmd *exec.Cmd
 	if executable != "" {
 		cmd = exec.Command(executable, args...)
@@ -283,7 +283,7 @@ func startPluginProcess(entry, executable string, args []string, dir string) (*g
 		return nil, fmt.Errorf("start process: %w", err)
 	}
 
-	return &gRPCPluginProcess{
+	return &grpcPluginProcess{
 		cmd:     cmd,
 		stdin:   &jsonLineWriter{w: stdinPipe},
 		stdout:  newJSONLineReader(stdoutPipe),
@@ -293,7 +293,7 @@ func startPluginProcess(entry, executable string, args []string, dir string) (*g
 
 const pluginCallTimeout = 30 * time.Second
 
-func (p *gRPCPluginProcess) call(ctx context.Context, req *pluginRequest) (*pluginResponse, error) {
+func (p *grpcPluginProcess) call(ctx context.Context, req *pluginRequest) (*pluginResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -333,7 +333,7 @@ func (p *gRPCPluginProcess) call(ctx context.Context, req *pluginRequest) (*plug
 	}
 }
 
-func (p *gRPCPluginProcess) stop() {
+func (p *grpcPluginProcess) stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stopLocked()
@@ -341,7 +341,7 @@ func (p *gRPCPluginProcess) stop() {
 
 // stopLocked kills the process without acquiring the lock.
 // Caller must hold p.mu.
-func (p *gRPCPluginProcess) stopLocked() {
+func (p *grpcPluginProcess) stopLocked() {
 	if p.running {
 		_ = p.cmd.Process.Kill()
 		_ = p.cmd.Wait()

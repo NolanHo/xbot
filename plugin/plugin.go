@@ -256,28 +256,45 @@ func NewToolError(content string) *ToolResult {
 type HookEvent string
 
 const (
-	HookPreToolUse       HookEvent = "PreToolUse"
-	HookPostToolUse      HookEvent = "PostToolUse"
+	// HookPreToolUse fires before a tool is executed.
+	HookPreToolUse HookEvent = "PreToolUse"
+	// HookPostToolUse fires after a tool execution succeeds.
+	HookPostToolUse HookEvent = "PostToolUse"
+	// HookPostToolUseError fires when a tool execution fails.
 	HookPostToolUseError HookEvent = "PostToolUseFailure"
+	// HookUserPromptSubmit fires when the user submits a prompt.
 	HookUserPromptSubmit HookEvent = "UserPromptSubmit"
-	HookAgentStop        HookEvent = "AgentStop"
-	HookSessionStart     HookEvent = "SessionStart"
-	HookSessionEnd       HookEvent = "SessionEnd"
-	HookSubAgentStart    HookEvent = "SubAgentStart"
-	HookSubAgentStop     HookEvent = "SubAgentStop"
-	HookPreCompact       HookEvent = "PreCompact"
-	HookPostCompact      HookEvent = "PostCompact"
-	HookCronFired        HookEvent = "CronFired"
-	HookWebhookReceived  HookEvent = "WebhookReceived"
+	// HookAgentStop fires when the agent loop terminates.
+	HookAgentStop HookEvent = "AgentStop"
+	// HookSessionStart fires at the beginning of a new session.
+	HookSessionStart HookEvent = "SessionStart"
+	// HookSessionEnd fires when a session concludes.
+	HookSessionEnd HookEvent = "SessionEnd"
+	// HookSubAgentStart fires before a sub-agent is launched.
+	HookSubAgentStart HookEvent = "SubAgentStart"
+	// HookSubAgentStop fires after a sub-agent completes.
+	HookSubAgentStop HookEvent = "SubAgentStop"
+	// HookPreCompact fires before message history compaction.
+	HookPreCompact HookEvent = "PreCompact"
+	// HookPostCompact fires after message history compaction.
+	HookPostCompact HookEvent = "PostCompact"
+	// HookCronFired fires when a scheduled cron job triggers.
+	HookCronFired HookEvent = "CronFired"
+	// HookWebhookReceived fires when an inbound webhook arrives.
+	HookWebhookReceived HookEvent = "WebhookReceived"
 )
 
 // HookDecision represents a hook handler's decision on whether to allow an operation.
 type HookDecision string
 
 const (
+	// DecisionAllow permits the operation to proceed.
 	DecisionAllow HookDecision = "allow"
-	DecisionDeny  HookDecision = "deny"
-	DecisionAsk   HookDecision = "ask"
+	// DecisionDeny blocks the operation and optionally provides a reason.
+	DecisionDeny HookDecision = "deny"
+	// DecisionAsk prompts the user for confirmation before proceeding.
+	DecisionAsk HookDecision = "ask"
+	// DecisionDefer defers the decision to the next handler in the chain.
 	DecisionDefer HookDecision = "defer"
 )
 
@@ -319,10 +336,16 @@ type ContextEnricher func(ctx context.Context) (string, error)
 type PluginState string
 
 const (
-	StateDiscovered   PluginState = "discovered"   // Manifest loaded, waiting for activation
-	StateActivating   PluginState = "activating"   // Activate() in progress
-	StateActive       PluginState = "active"       // Running and contributing
-	StateDeactivating PluginState = "deactivating" // Deactivate() in progress
-	StateInactive     PluginState = "inactive"     // Deactivated or errored
-	StateError        PluginState = "error"        // Failed to activate
+	// StateDiscovered means the manifest is loaded and the plugin is waiting for activation.
+	StateDiscovered PluginState = "discovered"
+	// StateActivating means Activate() is in progress.
+	StateActivating PluginState = "activating"
+	// StateActive means the plugin is running and contributing tools/hooks/enrichers.
+	StateActive PluginState = "active"
+	// StateDeactivating means Deactivate() is in progress.
+	StateDeactivating PluginState = "deactivating"
+	// StateInactive means the plugin has been deactivated or unloaded.
+	StateInactive PluginState = "inactive"
+	// StateError means the plugin failed to activate.
+	StateError PluginState = "error"
 )

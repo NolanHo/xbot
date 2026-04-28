@@ -9,15 +9,24 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	PermToolsRegister   = "tools.register"
-	PermToolsCall       = "tools.call"
-	PermHooksSubscribe  = "hooks.subscribe"
-	PermContextEnrich   = "context.enrich"
-	PermStoragePrivate  = "storage.private"
-	PermStorageShared   = "storage.shared"
+	// PermToolsRegister grants permission to register tools.
+	PermToolsRegister = "tools.register"
+	// PermToolsCall grants permission to invoke tools.
+	PermToolsCall = "tools.call"
+	// PermHooksSubscribe grants permission to subscribe to lifecycle hooks.
+	PermHooksSubscribe = "hooks.subscribe"
+	// PermContextEnrich grants permission to register context enrichers.
+	PermContextEnrich = "context.enrich"
+	// PermStoragePrivate grants access to the plugin's private key-value storage.
+	PermStoragePrivate = "storage.private"
+	// PermStorageShared grants access to the shared plugin storage.
+	PermStorageShared = "storage.shared"
+	// PermNetworkOutbound grants permission to make outbound network requests.
 	PermNetworkOutbound = "network.outbound"
-	PermBusRead         = "bus.read"
-	PermBusWrite        = "bus.write"
+	// PermBusRead grants permission to read from the event bus.
+	PermBusRead = "bus.read"
+	// PermBusWrite grants permission to publish to the event bus.
+	PermBusWrite = "bus.write"
 )
 
 // allPermissions is the set of all recognized permission strings.

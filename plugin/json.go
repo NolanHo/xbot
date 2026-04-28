@@ -50,7 +50,7 @@ func (j *jsonLineReader) read(v any) error {
 	return json.Unmarshal(line, v)
 }
 
-// WriteJSON is a convenience function.
+// WriteJSON marshals v as JSON followed by a newline and writes it to w.
 func WriteJSON(w io.Writer, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {

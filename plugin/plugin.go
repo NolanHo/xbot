@@ -161,6 +161,46 @@ type PluginTool interface {
 	Execute(ctx context.Context, input string) (*ToolResult, error)
 }
 
+// ---------------------------------------------------------------------------
+// ToolCallContext — rich context for plugin tool execution
+// ---------------------------------------------------------------------------
+
+// ToolCallContext carries session and identity information for a tool call.
+// It is passed to PluginToolV2.ExecuteWithContext, giving plugins access to
+// session metadata without requiring a full context.Context.
+type ToolCallContext struct {
+	// SessionID identifies the current conversation session.
+	SessionID string
+
+	// Channel is the message channel (e.g., "cli", "feishu", "web").
+	Channel string
+
+	// ChatID is the chat or conversation ID within the channel.
+	ChatID string
+
+	// UserID identifies the user who triggered the tool call.
+	UserID string
+
+	// Ctx carries cancellation and deadline information.
+	Ctx context.Context
+}
+
+// ---------------------------------------------------------------------------
+// PluginToolV2 — extended tool interface with rich call context
+// ---------------------------------------------------------------------------
+
+// PluginToolV2 is an extended version of PluginTool that receives a ToolCallContext
+// instead of a bare context.Context. Plugins can implement this interface to get
+// access to session metadata (session ID, channel, user ID, etc.).
+//
+// The PluginToolBridge checks for V2 first and falls back to V1.
+type PluginToolV2 interface {
+	PluginTool
+
+	// ExecuteWithContext runs the tool with a rich call context.
+	ExecuteWithContext(ctx *ToolCallContext, input string) (*ToolResult, error)
+}
+
 // ToolDef is the tool definition for LLM function calling.
 type ToolDef struct {
 	Name        string          `json:"name"`

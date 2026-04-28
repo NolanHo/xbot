@@ -49,8 +49,22 @@ func (a *PluginToolAdapter) Parameters() []llm.ToolParam {
 }
 
 // Execute runs the plugin tool with the given input.
+// If the underlying tool implements PluginToolV2, it uses ExecuteWithContext
+// with a basic ToolCallContext; otherwise falls back to V1 Execute.
 func (a *PluginToolAdapter) Execute(ctx context.Context, input string) (*ToolResult, error) {
+	if v2, ok := a.tool.(PluginToolV2); ok {
+		tcc := &ToolCallContext{Ctx: ctx}
+		return v2.ExecuteWithContext(tcc, input)
+	}
 	return a.tool.Execute(ctx, input)
+}
+
+// ExecuteWithContext runs the plugin tool with a rich call context.
+func (a *PluginToolAdapter) ExecuteWithContext(ctx *ToolCallContext, input string) (*ToolResult, error) {
+	if v2, ok := a.tool.(PluginToolV2); ok {
+		return v2.ExecuteWithContext(ctx, input)
+	}
+	return a.tool.Execute(ctx.Ctx, input)
 }
 
 // PluginID returns the owning plugin's ID.
@@ -65,8 +79,9 @@ func (a *PluginToolAdapter) PluginID() string {
 // SimplePluginTool is a convenience struct for creating PluginTool instances
 // without implementing the full interface.
 type SimplePluginTool struct {
-	Def    ToolDef
-	ExecFn func(ctx context.Context, input string) (*ToolResult, error)
+	Def      ToolDef
+	ExecFn   func(ctx context.Context, input string) (*ToolResult, error)
+	ExecV2Fn func(ctx *ToolCallContext, input string) (*ToolResult, error) // optional V2
 }
 
 // Definition returns the tool's definition.
@@ -74,12 +89,24 @@ func (t *SimplePluginTool) Definition() ToolDef {
 	return t.Def
 }
 
-// Execute calls the wrapped function.
+// Execute calls the wrapped function (V1).
 func (t *SimplePluginTool) Execute(ctx context.Context, input string) (*ToolResult, error) {
 	if t.ExecFn == nil {
 		return NewToolError("tool execution function not set"), nil
 	}
 	return t.ExecFn(ctx, input)
+}
+
+// ExecuteWithContext calls the V2 function if set, otherwise falls back to V1.
+func (t *SimplePluginTool) ExecuteWithContext(ctx *ToolCallContext, input string) (*ToolResult, error) {
+	if t.ExecV2Fn != nil {
+		return t.ExecV2Fn(ctx, input)
+	}
+	// Fallback to V1
+	if t.ExecFn == nil {
+		return NewToolError("tool execution function not set"), nil
+	}
+	return t.ExecFn(ctx.Ctx, input)
 }
 
 // ---------------------------------------------------------------------------

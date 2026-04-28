@@ -1076,3 +1076,453 @@ func TestPluginContext_SetSessionMetadata(t *testing.T) {
 		t.Errorf("ChatID: got %q, want %q", pc.ChatID(), "chat-123")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 — PluginToolV2 / ToolCallContext Tests
+// ---------------------------------------------------------------------------
+
+func TestSimplePluginTool_ExecuteWithContext_V2(t *testing.T) {
+	tool := &SimplePluginTool{
+		Def: ToolDef{Name: "v2_tool", Description: "V2 test tool"},
+		ExecV2Fn: func(ctx *ToolCallContext, input string) (*ToolResult, error) {
+			return NewToolResult("session=" + ctx.SessionID + " channel=" + ctx.Channel + " user=" + ctx.UserID), nil
+		},
+	}
+
+	// V2 should be used via ExecuteWithContext
+	tcc := &ToolCallContext{
+		SessionID: "sess-123",
+		Channel:   "cli",
+		UserID:    "user-456",
+		Ctx:       context.Background(),
+	}
+	result, err := tool.ExecuteWithContext(tcc, `{"q": "test"}`)
+	if err != nil {
+		t.Fatalf("ExecuteWithContext error: %v", err)
+	}
+	if result.Content != "session=sess-123 channel=cli user=user-456" {
+		t.Errorf("V2 result = %q", result.Content)
+	}
+}
+
+func TestSimplePluginTool_ExecuteWithContext_Fallback(t *testing.T) {
+	tool := &SimplePluginTool{
+		Def: ToolDef{Name: "fallback_tool", Description: "fallback test"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("v1-fallback"), nil
+		},
+	}
+
+	// No ExecV2Fn set, should fallback to ExecFn
+	tcc := &ToolCallContext{Ctx: context.Background()}
+	result, err := tool.ExecuteWithContext(tcc, "")
+	if err != nil {
+		t.Fatalf("ExecuteWithContext fallback error: %v", err)
+	}
+	if result.Content != "v1-fallback" {
+		t.Errorf("fallback result = %q", result.Content)
+	}
+}
+
+func TestSimplePluginTool_ExecuteWithContext_NoFunc(t *testing.T) {
+	tool := &SimplePluginTool{
+		Def: ToolDef{Name: "nofunc_tool", Description: "no func"},
+	}
+
+	tcc := &ToolCallContext{Ctx: context.Background()}
+	result, err := tool.ExecuteWithContext(tcc, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error result when no function set")
+	}
+}
+
+func TestPluginToolAdapter_V2Detection(t *testing.T) {
+	// Create a V2 tool
+	tool := &SimplePluginTool{
+		Def: ToolDef{Name: "adapter_v2", Description: "adapter v2 test"},
+		ExecV2Fn: func(ctx *ToolCallContext, input string) (*ToolResult, error) {
+			return NewToolResult("v2-called:" + ctx.SessionID), nil
+		},
+	}
+
+	adapter := NewPluginToolAdapter("test-plugin", tool)
+
+	// Execute via V1 interface — adapter should detect V2 and use it
+	result, err := adapter.Execute(context.Background(), `{"x": 1}`)
+	if err != nil {
+		t.Fatalf("adapter.Execute error: %v", err)
+	}
+	if result.Content != "v2-called:" {
+		// SessionID is empty since we called via V1 (no ToolCallContext fields)
+		t.Errorf("adapter V2 detection result = %q", result.Content)
+	}
+
+	// Execute via V2 interface directly
+	tcc := &ToolCallContext{SessionID: "sess-abc", Ctx: context.Background()}
+	result2, err := adapter.ExecuteWithContext(tcc, "")
+	if err != nil {
+		t.Fatalf("adapter.ExecuteWithContext error: %v", err)
+	}
+	if result2.Content != "v2-called:sess-abc" {
+		t.Errorf("adapter V2 direct result = %q", result2.Content)
+	}
+}
+
+func TestPluginToolAdapter_V1Fallback(t *testing.T) {
+	// V1-only tool (no ExecV2Fn)
+	tool := &SimplePluginTool{
+		Def: ToolDef{Name: "v1_only", Description: "V1 only"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("v1-ok"), nil
+		},
+	}
+
+	adapter := NewPluginToolAdapter("test-plugin", tool)
+
+	// V1 call
+	result, err := adapter.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("adapter V1 error: %v", err)
+	}
+	if result.Content != "v1-ok" {
+		t.Errorf("adapter V1 result = %q", result.Content)
+	}
+
+	// V2 call with fallback
+	tcc := &ToolCallContext{SessionID: "test", Ctx: context.Background()}
+	result2, err := adapter.ExecuteWithContext(tcc, "")
+	if err != nil {
+		t.Fatalf("adapter V2 fallback error: %v", err)
+	}
+	if result2.Content != "v1-ok" {
+		t.Errorf("adapter V2 fallback result = %q", result2.Content)
+	}
+}
+
+func TestPluginToolV2_InterfaceAssertion(t *testing.T) {
+	v2Tool := &SimplePluginTool{
+		Def: ToolDef{Name: "interface_check", Description: "check"},
+		ExecV2Fn: func(ctx *ToolCallContext, input string) (*ToolResult, error) {
+			return NewToolResult("v2"), nil
+		},
+	}
+
+	// SimplePluginTool with ExecV2Fn should implement PluginToolV2
+	var _ PluginToolV2 = v2Tool
+
+	// V1-only should NOT implement PluginToolV2 at the interface level...
+	// Actually SimplePluginTool always implements ExecuteWithContext, so
+	// it always satisfies PluginToolV2. But let's verify behavior:
+	v1Tool := &SimplePluginTool{
+		Def: ToolDef{Name: "v1_check", Description: "check"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("v1"), nil
+		},
+	}
+
+	// Both should work with PluginToolV2 interface
+	var iface PluginToolV2 = v1Tool
+	result, err := iface.ExecuteWithContext(&ToolCallContext{Ctx: context.Background()}, "")
+	if err != nil {
+		t.Fatalf("v1 as V2 interface error: %v", err)
+	}
+	if result.Content != "v1" {
+		t.Errorf("v1 as V2 result = %q", result.Content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Health Check Tests
+// ---------------------------------------------------------------------------
+
+// healthyPlugin implements Plugin + HealthChecker
+type healthyPlugin struct {
+	manifest PluginManifest
+}
+
+func (h *healthyPlugin) Manifest() PluginManifest              { return h.manifest }
+func (h *healthyPlugin) Activate(ctx PluginContext) error      { return nil }
+func (h *healthyPlugin) Deactivate(ctx PluginContext) error    { return nil }
+func (h *healthyPlugin) HealthCheck(ctx context.Context) error { return nil }
+
+// sickPlugin implements Plugin + HealthChecker (always fails)
+type sickPlugin struct {
+	manifest PluginManifest
+}
+
+func (s *sickPlugin) Manifest() PluginManifest           { return s.manifest }
+func (s *sickPlugin) Activate(ctx PluginContext) error   { return nil }
+func (s *sickPlugin) Deactivate(ctx PluginContext) error { return nil }
+func (s *sickPlugin) HealthCheck(ctx context.Context) error {
+	return fmt.Errorf("database connection lost")
+}
+
+func TestPluginManager_HealthCheck_Healthy(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	p := &healthyPlugin{manifest: testManifest()}
+	pm.RegisterAndActivate(context.Background(), p)
+
+	results := pm.HealthCheck(context.Background())
+	if len(results) != 1 {
+		t.Fatalf("expected 1 health result, got %d", len(results))
+	}
+	if results["com.test.example"] != nil {
+		t.Errorf("expected healthy (nil error), got %v", results["com.test.example"])
+	}
+}
+
+func TestPluginManager_HealthCheck_Sick(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	m := testManifest()
+	m.ID = "com.test.sick"
+	p := &sickPlugin{manifest: m}
+	pm.RegisterAndActivate(context.Background(), p)
+
+	results := pm.HealthCheck(context.Background())
+	if results["com.test.sick"] == nil {
+		t.Error("expected error from sick plugin")
+	}
+	if results["com.test.sick"].Error() != "database connection lost" {
+		t.Errorf("sick error = %q", results["com.test.sick"].Error())
+	}
+}
+
+func TestPluginManager_HealthCheck_NoHealthChecker(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	p := &mockPlugin{manifest: testManifest()}
+	pm.RegisterAndActivate(context.Background(), p)
+
+	results := pm.HealthCheck(context.Background())
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	// mockPlugin doesn't implement HealthChecker, should be nil (healthy)
+	if results["com.test.example"] != nil {
+		t.Errorf("expected nil for plugin without HealthChecker, got %v", results["com.test.example"])
+	}
+}
+
+func TestPluginManager_HealthCheck_Mixed(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+
+	// Healthy
+	h := &healthyPlugin{manifest: testManifest()}
+	pm.RegisterAndActivate(context.Background(), h)
+
+	// Sick
+	m := testManifest()
+	m.ID = "com.test.sick"
+	s := &sickPlugin{manifest: m}
+	pm.RegisterAndActivate(context.Background(), s)
+
+	// No health checker
+	m2 := testManifest()
+	m2.ID = "com.test.plain"
+	mp := &mockPlugin{manifest: m2}
+	pm.RegisterAndActivate(context.Background(), mp)
+
+	results := pm.HealthCheck(context.Background())
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if results["com.test.example"] != nil {
+		t.Error("healthy plugin should be nil")
+	}
+	if results["com.test.sick"] == nil {
+		t.Error("sick plugin should have error")
+	}
+	if results["com.test.plain"] != nil {
+		t.Error("plain plugin should be nil (assumed healthy)")
+	}
+}
+
+func TestPluginManager_HealthCheck_InactivePlugin(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	p := &healthyPlugin{manifest: testManifest()}
+	// Register but don't activate
+	pm.Register(p)
+
+	results := pm.HealthCheck(context.Background())
+	if len(results) != 0 {
+		t.Errorf("inactive plugins should not be health-checked, got %d results", len(results))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Metrics Tests
+// ---------------------------------------------------------------------------
+
+func TestPluginManager_Metrics_Empty(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	m := pm.Metrics()
+	if m.TotalPlugins != 0 {
+		t.Errorf("TotalPlugins = %d, want 0", m.TotalPlugins)
+	}
+	if m.ActivePlugins != 0 {
+		t.Errorf("ActivePlugins = %d, want 0", m.ActivePlugins)
+	}
+}
+
+func TestPluginManager_Metrics_Active(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	p := &mockPlugin{manifest: testManifest()}
+	pm.RegisterAndActivate(context.Background(), p)
+
+	m := pm.Metrics()
+	if m.TotalPlugins != 1 {
+		t.Errorf("TotalPlugins = %d, want 1", m.TotalPlugins)
+	}
+	if m.ActivePlugins != 1 {
+		t.Errorf("ActivePlugins = %d, want 1", m.ActivePlugins)
+	}
+	// mockPlugin registers 1 tool
+	if m.TotalTools != 1 {
+		t.Errorf("TotalTools = %d, want 1", m.TotalTools)
+	}
+}
+
+func TestPluginManager_Metrics_MultiplePlugins(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+
+	// Register 3 plugins with different capabilities
+	m1 := testManifest()
+	m1.ID = "com.test.plugin1"
+	p1 := &mockPlugin{manifest: m1}
+	pm.RegisterAndActivate(context.Background(), p1)
+
+	m2 := testManifest()
+	m2.ID = "com.test.plugin2"
+	p2 := &mockPlugin{manifest: m2}
+	pm.RegisterAndActivate(context.Background(), p2)
+
+	// Register but don't activate
+	m3 := testManifest()
+	m3.ID = "com.test.plugin3"
+	p3 := &mockPlugin{manifest: m3}
+	pm.Register(p3)
+
+	metrics := pm.Metrics()
+	if metrics.TotalPlugins != 3 {
+		t.Errorf("TotalPlugins = %d, want 3", metrics.TotalPlugins)
+	}
+	if metrics.ActivePlugins != 2 {
+		t.Errorf("ActivePlugins = %d, want 2", metrics.ActivePlugins)
+	}
+	// Each mockPlugin registers 1 tool
+	if metrics.TotalTools != 2 {
+		t.Errorf("TotalTools = %d, want 2", metrics.TotalTools)
+	}
+}
+
+func TestPluginManager_Metrics_WithHooks(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	m := testManifest()
+	m.Permissions = []string{"tools.register", "hooks.subscribe", "context.enrich", "storage.private"}
+
+	// Create a plugin that registers tools, hooks, and enrichers
+	p := &richMockPlugin{manifest: m}
+	pm.RegisterAndActivate(context.Background(), p)
+
+	metrics := pm.Metrics()
+	if metrics.TotalTools != 1 {
+		t.Errorf("TotalTools = %d, want 1", metrics.TotalTools)
+	}
+	if metrics.TotalHooks != 2 {
+		t.Errorf("TotalHooks = %d, want 2", metrics.TotalHooks)
+	}
+	if metrics.TotalEnrichers != 1 {
+		t.Errorf("TotalEnrichers = %d, want 1", metrics.TotalEnrichers)
+	}
+}
+
+// richMockPlugin registers tools, hooks, and enrichers
+type richMockPlugin struct {
+	manifest PluginManifest
+}
+
+func (r *richMockPlugin) Manifest() PluginManifest { return r.manifest }
+func (r *richMockPlugin) Activate(ctx PluginContext) error {
+	ctx.RegisterTool(&SimplePluginTool{
+		Def: ToolDef{Name: "rich_tool", Description: "Rich tool"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("rich"), nil
+		},
+	})
+	ctx.OnPreToolUse("Shell", func(ctx context.Context, payload *HookPayload) (*HookResult, error) {
+		return &HookResult{Decision: DecisionAllow}, nil
+	})
+	ctx.OnPostToolUse("", func(ctx context.Context, payload *HookPayload) (*HookResult, error) {
+		return &HookResult{Decision: DecisionAllow}, nil
+	})
+	ctx.EnrichContext("test_enricher", func(ctx context.Context) (string, error) {
+		return "enriched", nil
+	})
+	return nil
+}
+func (r *richMockPlugin) Deactivate(ctx PluginContext) error { return nil }
+
+// ---------------------------------------------------------------------------
+// Phase 5 — ToolCallContext Fields Test
+// ---------------------------------------------------------------------------
+
+func TestToolCallContext_AllFields(t *testing.T) {
+	bg := context.Background()
+	tcc := &ToolCallContext{
+		SessionID: "sess-001",
+		Channel:   "feishu",
+		ChatID:    "chat-002",
+		UserID:    "user-003",
+		Ctx:       bg,
+	}
+
+	if tcc.SessionID != "sess-001" {
+		t.Errorf("SessionID = %q", tcc.SessionID)
+	}
+	if tcc.Channel != "feishu" {
+		t.Errorf("Channel = %q", tcc.Channel)
+	}
+	if tcc.ChatID != "chat-002" {
+		t.Errorf("ChatID = %q", tcc.ChatID)
+	}
+	if tcc.UserID != "user-003" {
+		t.Errorf("UserID = %q", tcc.UserID)
+	}
+	if tcc.Ctx != bg {
+		t.Error("Ctx should match")
+	}
+}
+
+func TestPluginMetrics_JSON(t *testing.T) {
+	m := PluginMetrics{
+		TotalPlugins:   5,
+		ActivePlugins:  3,
+		TotalTools:     10,
+		TotalHooks:     7,
+		TotalEnrichers: 2,
+	}
+
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("Marshal error: %v", err)
+	}
+
+	// Verify JSON tags
+	if !strContains(string(data), "totalPlugins") {
+		t.Error("JSON should contain totalPlugins")
+	}
+	if !strContains(string(data), "activePlugins") {
+		t.Error("JSON should contain activePlugins")
+	}
+
+	// Round-trip
+	var m2 PluginMetrics
+	if err := json.Unmarshal(data, &m2); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+	if m2 != m {
+		t.Errorf("round-trip mismatch: got %+v, want %+v", m2, m)
+	}
+}

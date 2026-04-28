@@ -50,11 +50,13 @@ func (b *PluginToolBridge) Parameters() []llm.ToolParam {
 }
 
 // Execute implements tools.Tool.
-// Converts tools.ToolContext → context.Context, executes the plugin tool,
-// and converts the result back.
+// Converts tools.ToolContext → ToolCallContext for V2, or context.Context for V1.
 func (b *PluginToolBridge) Execute(ctx *tools.ToolContext, input string) (*tools.ToolResult, error) {
-	// Use the cancel-aware context from ToolContext
-	result, err := b.adapter.Execute(ctx.Ctx, input)
+	tcc := &ToolCallContext{
+		Ctx: ctx.Ctx,
+	}
+
+	result, err := b.adapter.ExecuteWithContext(tcc, input)
 	if err != nil {
 		return nil, err
 	}

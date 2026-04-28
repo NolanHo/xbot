@@ -393,6 +393,75 @@ func hasActivationEvent(m *PluginManifest, event string) bool {
 	return false
 }
 
+// ---------------------------------------------------------------------------
+// Health Check
+// ---------------------------------------------------------------------------
+
+// HealthChecker is an optional interface that plugins can implement to report
+// their health status. Plugins that don't implement this are assumed healthy.
+type HealthChecker interface {
+	HealthCheck(ctx context.Context) error
+}
+
+// HealthCheck performs a health check on all active plugins.
+// Returns a map of plugin ID → error (nil means healthy).
+// Plugins that don't implement HealthChecker are reported as healthy (nil error).
+func (pm *PluginManager) HealthCheck(ctx context.Context) map[string]error {
+	pm.mu.RLock()
+	entries := make([]*PluginEntry, 0, len(pm.entries))
+	for _, e := range pm.entries {
+		if e.State == StateActive {
+			entries = append(entries, e)
+		}
+	}
+	pm.mu.RUnlock()
+
+	results := make(map[string]error)
+	for _, entry := range entries {
+		if hc, ok := entry.Plugin.(HealthChecker); ok {
+			results[entry.Manifest.ID] = hc.HealthCheck(ctx)
+		} else {
+			results[entry.Manifest.ID] = nil
+		}
+	}
+	return results
+}
+
+// ---------------------------------------------------------------------------
+// Metrics
+// ---------------------------------------------------------------------------
+
+// PluginMetrics holds aggregate metrics about the plugin system.
+type PluginMetrics struct {
+	TotalPlugins   int `json:"totalPlugins"`
+	ActivePlugins  int `json:"activePlugins"`
+	TotalTools     int `json:"totalTools"`
+	TotalHooks     int `json:"totalHooks"`
+	TotalEnrichers int `json:"totalEnrichers"`
+}
+
+// Metrics returns aggregate metrics about the plugin system.
+func (pm *PluginManager) Metrics() PluginMetrics {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	m := PluginMetrics{
+		TotalPlugins: len(pm.entries),
+	}
+
+	for _, entry := range pm.entries {
+		if entry.State == StateActive {
+			m.ActivePlugins++
+			if entry.Context != nil {
+				m.TotalTools += len(entry.Context.GetTools())
+				m.TotalHooks += len(entry.Context.GetHooks())
+				m.TotalEnrichers += len(entry.Context.GetEnrichers())
+			}
+		}
+	}
+	return m
+}
+
 // noopStorage is a no-op storage used when storage creation fails.
 type noopStorage struct{}
 

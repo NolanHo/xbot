@@ -847,3 +847,176 @@ func TestToolTimeout_NonPositiveIsNoop(t *testing.T) {
 		t.Error("ToolTimeout with negative duration should return the original tool")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ToolRetry Decorator Tests
+// ---------------------------------------------------------------------------
+
+func TestToolRetry_SuccessFirstTry(t *testing.T) {
+	var calls int32
+
+	inner := &SimplePluginTool{
+		Def: ToolDef{Name: "lucky_tool", Description: "Always succeeds"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			atomic.AddInt32(&calls, 1)
+			return NewToolResult("ok"), nil
+		},
+	}
+
+	wrapped := ToolRetry(inner, 3, time.Millisecond)
+
+	result, err := wrapped.Execute(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if result.Content != "ok" {
+		t.Errorf("Content = %q, want %q", result.Content, "ok")
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("calls = %d, want 1", atomic.LoadInt32(&calls))
+	}
+
+	// Definition should pass through
+	def := wrapped.Definition()
+	if def.Name != "lucky_tool" {
+		t.Errorf("Definition().Name = %q, want %q", def.Name, "lucky_tool")
+	}
+}
+
+func TestToolRetry_SuccessAfterRetry(t *testing.T) {
+	var calls int32
+
+	inner := &SimplePluginTool{
+		Def: ToolDef{Name: "flaky_tool", Description: "Fails then succeeds"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			count := atomic.AddInt32(&calls, 1)
+			if count < 3 {
+				return nil, fmt.Errorf("attempt %d failed", count)
+			}
+			return NewToolResult("recovered"), nil
+		},
+	}
+
+	wrapped := ToolRetry(inner, 3, time.Millisecond)
+
+	result, err := wrapped.Execute(context.Background(), `{}`)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if result.Content != "recovered" {
+		t.Errorf("Content = %q, want %q", result.Content, "recovered")
+	}
+	if atomic.LoadInt32(&calls) != 3 {
+		t.Errorf("calls = %d, want 3", atomic.LoadInt32(&calls))
+	}
+}
+
+func TestToolRetry_AllFail(t *testing.T) {
+	var calls int32
+
+	inner := &SimplePluginTool{
+		Def: ToolDef{Name: "doom_tool", Description: "Always fails"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			atomic.AddInt32(&calls, 1)
+			return nil, fmt.Errorf("always fails")
+		},
+	}
+
+	wrapped := ToolRetry(inner, 2, time.Millisecond)
+
+	result, err := wrapped.Execute(context.Background(), `{}`)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if !strings.Contains(err.Error(), "always fails") {
+		t.Errorf("error = %q, should contain 'always fails'", err.Error())
+	}
+	// 1 initial + 2 retries = 3
+	if atomic.LoadInt32(&calls) != 3 {
+		t.Errorf("calls = %d, want 3", atomic.LoadInt32(&calls))
+	}
+	_ = result
+}
+
+func TestToolRetry_ZeroRetries(t *testing.T) {
+	inner := &SimplePluginTool{
+		Def: ToolDef{Name: "no_retry_tool", Description: "No retries"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("direct"), nil
+		},
+	}
+
+	// Zero maxRetries should return the original tool unchanged
+	wrapped := ToolRetry(inner, 0, time.Millisecond)
+	if wrapped != inner {
+		t.Error("ToolRetry with maxRetries=0 should return the original tool")
+	}
+
+	// Negative maxRetries should also return the original tool unchanged
+	wrapped2 := ToolRetry(inner, -1, time.Millisecond)
+	if wrapped2 != inner {
+		t.Error("ToolRetry with negative maxRetries should return the original tool")
+	}
+}
+
+func TestToolRetry_ContextCancel(t *testing.T) {
+	var calls int32
+
+	inner := &SimplePluginTool{
+		Def: ToolDef{Name: "cancel_tool", Description: "Fails on every call"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			atomic.AddInt32(&calls, 1)
+			return nil, fmt.Errorf("fail")
+		},
+	}
+
+	wrapped := ToolRetry(inner, 10, time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := wrapped.Execute(ctx, `{}`)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// Should only be called once because context is already cancelled
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("calls = %d, want 1 (cancelled context should stop retries)", atomic.LoadInt32(&calls))
+	}
+}
+
+func TestToolRetry_V2Success(t *testing.T) {
+	var calls int32
+
+	inner := &SimplePluginTool{
+		Def: ToolDef{Name: "v2_retry_tool", Description: "V2 fast tool"},
+		ExecV2Fn: func(ctx *ToolCallContext, input string) (*ToolResult, error) {
+			atomic.AddInt32(&calls, 1)
+			return NewToolResult("v2:session=" + ctx.SessionID), nil
+		},
+	}
+
+	wrapped := ToolRetry(inner, 3, time.Millisecond)
+
+	tcc := &ToolCallContext{
+		Ctx:       context.Background(),
+		SessionID: "sess-retry",
+	}
+
+	// Verify it implements PluginToolV2
+	v2, ok := wrapped.(PluginToolV2)
+	if !ok {
+		t.Fatal("ToolRetry wrapper should implement PluginToolV2")
+	}
+
+	result, err := v2.ExecuteWithContext(tcc, `{}`)
+	if err != nil {
+		t.Fatalf("ExecuteWithContext() error: %v", err)
+	}
+	if result.Content != "v2:session=sess-retry" {
+		t.Errorf("Content = %q, want %q", result.Content, "v2:session=sess-retry")
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Errorf("calls = %d, want 1", atomic.LoadInt32(&calls))
+	}
+}

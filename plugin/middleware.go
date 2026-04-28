@@ -290,3 +290,81 @@ func (t *timeoutTool) ExecuteWithContext(ctx *ToolCallContext, input string) (*T
 		return NewToolError(fmt.Sprintf("tool %s timed out after %s", name, t.timeout)), nil
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Tool-level Retry Decorator
+// ---------------------------------------------------------------------------
+
+// retryTool wraps a PluginTool with retry logic for transient Go errors.
+// It mirrors the timeoutTool pattern and implements both PluginTool and
+// PluginToolV2 so that V2 callers also benefit from retries.
+type retryTool struct {
+	inner      PluginTool
+	maxRetries int
+	delay      time.Duration
+}
+
+// ToolRetry wraps a PluginTool with retry logic.
+// On Go error (not ToolResult.IsError), it retries up to maxRetries
+// additional attempts with a fixed delay between attempts.
+// A non-positive maxRetries disables retries (returns the tool unchanged).
+func ToolRetry(tool PluginTool, maxRetries int, delay time.Duration) PluginTool {
+	if maxRetries <= 0 {
+		return tool
+	}
+	return &retryTool{inner: tool, maxRetries: maxRetries, delay: delay}
+}
+
+// Definition returns the wrapped tool's definition.
+func (r *retryTool) Definition() ToolDef {
+	return r.inner.Definition()
+}
+
+// Execute runs the wrapped tool, retrying on Go error.
+func (r *retryTool) Execute(ctx context.Context, input string) (*ToolResult, error) {
+	var result *ToolResult
+	var err error
+	for attempt := 0; attempt <= r.maxRetries; attempt++ {
+		result, err = r.inner.Execute(ctx, input)
+		if err == nil {
+			return result, nil
+		}
+		// Don't retry if context is cancelled
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// Last attempt — don't sleep
+		if attempt < r.maxRetries {
+			time.Sleep(r.delay)
+		}
+	}
+	return result, err
+}
+
+// ExecuteWithContext runs the wrapped tool's V2 method with retry logic.
+// If the inner tool does not implement PluginToolV2, it falls back to V1 Execute.
+func (r *retryTool) ExecuteWithContext(ctx *ToolCallContext, input string) (*ToolResult, error) {
+	v2, ok := r.inner.(PluginToolV2)
+	if !ok {
+		// Not V2 — delegate to V1 path
+		return r.Execute(ctx.Ctx, input)
+	}
+
+	var result *ToolResult
+	var err error
+	for attempt := 0; attempt <= r.maxRetries; attempt++ {
+		result, err = v2.ExecuteWithContext(ctx, input)
+		if err == nil {
+			return result, nil
+		}
+		// Don't retry if context is cancelled
+		if ctx.Ctx.Err() != nil {
+			return nil, ctx.Ctx.Err()
+		}
+		// Last attempt — don't sleep
+		if attempt < r.maxRetries {
+			time.Sleep(r.delay)
+		}
+	}
+	return result, err
+}

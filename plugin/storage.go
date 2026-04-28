@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	log "xbot/logger"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,7 +35,9 @@ func NewFileStorage(pluginDir string) (StorageAccessor, error) {
 
 	// Load existing data
 	if data, err := os.ReadFile(fs.path); err == nil {
-		_ = json.Unmarshal(data, &fs.data)
+		if err := json.Unmarshal(data, &fs.data); err != nil {
+			log.WithField("path", fs.path).Warn("Failed to parse storage, starting fresh: ", err)
+		}
 	}
 
 	return fs, nil

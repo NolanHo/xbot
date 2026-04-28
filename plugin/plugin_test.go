@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"xbot/tools"
 )
 
 // ---------------------------------------------------------------------------
@@ -3618,7 +3620,9 @@ func TestAuditLogger_Clear(t *testing.T) {
 		t.Fatal("expected 2 entries before clear")
 	}
 
-	al.Clear()
+	if err := al.Clear(); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(al.Query(AuditFilter{})) != 0 {
 		t.Fatal("expected 0 entries after clear")
@@ -3687,5 +3691,153 @@ func TestPluginManager_AuditLog_Install(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected install audit entry without error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NativeRuntime Tests
+// ---------------------------------------------------------------------------
+
+func TestNativeRuntime(t *testing.T) {
+	nr := NewNativeRuntime()
+	p := &mockPlugin{manifest: testManifest()}
+	nr.RegisterPlugin(p)
+
+	// Create should return the registered plugin
+	m := testManifest()
+	got, err := nr.Create(&m, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != p {
+		t.Error("expected same plugin instance")
+	}
+
+	// Create for unknown plugin should error
+	unknown := PluginManifest{ID: "unknown", Name: "Unknown", Version: "1.0.0", Description: "test", Runtime: RuntimeNative}
+	_, err = nr.Create(&unknown, "/tmp")
+	if err == nil {
+		t.Error("expected error for unregistered plugin")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PluginToolBridge Tests
+// ---------------------------------------------------------------------------
+
+func TestPluginToolBridge_Execute(t *testing.T) {
+	tool := &SimplePluginTool{
+		Def: ToolDef{Name: "test-tool", Description: "A test tool"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("result: " + input), nil
+		},
+	}
+	adapter := NewPluginToolAdapter("com.test", tool)
+	bridge := NewPluginToolBridge(adapter)
+
+	if bridge.Name() != "test-tool" {
+		t.Errorf("expected name 'test-tool', got %q", bridge.Name())
+	}
+	if !strings.Contains(bridge.Description(), "[com.test plugin]") {
+		t.Errorf("expected plugin attribution in description, got %q", bridge.Description())
+	}
+
+	// Execute via bridge
+	tCtx := &tools.ToolContext{Ctx: context.Background()}
+	result, err := bridge.Execute(tCtx, `"hello"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary != "result: \"hello\"" {
+		t.Errorf("unexpected result: %q", result.Summary)
+	}
+}
+
+func TestPluginToolBridge_RateLimited(t *testing.T) {
+	tool := &SimplePluginTool{
+		Def: ToolDef{Name: "limited-tool", Description: "A limited tool"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("ok"), nil
+		},
+	}
+	adapter := NewPluginToolAdapter("com.test", tool)
+	rl := NewPluginRateLimiter(map[string]RateLimit{
+		"com.test": {MaxCalls: 1, Window: time.Minute},
+	})
+	bridge := NewPluginToolBridgeWithLimits(adapter, "com.test", rl, nil)
+
+	tCtx := &tools.ToolContext{Ctx: context.Background()}
+
+	// First call should succeed
+	result, err := bridge.Execute(tCtx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Error("first call should not be rate limited")
+	}
+
+	// Second call should be rate limited
+	result, _ = bridge.Execute(tCtx, "")
+	if !result.IsError {
+		t.Error("expected rate limit error")
+	}
+}
+
+func TestPluginToolBridge_QuotaExceeded(t *testing.T) {
+	tool := &SimplePluginTool{
+		Def: ToolDef{Name: "quota-tool", Description: "A quota tool"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("ok"), nil
+		},
+	}
+	adapter := NewPluginToolAdapter("com.test", tool)
+	qm := NewPluginQuotaManager(map[string]PluginQuota{
+		"com.test": {MaxToolCallsPerDay: 1},
+	})
+	bridge := NewPluginToolBridgeWithLimits(adapter, "com.test", nil, qm)
+
+	tCtx := &tools.ToolContext{Ctx: context.Background()}
+
+	// First call should succeed
+	result, err := bridge.Execute(tCtx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Error("first call should not be quota limited")
+	}
+
+	// Second call should be quota exceeded
+	result, _ = bridge.Execute(tCtx, "")
+	if !result.IsError {
+		t.Error("expected quota exceeded error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// EventBus Unsubscribe nil handler Tests
+// ---------------------------------------------------------------------------
+
+func TestPluginEventBus_Unsubscribe_NilHandler(t *testing.T) {
+	bus := NewPluginEventBus()
+	err := bus.Unsubscribe("topic", nil)
+	if err == nil {
+		t.Error("expected error for nil handler")
+	}
+	if !strings.Contains(err.Error(), "must not be nil") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WirePluginTools Tests
+// ---------------------------------------------------------------------------
+
+func TestWirePluginTools_NilRegistry(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	err := WirePluginTools(pm, nil)
+	if err == nil {
+		t.Error("expected error for nil registry")
 	}
 }

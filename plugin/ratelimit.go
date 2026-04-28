@@ -18,6 +18,8 @@ type PluginRateLimiter struct {
 	windows map[string][]time.Time
 }
 
+// NewPluginRateLimiter creates a rate limiter with the given per-plugin limits.
+// Plugins without configured limits are unlimited.
 func NewPluginRateLimiter(config map[string]RateLimit) *PluginRateLimiter {
 	rl := &PluginRateLimiter{
 		limits:  make(map[string]RateLimit),
@@ -126,6 +128,7 @@ type PluginQuotaManager struct {
 	storages map[string]StorageAccessor
 }
 
+// NewPluginQuotaManager creates a quota manager with the given per-plugin daily quotas.
 func NewPluginQuotaManager(quotas map[string]PluginQuota) *PluginQuotaManager {
 	qm := &PluginQuotaManager{
 		quotas:   make(map[string]PluginQuota),

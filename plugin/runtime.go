@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	log "xbot/logger"
 )
 
 // ---------------------------------------------------------------------------
@@ -145,7 +147,9 @@ func (g *grpcPlugin) Deactivate(ctx PluginContext) error {
 		return nil
 	}
 	req := &pluginRequest{Method: "deactivate"}
-	_, _ = g.process.call(context.Background(), req)
+	if _, err := g.process.call(context.Background(), req); err != nil {
+		log.WithField("plugin", g.manifest.ID).Warn("Deactivate call failed: ", err)
+	}
 	g.process.stop()
 	g.process = nil
 	return nil

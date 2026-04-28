@@ -273,3 +273,49 @@ func (m *mockStorage) Clear() error {
 	m.data = make(map[string]string)
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// SetRateLimit / ResetDaily Tests
+// ---------------------------------------------------------------------------
+
+func TestRateLimiter_SetRateLimit(t *testing.T) {
+	rl := NewPluginRateLimiter(nil)
+
+	// No limit configured — should allow
+	if !rl.Allow("plugin-1") {
+		t.Error("expected allow with no limit")
+	}
+
+	// Set limit dynamically
+	rl.SetRateLimit("plugin-1", RateLimit{MaxCalls: 1, Window: time.Minute})
+	if !rl.Allow("plugin-1") {
+		t.Error("expected first call to be allowed")
+	}
+	if rl.Allow("plugin-1") {
+		t.Error("expected second call to be rate limited")
+	}
+}
+
+func TestQuotaManager_ResetDaily(t *testing.T) {
+	qm := NewPluginQuotaManager(map[string]PluginQuota{
+		"p1": {MaxToolCallsPerDay: 5},
+	})
+
+	// Consume some quota
+	for i := 0; i < 3; i++ {
+		qm.CheckToolCall("p1")
+	}
+
+	used, _ := qm.GetQuotaUsage("p1")
+	if used != 3 {
+		t.Errorf("expected 3 tool calls, got %d", used)
+	}
+
+	// Reset daily
+	qm.ResetDaily()
+
+	used, _ = qm.GetQuotaUsage("p1")
+	if used != 0 {
+		t.Errorf("expected 0 tool calls after reset, got %d", used)
+	}
+}

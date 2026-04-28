@@ -65,6 +65,9 @@ func (b *PluginEventBus) Publish(ctx context.Context, topic string, data any) []
 // Unsubscribe removes a handler from the given topic.
 // Uses function pointer comparison. If the topic has no remaining handlers, the entry is deleted.
 func (b *PluginEventBus) Unsubscribe(topic string, handler PluginEventHandler) error {
+	if handler == nil {
+		return fmt.Errorf("event bus: handler must not be nil")
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

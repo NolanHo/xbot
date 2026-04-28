@@ -3,6 +3,7 @@ package plugin
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -123,11 +124,17 @@ func (al *AuditLogger) Query(filter AuditFilter) []AuditEntry {
 }
 
 // Clear truncates the audit log file. Safe for concurrent use with Log.
-func (al *AuditLogger) Clear() {
+// Returns an error if the file cannot be reopened after truncation.
+func (al *AuditLogger) Clear() error {
 	al.mu.Lock()
 	defer al.mu.Unlock()
 	al.file.Close()
-	al.file, _ = os.OpenFile(al.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(al.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("audit: reopen after clear: %w", err)
+	}
+	al.file = f
+	return nil
 }
 
 // Close closes the audit log file.

@@ -82,6 +82,8 @@ func NewPluginManager(xbotHome string) *PluginManager {
 
 // SetRuntimeFactory sets the runtime factory for creating plugin instances.
 func (pm *PluginManager) SetRuntimeFactory(factory RuntimeFactory) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.runtimeFactory = factory
 }
 
@@ -273,6 +275,8 @@ func (pm *PluginManager) notifyPluginError(entry *PluginEntry, phase string, err
 // AddSearchDirs adds additional directories to scan for plugins.
 // Must be called before Discover().
 func (pm *PluginManager) AddSearchDirs(dirs []string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.extraDirs = append(pm.extraDirs, dirs...)
 }
 
@@ -359,6 +363,9 @@ func (pm *PluginManager) findPluginDir(dirs []string, pluginID string) string {
 			return candidate
 		}
 	}
+	if len(dirs) == 0 {
+		return pluginID
+	}
 	return filepath.Join(dirs[0], pluginID)
 }
 
@@ -377,9 +384,12 @@ func (pm *PluginManager) ActivateAll(ctx context.Context) error {
 
 	var errs []error
 	for _, entry := range entries {
+		entry.stateMu.Lock()
 		if entry.State != StateDiscovered {
+			entry.stateMu.Unlock()
 			continue
 		}
+		entry.stateMu.Unlock()
 		if !hasActivationEvent(entry.Manifest, "onStart") {
 			continue
 		}
@@ -520,19 +530,27 @@ func (pm *PluginManager) DeactivateAll(ctx context.Context) {
 	pm.mu.RLock()
 	entries := make([]*PluginEntry, 0, len(pm.entries))
 	for _, e := range pm.entries {
+		e.stateMu.Lock()
 		if e.State == StateActive {
+			e.stateMu.Unlock()
 			entries = append(entries, e)
+		} else {
+			e.stateMu.Unlock()
 		}
 	}
 	pm.mu.RUnlock()
 
 	for _, entry := range entries {
+		entry.stateMu.Lock()
 		entry.State = StateDeactivating
+		entry.stateMu.Unlock()
 		if err := entry.Plugin.Deactivate(entry.Context); err != nil {
 			log.WithField("plugin", entry.Manifest.ID).Warn("Deactivation error: ", err)
 			pm.audit(entry.Manifest.ID, AuditDeactivate, nil, err)
 		}
+		entry.stateMu.Lock()
 		entry.State = StateInactive
+		entry.stateMu.Unlock()
 		log.WithField("plugin", entry.Manifest.ID).Info("Plugin deactivated")
 		pm.audit(entry.Manifest.ID, AuditDeactivate, nil, nil)
 	}
@@ -663,12 +681,21 @@ func (pm *PluginManager) Reload(ctx context.Context, pluginID string) error {
 	}
 
 	// Deactivate if active
-	if entry.State == StateActive {
+	entry.stateMu.Lock()
+	isActive := entry.State == StateActive
+	if isActive {
 		entry.State = StateDeactivating
+	}
+	entry.stateMu.Unlock()
+	if isActive {
 		if entry.Plugin != nil {
-			_ = entry.Plugin.Deactivate(entry.Context)
+			if err := entry.Plugin.Deactivate(entry.Context); err != nil {
+				log.WithField("plugin", pluginID).Warn("Deactivation error during reload: ", err)
+			}
 		}
+		entry.stateMu.Lock()
 		entry.State = StateInactive
+		entry.stateMu.Unlock()
 	}
 
 	// Delete old entry
@@ -770,7 +797,9 @@ func (pm *PluginManager) InstallPlugin(ctx context.Context, sourceDir string) (*
 	targetDir := filepath.Join(pm.xbotHome, "plugins", pluginID)
 
 	// Step 4: Clean target and copy source
-	os.RemoveAll(targetDir)
+	if err := os.RemoveAll(targetDir); err != nil {
+		log.WithField("dir", targetDir).Debug("Clean target dir (may not exist): ", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(targetDir), 0o755); err != nil {
 		return nil, fmt.Errorf("install: failed to create plugin directory: %w", err)
 	}
@@ -841,9 +870,15 @@ func (pm *PluginManager) UninstallPlugin(ctx context.Context, pluginID string) e
 
 	// Deactivate if active (under write lock)
 	if entry.State == StateActive && entry.Plugin != nil {
+		entry.stateMu.Lock()
 		entry.State = StateDeactivating
-		_ = entry.Plugin.Deactivate(entry.Context)
+		entry.stateMu.Unlock()
+		if err := entry.Plugin.Deactivate(entry.Context); err != nil {
+			log.WithField("plugin", pluginID).Warn("Deactivation error during uninstall: ", err)
+		}
+		entry.stateMu.Lock()
 		entry.State = StateInactive
+		entry.stateMu.Unlock()
 	}
 
 	// Remove from entries map
@@ -1030,16 +1065,21 @@ func (w *configWatcher) applyDiff(old, new_ *configChangeState) {
 	// Find newly disabled plugins → deactivate them
 	for id := range new_.DisabledPlugins {
 		if !old.DisabledPlugins[id] {
-			if entry, ok := pm.GetPlugin(id); ok && entry.State == StateActive {
-				if entry.Plugin != nil {
-					entry.stateMu.Lock()
-					entry.State = StateDeactivating
-					entry.stateMu.Unlock()
-					_ = entry.Plugin.Deactivate(entry.Context)
-					entry.stateMu.Lock()
-					entry.State = StateInactive
-					entry.stateMu.Unlock()
-					log.WithField("plugin", id).Info("Plugin deactivated by config change (newly disabled)")
+			if entry, ok := pm.GetPlugin(id); ok {
+				entry.stateMu.Lock()
+				isActive := entry.State == StateActive
+				entry.stateMu.Unlock()
+				if isActive {
+					if entry.Plugin != nil {
+						entry.stateMu.Lock()
+						entry.State = StateDeactivating
+						entry.stateMu.Unlock()
+						_ = entry.Plugin.Deactivate(entry.Context)
+						entry.stateMu.Lock()
+						entry.State = StateInactive
+						entry.stateMu.Unlock()
+						log.WithField("plugin", id).Info("Plugin deactivated by config change (newly disabled)")
+					}
 				}
 			}
 			// Also add to disabled set
@@ -1059,7 +1099,10 @@ func (w *configWatcher) applyDiff(old, new_ *configChangeState) {
 
 			if entry, ok := pm.GetPlugin(id); ok {
 				// Entry exists but inactive → just reactivate
-				if entry.State == StateInactive && hasActivationEvent(entry.Manifest, "onStart") {
+				entry.stateMu.Lock()
+				isInactive := entry.State == StateInactive
+				entry.stateMu.Unlock()
+				if isInactive && hasActivationEvent(entry.Manifest, "onStart") {
 					if err := pm.activate(ctx, entry); err != nil {
 						log.WithField("plugin", id).Warn("Failed to re-activate after config enable: ", err)
 					}
@@ -1109,8 +1152,12 @@ func (pm *PluginManager) HealthCheck(ctx context.Context) map[string]error {
 	pm.mu.RLock()
 	entries := make([]*PluginEntry, 0, len(pm.entries))
 	for _, e := range pm.entries {
+		e.stateMu.Lock()
 		if e.State == StateActive {
+			e.stateMu.Unlock()
 			entries = append(entries, e)
+		} else {
+			e.stateMu.Unlock()
 		}
 	}
 	pm.mu.RUnlock()
@@ -1151,7 +1198,10 @@ func (pm *PluginManager) Metrics() PluginMetrics {
 	}
 
 	for _, entry := range pm.entries {
-		if entry.State == StateActive {
+		entry.stateMu.Lock()
+		isActive := entry.State == StateActive
+		entry.stateMu.Unlock()
+		if isActive {
 			m.ActivePlugins++
 			if entry.Context != nil {
 				m.TotalTools += len(entry.Context.GetTools())
@@ -1187,7 +1237,10 @@ func (pm *PluginManager) String() string {
 	var total, active, errCount, disabled int
 	for _, e := range pm.entries {
 		total++
-		switch e.State {
+		e.stateMu.Lock()
+		st := e.State
+		e.stateMu.Unlock()
+		switch st {
 		case StateActive:
 			active++
 		case StateError:

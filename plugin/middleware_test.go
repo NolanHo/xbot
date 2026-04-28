@@ -1383,3 +1383,73 @@ func TestToolLogging_ErrorResult(t *testing.T) {
 		t.Errorf("entry[1].msg = %q, want %q", logger.entries[1].msg, "tool execution returned error result")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ToolMetrics Decorator Tests
+// ---------------------------------------------------------------------------
+
+func TestToolMetrics_CountAndLatency(t *testing.T) {
+	var calls atomic.Int64
+	hist := NewLatencyHistogram()
+
+	inner := &SimplePluginTool{
+		Def: ToolDef{Name: "metrics_tool", Description: "Metrics test"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("ok: " + input), nil
+		},
+	}
+
+	wrapped := ToolMetrics(inner, &calls, hist)
+
+	// Definition passthrough
+	def := wrapped.Definition()
+	if def.Name != "metrics_tool" {
+		t.Errorf("Definition().Name = %q, want %q", def.Name, "metrics_tool")
+	}
+
+	// Execute multiple times
+	for i := 0; i < 3; i++ {
+		result, err := wrapped.Execute(context.Background(), fmt.Sprintf(`{"i":%d}`, i))
+		if err != nil {
+			t.Fatalf("Execute() error: %v", err)
+		}
+		if result.Content != fmt.Sprintf(`ok: {"i":%d}`, i) {
+			t.Errorf("Content = %q, want %q", result.Content, fmt.Sprintf(`ok: {"i":%d}`, i))
+		}
+	}
+
+	// Verify counter
+	if calls.Load() != 3 {
+		t.Errorf("counter = %d, want 3", calls.Load())
+	}
+
+	// Verify histogram recorded 3 observations in some bucket(s)
+	snap := hist.Snapshot()
+	var total int64
+	for _, v := range snap {
+		total += v
+	}
+	if total != 3 {
+		t.Errorf("histogram total = %d, want 3", total)
+	}
+
+	// All fast calls should land in one bucket (likely "<1ms")
+	if len(snap) != 1 {
+		t.Errorf("histogram buckets = %d, want 1 (all calls fast)", len(snap))
+	}
+}
+
+func TestToolMetrics_BothNil_ReturnsInner(t *testing.T) {
+	inner := &SimplePluginTool{
+		Def: ToolDef{Name: "noop_tool", Description: "No-op test"},
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("direct"), nil
+		},
+	}
+
+	// Both nil — should return inner unchanged
+	wrapped := ToolMetrics(inner, nil, nil)
+	if wrapped != inner {
+		t.Error("ToolMetrics with both nil should return inner tool unchanged")
+	}
+}

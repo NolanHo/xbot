@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -563,4 +564,112 @@ func (l *loggingTool) ExecuteWithContext(ctx *ToolCallContext, input string) (*T
 	}
 
 	return result, err
+}
+
+// ---------------------------------------------------------------------------
+// LatencyHistogram — latency bucket counter for ToolMetrics
+// ---------------------------------------------------------------------------
+
+// LatencyHistogram tracks counts in named latency buckets.
+// It is safe for concurrent use via a sync.Mutex.
+type LatencyHistogram struct {
+	mu     sync.Mutex
+	counts map[string]int64
+}
+
+// NewLatencyHistogram creates a LatencyHistogram with an initialized map.
+func NewLatencyHistogram() *LatencyHistogram {
+	return &LatencyHistogram{counts: make(map[string]int64)}
+}
+
+// Observe increments the count for the given bucket.
+func (h *LatencyHistogram) Observe(bucket string) {
+	h.mu.Lock()
+	h.counts[bucket]++
+	h.mu.Unlock()
+}
+
+// Snapshot returns a copy of the current bucket counts.
+func (h *LatencyHistogram) Snapshot() map[string]int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	cp := make(map[string]int64, len(h.counts))
+	for k, v := range h.counts {
+		cp[k] = v
+	}
+	return cp
+}
+
+// ---------------------------------------------------------------------------
+// Tool-level Metrics Decorator
+// ---------------------------------------------------------------------------
+
+// metricsTool wraps a PluginTool with call counting and latency histogram.
+type metricsTool struct {
+	inner     PluginTool
+	counter   *atomic.Int64
+	histogram *LatencyHistogram
+}
+
+// ToolMetrics wraps a PluginTool with call count and latency tracking.
+// A nil counter or nil histogram disables the corresponding metric.
+// If both are nil, the tool is returned unchanged.
+func ToolMetrics(tool PluginTool, counter *atomic.Int64, histogram *LatencyHistogram) PluginTool {
+	if counter == nil && histogram == nil {
+		return tool
+	}
+	return &metricsTool{inner: tool, counter: counter, histogram: histogram}
+}
+
+// Definition returns the wrapped tool's definition.
+func (m *metricsTool) Definition() ToolDef {
+	return m.inner.Definition()
+}
+
+// Execute runs the wrapped tool, recording call count and latency.
+func (m *metricsTool) Execute(ctx context.Context, input string) (*ToolResult, error) {
+	start := time.Now()
+	result, err := m.inner.Execute(ctx, input)
+	m.record(time.Since(start))
+	return result, err
+}
+
+// ExecuteWithContext runs the wrapped tool's V2 method with metrics.
+// If the inner tool does not implement PluginToolV2, it falls back to V1 Execute.
+func (m *metricsTool) ExecuteWithContext(ctx *ToolCallContext, input string) (*ToolResult, error) {
+	v2, ok := m.inner.(PluginToolV2)
+	if !ok {
+		return m.Execute(ctx.Ctx, input)
+	}
+	start := time.Now()
+	result, err := v2.ExecuteWithContext(ctx, input)
+	m.record(time.Since(start))
+	return result, err
+}
+
+// record increments the call counter (if set) and records latency in the histogram (if set).
+func (m *metricsTool) record(elapsed time.Duration) {
+	if m.counter != nil {
+		m.counter.Add(1)
+	}
+	if m.histogram != nil {
+		m.histogram.Observe(latencyBucket(elapsed))
+	}
+}
+
+// latencyBucket maps a duration to an exponential-scale bucket string.
+func latencyBucket(d time.Duration) string {
+	ms := d.Milliseconds()
+	switch {
+	case ms < 1:
+		return "<1ms"
+	case ms < 10:
+		return "1-10ms"
+	case ms < 100:
+		return "10-100ms"
+	case ms < 1000:
+		return "100ms-1s"
+	default:
+		return ">1s"
+	}
 }

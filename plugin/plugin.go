@@ -224,6 +224,10 @@ type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  []llm.ToolParam `json:"parameters"`
+	// InputSchema is the auto-generated JSON Schema for tool parameters.
+	// When set, this provides a complete parameter schema for LLM function calling.
+	// Generated automatically by BuildToolDef; manual ToolDef construction leaves this nil.
+	InputSchema map[string]any `json:"inputSchema,omitempty"`
 }
 
 // ToolResult is the result of a plugin tool execution.

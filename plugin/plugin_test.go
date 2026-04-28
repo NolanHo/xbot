@@ -2160,3 +2160,289 @@ func TestPluginE2E_FullLifecycle(t *testing.T) {
 		t.Errorf("TotalEnrichers after deactivate = %d, want 0", metrics2.TotalEnrichers)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ParseVersion Tests
+// ---------------------------------------------------------------------------
+
+func TestParseVersion(t *testing.T) {
+	tests := []struct {
+		version   string
+		wantMajor int
+		wantMinor int
+		wantPatch int
+		wantErr   bool
+	}{
+		{"1.0.0", 1, 0, 0, false},
+		{"0.1.0", 0, 1, 0, false},
+		{"0.0.1", 0, 0, 1, false},
+		{"10.20.30", 10, 20, 30, false},
+		{"", 0, 0, 0, true},
+		{"1.0", 0, 0, 0, true},
+		{"1", 0, 0, 0, true},
+		{"1.0.0.0", 0, 0, 0, true},
+		{"v1.0.0", 0, 0, 0, true},
+		{"1.0.0-beta", 0, 0, 0, true},
+		{"1.0.0+build", 0, 0, 0, true},
+		{"abc", 0, 0, 0, true},
+		{"a.b.c", 0, 0, 0, true},
+		{"1.0.-1", 0, 0, 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			m := PluginManifest{Version: tt.version}
+			major, minor, patch, err := m.ParseVersion()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseVersion(%q) error = %v, wantErr %v", tt.version, err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				if major != tt.wantMajor || minor != tt.wantMinor || patch != tt.wantPatch {
+					t.Errorf("ParseVersion(%q) = (%d, %d, %d), want (%d, %d, %d)",
+						tt.version, major, minor, patch, tt.wantMajor, tt.wantMinor, tt.wantPatch)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadManifest_InvalidVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		wantErr bool
+	}{
+		{"valid semver", "1.0.0", false},
+		{"missing patch", "1.0", true},
+		{"non-numeric", "abc", true},
+		{"with prefix", "v1.0.0", true},
+		{"with prerelease", "1.0.0-beta", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := testPluginDir(t)
+			m := testManifest()
+			m.Version = tt.version
+			writeTestManifest(t, dir, &m)
+
+			_, err := LoadManifest(dir)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("LoadManifest(version=%q) error = %v, wantErr %v", tt.version, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BuildToolDef InputSchema Tests
+// ---------------------------------------------------------------------------
+
+func TestBuildToolDef_InputSchema(t *testing.T) {
+	def := BuildToolDef("test_tool", "A test tool",
+		ToolParamDef{Name: "name", Type: "string", Description: "The name", Required: true},
+		ToolParamDef{Name: "count", Type: "number", Description: "The count"},
+	)
+
+	if def.InputSchema == nil {
+		t.Fatal("InputSchema should not be nil")
+	}
+
+	// Check type
+	typ, _ := def.InputSchema["type"].(string)
+	if typ != "object" {
+		t.Errorf("schema type = %q, want %q", typ, "object")
+	}
+
+	// Check properties
+	props, ok := def.InputSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("properties should be map[string]any")
+	}
+	if len(props) != 2 {
+		t.Errorf("properties count = %d, want 2", len(props))
+	}
+
+	nameProp, ok := props["name"].(map[string]any)
+	if !ok {
+		t.Fatal("name property should be map[string]any")
+	}
+	if nameProp["type"] != "string" {
+		t.Errorf("name type = %q, want %q", nameProp["type"], "string")
+	}
+
+	// Check required
+	req, ok := def.InputSchema["required"].([]string)
+	if !ok {
+		t.Fatal("required should be []string")
+	}
+	if len(req) != 1 || req[0] != "name" {
+		t.Errorf("required = %v, want [name]", req)
+	}
+}
+
+func TestBuildToolDef_InputSchema_NoParams(t *testing.T) {
+	def := BuildToolDef("empty_tool", "No params")
+
+	if def.InputSchema == nil {
+		t.Fatal("InputSchema should not be nil even with no params")
+	}
+
+	typ, _ := def.InputSchema["type"].(string)
+	if typ != "object" {
+		t.Errorf("schema type = %q, want %q", typ, "object")
+	}
+
+	props, _ := def.InputSchema["properties"].(map[string]any)
+	if len(props) != 0 {
+		t.Errorf("properties should be empty, got %d", len(props))
+	}
+
+	// No required field when all params are optional (or no params)
+	if _, hasRequired := def.InputSchema["required"]; hasRequired {
+		t.Error("schema should not have 'required' when no params are required")
+	}
+}
+
+func TestBuildToolDef_InputSchema_AllOptional(t *testing.T) {
+	def := BuildToolDef("optional_tool", "All optional",
+		ToolParamDef{Name: "a", Type: "string", Description: "A"},
+		ToolParamDef{Name: "b", Type: "number", Description: "B"},
+	)
+
+	if _, hasRequired := def.InputSchema["required"]; hasRequired {
+		t.Error("schema should not have 'required' when all params are optional")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Benchmarks
+// ---------------------------------------------------------------------------
+
+func BenchmarkPluginManager_RegisterAndActivate(b *testing.B) {
+	ctx := context.Background()
+	manifest := PluginManifest{
+		ID:               "bench.plugin",
+		Name:             "Bench Plugin",
+		Version:          "1.0.0",
+		Description:      "benchmark plugin",
+		Runtime:          RuntimeNative,
+		ActivationEvents: []string{"onStart"},
+		Permissions:      []string{"tools.register"},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pm := NewPluginManager(b.TempDir())
+		p := &benchPlugin{manifest: manifest}
+		if err := pm.RegisterAndActivate(ctx, p); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPluginHookBridge_Dispatch(b *testing.B) {
+	bridge := NewPluginHookBridge()
+	bridge.Register("bench.plugin", HookPreToolUse, "", func(ctx context.Context, payload *HookPayload) (*HookResult, error) {
+		return &HookResult{Decision: DecisionAllow}, nil
+	})
+	bridge.Register("bench.plugin2", HookPreToolUse, "test_*", func(ctx context.Context, payload *HookPayload) (*HookResult, error) {
+		return &HookResult{Decision: DecisionAllow}, nil
+	})
+
+	payload := &HookPayload{Event: HookPreToolUse, ToolName: "test_tool"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		bridge.Dispatch(context.Background(), payload)
+	}
+}
+
+func BenchmarkPluginToolAdapter_Execute(b *testing.B) {
+	tool := &SimplePluginTool{
+		Def: BuildToolDef("bench_tool", "benchmark tool",
+			ToolParamDef{Name: "input", Type: "string", Description: "input data", Required: true},
+		),
+		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+			return NewToolResult("ok"), nil
+		},
+	}
+	adapter := NewPluginToolAdapter("bench.plugin", tool)
+	input := `{"input":"test"}`
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := adapter.Execute(context.Background(), input); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEnricherRegistry_RunAll(b *testing.B) {
+	reg := NewEnricherRegistry()
+	reg.Register("bench.plugin", "enricher1", func(ctx context.Context) (string, error) {
+		return "content from enricher 1", nil
+	}, 1)
+	reg.Register("bench.plugin", "enricher2", func(ctx context.Context) (string, error) {
+		return "content from enricher 2", nil
+	}, 2)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reg.RunAll(context.Background())
+	}
+}
+
+// benchPlugin is a minimal Plugin for benchmarking.
+type benchPlugin struct {
+	manifest PluginManifest
+}
+
+func (p *benchPlugin) Manifest() PluginManifest         { return p.manifest }
+func (p *benchPlugin) Activate(_ PluginContext) error   { return nil }
+func (p *benchPlugin) Deactivate(_ PluginContext) error { return nil }
+
+// ---------------------------------------------------------------------------
+// Fuzz Tests
+// ---------------------------------------------------------------------------
+
+func FuzzParseToolInputString(f *testing.F) {
+	// Seed corpus: valid and invalid inputs
+	f.Add(`{"field":"value"}`, "field")
+	f.Add(`{"field":"hello world"}`, "field")
+	f.Add(`{"other":"x"}`, "field")
+	f.Add(`not json`, "field")
+	f.Add(`{"field":123}`, "field")
+	f.Add("", "field")
+	f.Add(`{"field":"value"}`, "")
+
+	f.Fuzz(func(t *testing.T, input string, field string) {
+		// Should never panic on any input
+		_, _ = ParseToolInputString(input, field)
+	})
+}
+
+func FuzzManifestValidation(f *testing.F) {
+	// Seed corpus: valid and invalid manifest JSON fragments
+	// Note: validateManifest does not access the filesystem — the dir parameter
+	// is currently unused, so passing "." is safe.
+	f.Add([]byte(`{"id":"com.test.fuzz","name":"Fuzz","version":"1.0.0"}`))
+	f.Add([]byte(`{"id":"com.test.fuzz","name":"Fuzz","version":"1.0.0","runtime":"native"}`))
+	f.Add([]byte(`{"id":"","name":"Fuzz","version":"1.0.0"}`))
+	f.Add([]byte(`{"id":"com.test.fuzz","name":"","version":"1.0.0"}`))
+	f.Add([]byte(`{"id":"com.test.fuzz","name":"Fuzz","version":""}`))
+	f.Add([]byte(`{"id":"com.test.fuzz","name":"Fuzz","version":"not-semver"}`))
+	f.Add([]byte(`{"id":"com.test.fuzz","name":"Fuzz","version":"1.0"}`))
+	f.Add([]byte(`not json at all`))
+	f.Add([]byte(`{}`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// Parse as manifest and run validation — should never panic
+		var m PluginManifest
+		if err := json.Unmarshal(data, &m); err != nil {
+			return // invalid JSON, skip
+		}
+		_ = validateManifest(&m, ".")
+	})
+}

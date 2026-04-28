@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	log "xbot/logger"
@@ -52,6 +53,9 @@ func validateManifest(m *PluginManifest, dir string) error {
 	// Version is required and should be semver
 	if m.Version == "" {
 		return fmt.Errorf("plugin version is required")
+	}
+	if _, _, _, err := parseSemver(m.Version); err != nil {
+		return fmt.Errorf("plugin version %q is not valid semver: %w", m.Version, err)
 	}
 
 	// Runtime must be valid
@@ -258,6 +262,39 @@ func isValidVersion(v string) bool {
 		}
 	}
 	return hasDigit
+}
+
+// parseSemver parses a strict semver string "MAJOR.MINOR.PATCH" into its components.
+// Unlike isValidVersion which accepts loose formats (^1.0.0, >=, ~, *, 1.x), parseSemver
+// only accepts exact X.Y.Z with no prefixes, ranges, or prerelease suffixes.
+// Returns an error if the string is not valid strict semver.
+func parseSemver(v string) (major, minor, patch int, err error) {
+	parts := strings.SplitN(v, ".", 4)
+	if len(parts) != 3 {
+		return 0, 0, 0, fmt.Errorf("invalid semver %q: expected MAJOR.MINOR.PATCH", v)
+	}
+	major, err = strconv.Atoi(parts[0])
+	if err != nil || major < 0 {
+		return 0, 0, 0, fmt.Errorf("invalid semver major %q in %q", parts[0], v)
+	}
+	minor, err = strconv.Atoi(parts[1])
+	if err != nil || minor < 0 {
+		return 0, 0, 0, fmt.Errorf("invalid semver minor %q in %q", parts[1], v)
+	}
+	patch, err = strconv.Atoi(parts[2])
+	if err != nil || patch < 0 {
+		return 0, 0, 0, fmt.Errorf("invalid semver patch %q in %q", parts[2], v)
+	}
+	return major, minor, patch, nil
+}
+
+// ParseVersion parses the manifest's Version field as strict semver (MAJOR.MINOR.PATCH).
+// Returns an error if Version is empty or not a valid semver string.
+func (m PluginManifest) ParseVersion() (major, minor, patch int, err error) {
+	if m.Version == "" {
+		return 0, 0, 0, fmt.Errorf("plugin version is empty")
+	}
+	return parseSemver(m.Version)
 }
 
 // DefaultPluginDirs returns the standard plugin search paths.

@@ -117,6 +117,9 @@ func (t *SimplePluginTool) ExecuteWithContext(ctx *ToolCallContext, input string
 // and parameter definitions.
 func BuildToolDef(name, description string, params ...ToolParamDef) ToolDef {
 	tp := make([]llm.ToolParam, 0, len(params))
+	properties := make(map[string]any, len(params))
+	var required []string
+
 	for _, p := range params {
 		tp = append(tp, llm.ToolParam{
 			Name:        p.Name,
@@ -124,11 +127,31 @@ func BuildToolDef(name, description string, params ...ToolParamDef) ToolDef {
 			Description: p.Description,
 			Required:    p.Required,
 		})
+
+		prop := map[string]any{
+			"type":        p.Type,
+			"description": p.Description,
+		}
+		properties[p.Name] = prop
+
+		if p.Required {
+			required = append(required, p.Name)
+		}
 	}
+
+	schema := map[string]any{
+		"type":       "object",
+		"properties": properties,
+	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+
 	return ToolDef{
 		Name:        name,
 		Description: description,
 		Parameters:  tp,
+		InputSchema: schema,
 	}
 }
 

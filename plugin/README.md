@@ -143,7 +143,7 @@ Place the plugin directory in `~/.xbot/plugins/`:
 | Permission | Description |
 |-----------|-------------|
 | `tools.register` | Register new tools for LLM to use |
-| `tools.call` | Call other registered tools |
+| `tools.call` | Call other registered tools *(reserved for future use)* |
 | `hooks.subscribe` | Subscribe to lifecycle hooks |
 | `context.enrich` | Inject content into system prompt |
 | `storage.private` | Per-plugin isolated key-value storage |
@@ -612,6 +612,74 @@ pm.SetRetryInterval(10 * time.Second) // Custom scan interval
 - `maxRetries=0` means unlimited retries
 - Activation timeout is read from the manifest `timeout` field (default 30s)
 - Auto-stopped when `DeactivateAll` is called
+
+## ToolResultBuilder
+
+Fluent API for constructing `ToolResult` instances:
+
+```go
+// Successful result with metadata
+result := plugin.NewResultBuilder().
+    Content("hello world").
+    Metadata("format", "json").
+    Build()
+
+// Error result
+result := plugin.NewResultBuilder().
+    Error("invalid input: missing required field").
+    Build()
+```
+
+## SchemaBuilder
+
+Fluent API for building tool parameter schemas:
+
+```go
+params := plugin.NewSchemaBuilder().
+    AddStringParam("query", "Search query", true).
+    AddNumberParam("limit", "Max results", false).
+    AddBoolParam("verbose", "Verbose output", false).
+    AddArrayParam("tags", "Filter tags", false).
+    Build()
+```
+
+## Call Tracer
+
+Ring-buffered tool call audit trail with fixed memory footprint.
+
+```go
+// Create a tracer (100-entry ring buffer)
+tracer := plugin.NewCallTracer(100)
+
+// Attach to bridge
+bridge.SetCallTracer(tracer)
+
+// Query recent calls
+traces := tracer.Recent(10)          // newest 10 traces
+traces = tracer.ByPlugin("my-plugin") // filter by plugin
+tracer.Clear()                        // reset
+```
+
+Each `CallTrace` records: `PluginID`, `ToolName`, `StartTime`, `EndTime`, `Duration`, `InputLen`, `OutputLen`, `IsError`.
+
+Features:
+- Fixed-capacity ring buffer (O(1) write, no GC pressure)
+- Thread-safe (`sync.Mutex`)
+- Optional — zero overhead when not attached
+- Default capacity: 100 entries
+
+## Standard Errors
+
+Centralized error types for consistent error handling:
+
+| Error | Usage |
+|-------|-------|
+| `ErrPluginNotFound` | `errors.Is(err, plugin.ErrPluginNotFound)` |
+| `ErrPluginAlreadyRegistered` | `errors.Is(err, plugin.ErrPluginAlreadyRegistered)` |
+| `ErrPluginNotActive` | `errors.Is(err, plugin.ErrPluginNotActive)` |
+| `ErrPluginActivationFailed` | `errors.As(err, &e)` → `e.PluginID`, `e.Err` |
+| `ErrRateLimitExceeded` | `errors.As(err, &e)` → `e.PluginID`, `e.RetryAfter` |
+| `PermissionError` | `errors.As(err, &e)` → `e.PluginID`, `e.Permission`, `e.Action` |
 
 ## Architecture
 

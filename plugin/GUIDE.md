@@ -311,7 +311,7 @@ Plugins operate on a **least-privilege** model. You must declare every permissio
 | Permission | Allows | Used By |
 |-----------|--------|---------|
 | `tools.register` | Register new tools for the LLM | `ctx.RegisterTool()` |
-| `tools.call` | Call other registered tools | `ctx.CallTool()` |
+| `tools.call` | Call other registered tools | *(reserved for future use)* |
 | `hooks.subscribe` | Subscribe to lifecycle hooks | `ctx.OnPreToolUse()`, etc. |
 | `context.enrich` | Inject content into system prompt | `ctx.EnrichContext()` |
 | `storage.private` | Per-plugin isolated key-value storage | `ctx.Storage().Get/Set()` |

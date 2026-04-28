@@ -487,6 +487,7 @@ func (a *Agent) SpawnInteractiveSession(
 					Role:     roleName,
 					Instance: instance,
 					Content:  sb.String(),
+					Sid:      originSender,
 				})
 			}
 		}
@@ -520,6 +521,7 @@ func (a *Agent) SpawnInteractiveSession(
 							Instance: instance,
 							Content:  fmt.Sprintf("Panic: %v", r),
 							Elapsed:  time.Since(startTime),
+							Sid:      originSender,
 						})
 					}
 				}
@@ -549,6 +551,7 @@ func (a *Agent) SpawnInteractiveSession(
 					Instance: instance,
 					Content:  content,
 					Elapsed:  time.Since(startTime),
+					Sid:      originSender,
 				})
 			}
 

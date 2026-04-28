@@ -137,8 +137,8 @@ func (m *cliModel) renderReadyStatus() string {
 }
 
 // layoutSearch renders the search-mode layout: title bar, viewport, search bar,
-// input box, and toast.
-func (m *cliModel) layoutSearch(titleBar, input, toast string) string {
+// and input box.
+func (m *cliModel) layoutSearch(titleBar, input string) string {
 	var searchBar string
 	if m.searchEditing {
 		searchBar = m.styles.SearchBar.Render(m.searchTI.View())
@@ -146,17 +146,17 @@ func (m *cliModel) layoutSearch(titleBar, input, toast string) string {
 		searchBar = m.styles.SearchBar.Render(
 			fmt.Sprintf(m.locale.SearchNavFormat, m.searchQuery, m.searchIdx+1, len(m.searchResults)))
 	}
-	return fmt.Sprintf("%s\n%s\n%s\n%s%s",
-		titleBar, m.viewport.View(), searchBar, input, toast)
+	return fmt.Sprintf("%s\n%s\n%s\n%s",
+		titleBar, m.viewport.View(), searchBar, input)
 }
 
 // layoutAskUser renders the askuser panel layout: title bar, viewport,
-// scrollable ask panel with progress indicator, and toast.
-func (m *cliModel) layoutAskUser(titleBar, toast string) string {
+// scrollable ask panel with progress indicator.
+func (m *cliModel) layoutAskUser(titleBar string) string {
 	askRaw := m.viewAskUserPanel()
 	m.clampAskUserPanelScroll(askRaw)
 	askLines := strings.Split(askRaw, "\n")
-	fixedLines := 2 // titleBar + toast (no separate footer — hints are in-panel)
+	fixedLines := 2 // titleBar (no toast)
 	panelBorder := 2
 	viewportH := m.layoutViewportHeight()
 	askVisibleH := m.height - fixedLines - viewportH - panelBorder
@@ -180,13 +180,13 @@ func (m *cliModel) layoutAskUser(titleBar, toast string) string {
 		pct := (m.askPanelScrollY + askVisibleH) * 100 / totalAskLines
 		scrollHint = m.styles.PanelDesc.Render(fmt.Sprintf(" [%d%%] Ctrl+↑↓/PgUp/PgDn", pct))
 	}
-	return fmt.Sprintf("%s\n%s\n%s%s%s",
-		titleBar, m.viewport.View(), boxedAsk, scrollHint, toast)
+	return fmt.Sprintf("%s\n%s\n%s%s",
+		titleBar, m.viewport.View(), boxedAsk, scrollHint)
 }
 
 // layoutPanel renders the generic panel-mode layout: title bar, scrollable
-// panel content in a bordered box, panel footer, and toast.
-func (m *cliModel) layoutPanel(titleBar, toast string) string {
+// panel content in a bordered box, and panel footer.
+func (m *cliModel) layoutPanel(titleBar string) string {
 	panelFooter := m.renderFooter()
 	rawContent := m.viewPanel()
 	m.clampPanelScroll(rawContent)
@@ -202,14 +202,14 @@ func (m *cliModel) layoutPanel(titleBar, toast string) string {
 	visible := rawLines[m.panelScrollY:end]
 	panelContent := strings.Join(visible, "\n")
 	boxedContent := m.styles.PanelBox.Render(panelContent)
-	return fmt.Sprintf("%s\n%s%s%s",
-		titleBar, boxedContent, panelFooter, toast)
+	return fmt.Sprintf("%s\n%s%s",
+		titleBar, boxedContent, panelFooter)
 }
 
 // layoutMain renders the primary chat layout: title bar, viewport, status bar
-// (with hints for temp status, new content, background tasks, agents, and queue),
-// optional footer/todo bar, input box, and toast.
-func (m *cliModel) layoutMain(titleBar, input, toast, completionsHint string) string {
+// (with hints for temp status, new content), optional todo bar, footer (shortcuts),
+// input box, and info bar below input.
+func (m *cliModel) layoutMain(titleBar, input, completionsHint string) string {
 	// Render status bar
 	var status string
 	if m.typing || m.progress != nil {
@@ -252,13 +252,10 @@ func (m *cliModel) layoutMain(titleBar, input, toast, completionsHint string) st
 	if footer != "" {
 		lines = append(lines, footer)
 	}
+	lines = append(lines, input)
 	infoBar := m.renderInfoBar()
 	if infoBar != "" {
 		lines = append(lines, infoBar)
-	}
-	lines = append(lines, input)
-	if toast != "" {
-		lines = append(lines, toast)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -295,19 +292,18 @@ func (m *cliModel) View() tea.View {
 	titleBar := m.renderTitleBar()
 	borderColor, completionsHint := m.renderCompletionsHint(m.textarea.Value())
 	input := m.renderInputArea(borderColor)
-	toast := m.renderToast()
 
 	// Layout selection
 	var content string
 	switch {
 	case m.searchMode:
-		content = m.layoutSearch(titleBar, input, toast)
+		content = m.layoutSearch(titleBar, input)
 	case m.panelMode == "askuser":
-		content = m.layoutAskUser(titleBar, toast)
+		content = m.layoutAskUser(titleBar)
 	case m.panelMode != "":
-		content = m.layoutPanel(titleBar, toast)
+		content = m.layoutPanel(titleBar)
 	default:
-		content = m.layoutMain(titleBar, input, toast, completionsHint)
+		content = m.layoutMain(titleBar, input, completionsHint)
 	}
 
 	v := tea.NewView(content)
@@ -761,49 +757,6 @@ func padBetween(left, right string, width int) string {
 		return left + " " + right
 	}
 	return left + strings.Repeat(" ", width-w) + right
-}
-
-// renderToast 渲染底部 Toast 通知堆叠（§16）。
-// 支持多条 toast 排队显示，最多同时渲染 3 条，3 秒轮换。
-// 浮在界面最底部，使用 Surface 背景与主题保持一致。
-func (m *cliModel) renderToast() string {
-	if len(m.toasts) == 0 {
-		return ""
-	}
-
-	// 最多显示 3 条
-	showCount := len(m.toasts)
-	if showCount > 3 {
-		showCount = 3
-	}
-
-	var lines []string
-	for i := 0; i < showCount; i++ {
-		item := m.toasts[i]
-
-		iconSty := m.styles.ToastIcon
-		switch item.icon {
-		case "✗", "⚠":
-			iconSty = iconSty.Foreground(lipgloss.Color(currentTheme.Error))
-		case "ℹ":
-			iconSty = iconSty.Foreground(lipgloss.Color(currentTheme.Info))
-		}
-
-		// 越靠后越透明（营造层级感）
-		faintFactor := i // 0=最新最亮, 1=稍暗, 2=最暗
-		if faintFactor > 0 {
-			iconSty = iconSty.Faint(true)
-		}
-		textSty := m.styles.ToastText
-		if faintFactor > 0 {
-			textSty = textSty.Faint(true)
-		}
-
-		toastContent := iconSty.Render(" "+item.icon+" ") + " " + textSty.Render(item.text)
-		lines = append(lines, m.styles.ToastBg.Render(toastContent))
-	}
-
-	return "\n" + strings.Join(lines, "\n")
 }
 
 // renderProgressStatus renders a compact one-line status for the status bar.

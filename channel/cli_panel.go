@@ -81,15 +81,21 @@ func (m *cliModel) openSettingsPanel(schema []SettingDefinition, values map[stri
 }
 
 // openSetupPanel opens the first-run setup wizard as a settings-style panel.
-// Unlike /settings, the setup wizard always starts from the schema's recommended
-// DefaultValue — it does NOT pre-fill from GetCurrentValues (which may contain
-// environment variable overrides like SANDBOX_MODE=docker). This ensures first-time
-// users see the recommended defaults, not values inherited from their environment.
+// Pre-fills from GetCurrentValues (respects existing config), falls back to
+// DefaultValue for keys not yet configured. This prevents misleading the user
+// with "flat" when their config already says "letta".
 func (m *cliModel) openSetupPanel() {
 	schema := m.locale.SetupSchema
 	values := make(map[string]string)
+	// Start from current config so existing choices are preserved.
+	if m.channel != nil && m.channel.config.GetCurrentValues != nil {
+		for k, v := range m.channel.config.GetCurrentValues() {
+			values[k] = v
+		}
+	}
+	// Fill gaps with schema defaults (e.g. keys not yet in config).
 	for _, def := range schema {
-		if def.DefaultValue != "" {
+		if _, ok := values[def.Key]; !ok && def.DefaultValue != "" {
 			values[def.Key] = def.DefaultValue
 		}
 	}

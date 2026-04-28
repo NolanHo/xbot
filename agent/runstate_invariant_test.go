@@ -93,6 +93,26 @@ func TestValidateInvariants(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "valid after compress with restoredFromDB",
+			state: func() *runState {
+				msgs := []llm.ChatMessage{
+					{Role: "system", Content: "sys"},
+					{Role: "user", Content: "compressed"},
+					{Role: "assistant", Content: "summary"},
+				}
+				// Simulate: session restored from DB (promptTokens=500) → LLM call → compress
+				tt := NewTokenTracker(500, 200)
+				tt.RecordLLMCall(800, 150)
+				tt.ResetAfterCompress()
+				return &runState{
+					messages:     msgs,
+					persistence:  NewPersistenceBridge(nil, 0),
+					tokenTracker: tt,
+				}
+			}(),
+			wantErr: false,
+		},
+		{
 			name: "valid empty state",
 			state: &runState{
 				messages:     nil,

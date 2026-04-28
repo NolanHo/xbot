@@ -34,6 +34,7 @@ func (t *TokenTracker) ResetAfterCompress() {
 	t.promptTokens = 0
 	t.completionTokens = 0
 	t.hadLLMCall = false
+	t.restoredFromDB = false
 }
 
 // MarkRestoredFromDB marks that token counts were restored from DB/session.

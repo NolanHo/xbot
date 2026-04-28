@@ -2151,7 +2151,7 @@ func (a *Agent) bgNotifyLoop() {
 }
 
 // processBgNotification handles a background task completion when no Run() is active.
-// Injects the task result as a user message via injectInbound, triggering the standard
+// Injects the task result as a user message via injectBgUserMessage, triggering the standard
 // processMessage → Assemble → Run pipeline. This matches Claude Code's behavior:
 // bg task completion = environment notification = user message to the LLM.
 func (a *Agent) processBgNotification(task *tools.BackgroundTask) {
@@ -2192,8 +2192,7 @@ func (a *Agent) processBgNotification(task *tools.BackgroundTask) {
 		"chat_id": chatID,
 	}).Info("Bg task notification: injecting as user message")
 
-	a.injectCLIUserMessage(channelName, chatID, content)
-	a.injectInbound(channelName, chatID, "user", content)
+	a.injectBgUserMessage(channelName, chatID, task.SenderID(), content)
 }
 
 // processSubAgentBgNotification handles a bg subagent notification when no Run() is active.
@@ -2225,9 +2224,16 @@ func (a *Agent) processSubAgentBgNotification(n *tools.SubAgentBgNotify) {
 		"channel":  channelName,
 	}).Info("Bg subagent notification: injecting as user message")
 
-	a.injectCLIUserMessage(channelName, chatID, content)
+	a.injectBgUserMessage(channelName, chatID, n.SenderID(), content)
+}
 
-	a.injectInbound(channelName, chatID, "user", content)
+// injectBgUserMessage is the unified entry point for injecting background notification
+// content as a user message. It reads senderID from the notification to preserve
+// correct sender context (workspace, sandbox, memory, LLM config).
+// All bg notification handlers MUST use this function — never call injectInbound directly.
+func (a *Agent) injectBgUserMessage(channelName, chatID, senderID, content string) {
+	a.injectCLIUserMessage(channelName, chatID, content)
+	a.injectInbound(channelName, chatID, senderID, content)
 }
 
 // buildBgNotificationRunConfig is no longer needed — idle bg notifications

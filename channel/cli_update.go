@@ -418,7 +418,8 @@ func (m *cliModel) layoutViewportHeight() int {
 	if len(m.todos) > 0 {
 		todoLines = 1 + len(m.todos)
 	}
-	// Info bar: 1 line when bg tasks/agents/queue are active, 0 otherwise
+	// Info bar: 1 line when bg tasks/agents/queue are active (now below input,
+	// but still reserves space to prevent viewport overflow).
 	infoBarLines := 0
 	if m.bgTaskCount > 0 || m.agentCount > 0 || len(m.messageQueue) > 0 {
 		infoBarLines = 1

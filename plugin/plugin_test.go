@@ -5265,3 +5265,272 @@ func TestPluginManager_UninstallPlugin_DeactivateFails(t *testing.T) {
 		t.Error("plugin should be removed from manager after uninstall")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ExportConfig / ImportConfig Tests
+// ---------------------------------------------------------------------------
+
+func TestPluginManager_ExportConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	// Register a plugin and activate it
+	p := &mockPlugin{manifest: testManifest()}
+	ctx := context.Background()
+	if err := pm.RegisterAndActivate(ctx, p); err != nil {
+		t.Fatalf("RegisterAndActivate failed: %v", err)
+	}
+
+	// Export
+	data, err := pm.ExportConfig()
+	if err != nil {
+		t.Fatalf("ExportConfig failed: %v", err)
+	}
+
+	// Parse the export
+	var export ConfigExport
+	if err := json.Unmarshal(data, &export); err != nil {
+		t.Fatalf("Failed to parse export: %v", err)
+	}
+
+	// Verify
+	if export.Version != ConfigExportVersion {
+		t.Errorf("Version = %d, want %d", export.Version, ConfigExportVersion)
+	}
+	if export.ExportedAt == "" {
+		t.Error("ExportedAt is empty")
+	}
+	if len(export.Plugins) != 1 {
+		t.Fatalf("Plugins count = %d, want 1", len(export.Plugins))
+	}
+	pce := export.Plugins[0]
+	if pce.ID != "com.test.example" {
+		t.Errorf("Plugin ID = %q, want %q", pce.ID, "com.test.example")
+	}
+	if pce.Name != "Test Plugin" {
+		t.Errorf("Plugin Name = %q, want %q", pce.Name, "Test Plugin")
+	}
+	if pce.Version != "1.0.0" {
+		t.Errorf("Plugin Version = %q, want %q", pce.Version, "1.0.0")
+	}
+	if pce.State != StateActive {
+		t.Errorf("Plugin State = %q, want %q", pce.State, StateActive)
+	}
+	if pce.Manifest == nil {
+		t.Error("Manifest is nil")
+	}
+}
+
+func TestPluginManager_ExportConfig_EmptyManager(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	data, err := pm.ExportConfig()
+	if err != nil {
+		t.Fatalf("ExportConfig on empty manager failed: %v", err)
+	}
+
+	var export ConfigExport
+	if err := json.Unmarshal(data, &export); err != nil {
+		t.Fatalf("Failed to parse export: %v", err)
+	}
+
+	if len(export.Plugins) != 0 {
+		t.Errorf("Plugins count = %d, want 0", len(export.Plugins))
+	}
+	if export.Version != ConfigExportVersion {
+		t.Errorf("Version = %d, want %d", export.Version, ConfigExportVersion)
+	}
+}
+
+func TestPluginManager_ExportConfig_WithDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	pm.DisablePlugins([]string{"com.test.disabled", "com.test.disabled2"})
+
+	data, err := pm.ExportConfig()
+	if err != nil {
+		t.Fatalf("ExportConfig failed: %v", err)
+	}
+
+	var export ConfigExport
+	if err := json.Unmarshal(data, &export); err != nil {
+		t.Fatalf("Failed to parse export: %v", err)
+	}
+
+	if len(export.Disabled) != 2 {
+		t.Errorf("Disabled count = %d, want 2", len(export.Disabled))
+	}
+
+	disabledSet := make(map[string]bool)
+	for _, id := range export.Disabled {
+		disabledSet[id] = true
+	}
+	if !disabledSet["com.test.disabled"] {
+		t.Error("com.test.disabled not in disabled list")
+	}
+	if !disabledSet["com.test.disabled2"] {
+		t.Error("com.test.disabled2 not in disabled list")
+	}
+}
+
+func TestPluginManager_ImportConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	// Register a plugin
+	p := &mockPlugin{manifest: testManifest()}
+	ctx := context.Background()
+	if err := pm.RegisterAndActivate(ctx, p); err != nil {
+		t.Fatalf("RegisterAndActivate failed: %v", err)
+	}
+
+	// Import with config
+	importData := map[string]any{
+		"version":    ConfigExportVersion,
+		"exportedAt": "2026-01-01T00:00:00Z",
+		"disabled":   []string{"com.test.disabled"},
+		"plugins": []map[string]any{
+			{
+				"id":      "com.test.example",
+				"name":    "Test Plugin",
+				"version": "1.0.0",
+				"state":   "active",
+				"config": map[string]any{
+					"key1": "value1",
+					"key2": float64(42),
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("Marshal import data failed: %v", err)
+	}
+
+	if err := pm.ImportConfig(data); err != nil {
+		t.Fatalf("ImportConfig failed: %v", err)
+	}
+
+	// Verify config was saved
+	config, err := pm.configStore.Load("com.test.example")
+	if err != nil {
+		t.Fatalf("Load config failed: %v", err)
+	}
+	if config["key1"] != "value1" {
+		t.Errorf("config[key1] = %v, want %q", config["key1"], "value1")
+	}
+	if config["key2"] != float64(42) {
+		t.Errorf("config[key2] = %v, want %v", config["key2"], float64(42))
+	}
+
+	// Verify disabled was merged
+	if !pm.disabled["com.test.disabled"] {
+		t.Error("com.test.disabled should be in disabled set")
+	}
+}
+
+func TestPluginManager_ImportConfig_EmptyData(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	if err := pm.ImportConfig(nil); err == nil {
+		t.Error("Expected error for nil data")
+	}
+
+	if err := pm.ImportConfig([]byte{}); err == nil {
+		t.Error("Expected error for empty data")
+	}
+}
+
+func TestPluginManager_ImportConfig_InvalidJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	if err := pm.ImportConfig([]byte("not json")); err == nil {
+		t.Error("Expected error for invalid JSON")
+	}
+}
+
+func TestPluginManager_ImportConfig_FutureVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	data := []byte(`{"version":999,"exportedAt":"","disabled":null,"plugins":null}`)
+	if err := pm.ImportConfig(data); err == nil {
+		t.Error("Expected error for future version")
+	}
+}
+
+func TestPluginManager_ImportConfig_UnknownPlugin(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	// Import referencing a plugin that doesn't exist — should succeed (skip with warning)
+	importData := map[string]any{
+		"version":    ConfigExportVersion,
+		"exportedAt": "2026-01-01T00:00:00Z",
+		"plugins": []map[string]any{
+			{
+				"id":      "com.test.nonexistent",
+				"name":    "Nonexistent",
+				"version": "1.0.0",
+				"state":   "active",
+				"config":  map[string]any{"key": "value"},
+			},
+		},
+	}
+	data, _ := json.Marshal(importData)
+
+	if err := pm.ImportConfig(data); err != nil {
+		t.Fatalf("ImportConfig should succeed with unknown plugins (skip), got: %v", err)
+	}
+}
+
+func TestPluginManager_ExportImport_RoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	pm := NewPluginManager(tmpDir)
+
+	// Setup: register plugin + set config + disable a plugin
+	p := &mockPlugin{manifest: testManifest()}
+	ctx := context.Background()
+	if err := pm.RegisterAndActivate(ctx, p); err != nil {
+		t.Fatalf("RegisterAndActivate failed: %v", err)
+	}
+	pm.configStore.Save("com.test.example", map[string]any{"setting": "hello"})
+	pm.DisablePlugins([]string{"com.test.other"})
+
+	// Export
+	exportData, err := pm.ExportConfig()
+	if err != nil {
+		t.Fatalf("ExportConfig failed: %v", err)
+	}
+
+	// Create a new manager and import
+	tmpDir2 := t.TempDir()
+	pm2 := NewPluginManager(tmpDir2)
+	p2 := &mockPlugin{manifest: testManifest()}
+	if err := pm2.RegisterAndActivate(ctx, p2); err != nil {
+		t.Fatalf("RegisterAndActivate on pm2 failed: %v", err)
+	}
+
+	if err := pm2.ImportConfig(exportData); err != nil {
+		t.Fatalf("ImportConfig failed: %v", err)
+	}
+
+	// Verify config was restored
+	config, err := pm2.configStore.Load("com.test.example")
+	if err != nil {
+		t.Fatalf("Load config failed: %v", err)
+	}
+	if config["setting"] != "hello" {
+		t.Errorf("config[setting] = %v, want %q", config["setting"], "hello")
+	}
+
+	// Verify disabled was merged
+	if !pm2.disabled["com.test.other"] {
+		t.Error("com.test.other should be in disabled set")
+	}
+}

@@ -5606,3 +5606,57 @@ func TestPluginManager_ExportImport_RoundTrip(t *testing.T) {
 		t.Error("com.test.other should be in disabled set")
 	}
 }
+
+func TestPluginContext_SetValue_GetValue(t *testing.T) {
+	m := testManifest()
+	pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil, nil)
+
+	// Set and retrieve a value.
+	pc.SetValue("user", "alice")
+	val, ok := pc.GetValue("user")
+	if !ok {
+		t.Fatal("expected ok=true for existing key")
+	}
+	if val != "alice" {
+		t.Fatalf("expected value %q, got %q", "alice", val)
+	}
+
+	// Different type.
+	pc.SetValue("count", 42)
+	val, ok = pc.GetValue("count")
+	if !ok {
+		t.Fatal("expected ok=true for count")
+	}
+	if val.(int) != 42 {
+		t.Fatalf("expected 42, got %v", val)
+	}
+}
+
+func TestPluginContext_SetValue_Overwrite(t *testing.T) {
+	m := testManifest()
+	pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil, nil)
+
+	pc.SetValue("role", "viewer")
+	pc.SetValue("role", "admin")
+
+	val, ok := pc.GetValue("role")
+	if !ok {
+		t.Fatal("expected ok=true after overwrite")
+	}
+	if val != "admin" {
+		t.Fatalf("expected %q after overwrite, got %q", "admin", val)
+	}
+}
+
+func TestPluginContext_GetValue_NotFound(t *testing.T) {
+	m := testManifest()
+	pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil, nil)
+
+	val, ok := pc.GetValue("nonexistent")
+	if ok {
+		t.Fatal("expected ok=false for missing key")
+	}
+	if val != nil {
+		t.Fatalf("expected nil value for missing key, got %v", val)
+	}
+}

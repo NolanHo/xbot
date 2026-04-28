@@ -144,6 +144,19 @@ type PluginContext interface {
 	// Requires "hooks.subscribe" permission.
 	OnPluginError(callback PluginErrorCallback) error
 
+	// --- Context Values ---
+
+	// SetValue stores an arbitrary value in the plugin context.
+	// This enables cross-handler data sharing within a plugin.
+	// No permission required — this is in-memory session-scoped state, not persisted.
+	// Data is lost when the plugin deactivates.
+	SetValue(key string, value any)
+
+	// GetValue retrieves a value from the plugin context.
+	// Returns (nil, false) if the key has not been set.
+	// No permission required.
+	GetValue(key string) (any, bool)
+
 	// --- Resource Tracking ---
 
 	// ToolCallCount returns the cumulative number of tool executions for this plugin.
@@ -226,6 +239,9 @@ type pluginContextImpl struct {
 
 	errorCallback PluginErrorCallback
 
+	// Context values — session-scoped in-memory key-value store
+	contextValues map[string]any
+
 	// Runtime resource tracking (atomic for lock-free reads)
 	toolCallCount int64
 	hookCallCount int64
@@ -255,6 +271,7 @@ func newPluginContext(manifest *PluginManifest, storage StorageAccessor, logger 
 		contextEnrichers: make([]enricherRegistration, 0),
 		bus:              bus,
 		configStore:      configStore,
+		contextValues:    make(map[string]any),
 	}
 }
 
@@ -577,6 +594,22 @@ func (pc *pluginContextImpl) GetErrorCallback() PluginErrorCallback {
 	pc.mu.RLock()
 	defer pc.mu.RUnlock()
 	return pc.errorCallback
+}
+
+// SetValue stores an arbitrary value in the plugin context.
+// This enables cross-handler data sharing within a plugin.
+func (pc *pluginContextImpl) SetValue(key string, value any) {
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+	pc.contextValues[key] = value
+}
+
+// GetValue retrieves a value from the plugin context.
+func (pc *pluginContextImpl) GetValue(key string) (any, bool) {
+	pc.mu.RLock()
+	defer pc.mu.RUnlock()
+	v, ok := pc.contextValues[key]
+	return v, ok
 }
 
 // ---------------------------------------------------------------------------

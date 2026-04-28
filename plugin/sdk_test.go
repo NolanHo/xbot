@@ -372,6 +372,8 @@ func (c *sdkMockContext) Subscribe(topic string, handler PluginEventHandler) err
 func (c *sdkMockContext) Publish(topic string, data any) error                      { return nil }
 func (c *sdkMockContext) ToolCallCount() int64                                      { return 0 }
 func (c *sdkMockContext) HookCallCount() int64                                      { return 0 }
+func (c *sdkMockContext) SetValue(key string, value any)                            {}
+func (c *sdkMockContext) GetValue(key string) (any, bool)                           { return nil, false }
 
 type sdkMockLogger struct {
 	entries []sdkLogEntry

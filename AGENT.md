@@ -58,6 +58,11 @@
 - **SubAgent remote mode: tick chain breakage** — `tickCmd()` injection must be unconditional (not gated on `!m.fastTickActive`) in splashDoneMsg, PhaseDone return, and history reload paths. Conditional injection causes chain to break during session switches.
 - **SubAgent session view: viewport freeze on return** — when main session's turn ended while viewing agent session, PhaseDone is detected on return but assistant reply is missing. Tick handler with `busy=false` must check `!m.renderCacheValid` as fallback.
 - **SubAgent CWD inheritance**: `parent_cwd` metadata must fallback to `parentCtx.WorkingDir` when `parentCtx.CurrentDir` is empty (parent never Cd'd). `buildParentToolContext` must also fallback to `workspaceRoot`. Otherwise SubAgent starts in `a.workDir` (config value) instead of the parent's actual working directory.
+- **`wireSubAgentCLIProgress` must be called for ALL sessions (foreground AND background).** Background sessions gated by `!background` have no live progress when viewed via Ctrl+T panel. ChatID-based filtering in `handleProgressMsg` ensures events route to the correct session.
+- **CreateChat tool must set `background=true` in metadata** before `SpawnInteractive`. Without it, CreateChat blocks the parent agent's turn until the SubAgent finishes.
+- **Progress panel cursor overflow**: when typewriter cursor `▋` would overflow the line width, render it on a separate line with placeholder (guide-only when hidden) to prevent height jumping during blink.
+- **Progress panel tool lines**: use `toolLine()` helper (lipgloss.Width-based) instead of `len()` for width calculation — byte length ≠ visual width for styled/unicode content.
+- **SubAgent tree description**: skip description when `descW <= 0` instead of forcing `descW >= 10` minimum — the old minimum caused overflow on narrow terminals.
 - **Group chat members must be pre-spawned**: `CreateChat(type="group")` must auto-spawn each member agent and register AgentChannel in Dispatcher. Otherwise `@mentions` in SendMessage fail with "unknown channel: agent:role/instance".
 
 ### Hooks System

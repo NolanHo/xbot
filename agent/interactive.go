@@ -369,10 +369,10 @@ func (a *Agent) SpawnInteractiveSession(
 		log.Ctx(ctx).WithError(err).Warn("Failed to eager-save interactive agent user message")
 	}
 
-	// Wire CLI progress + stream callbacks (shared with one-shot SubAgents)
-	if !background {
-		a.wireSubAgentCLIProgress(key, originChatID, &cfg)
-	}
+	// Wire CLI progress + stream callbacks for ALL sessions (foreground and background).
+	// ChatID-based filtering in handleProgressMsg ensures events route to the correct session view.
+	// Without this, background sessions have no live progress when viewed via Ctrl+T panel.
+	a.wireSubAgentCLIProgress(key, originChatID, &cfg)
 
 	// SubAgent 进度上报：优先使用父 Agent 注入的回调（避免并发 SubAgent 互相覆盖 patch），
 	// 否则 fallback 到直接发送消息（非并行场景）。

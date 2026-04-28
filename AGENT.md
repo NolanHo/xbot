@@ -72,6 +72,43 @@
 - `signal.Notify(sigCh, syscall.SIGTSTP)` doesn't compile on Windows — use build-tagged files.
 - PowerShell env output is newline-delimited, not null-delimited.
 
+## Development Principles
+
+### Always Prefer Explicit
+
+**核心原则：永远优先使用显式 API，避免隐式假设。**
+
+本项目遵循 "always prefer explicit" 开发原则。大量 bug 源于隐式设计——调用者无法从 API 签名推断出所有必要参数或行为。
+
+#### 具体实践
+
+1. **避免直接使用结构体作为公共 API 参数**
+   - ❌ `func NewFoo(cfg FooConfig) *Foo` — 调用者可能遗漏 `FooConfig` 中的关键字段
+   - ✅ `func NewFoo(opts ...FooOption) *Foo` — 使用私有结构体 + 构造函数 + 显式 Option 模式
+   - ✅ `func NewFoo(required string, optional ...string) *Foo` — 必填参数显式列出
+
+2. **假设调用者只看到你的 API 签名**
+   - 调用者没有义务阅读实现细节
+   - API 签名应自解释：参数名、类型、顺序应清晰表达意图
+   - 使用 `// WithXxx` 风格的 Option 函数提供可选配置
+
+3. **宁可冗长，不要隐晦**
+   - 5 个显式参数优于 1 个包含 20 个字段的结构体
+   - 如果必须用结构体，确保必填字段在构造函数中强制提供
+   - 使用 `Must` 前缀函数（如 `MustParse`）在编译期捕获错误
+
+4. **文档即合同**
+   - 每个公共函数/类型必须有 godoc 注释
+   - 注释应说明 "什么" 和 "为什么"，而不仅仅是 "如何"
+   - 参数约束（如 "must not be empty"）应在注释中明确说明
+
+#### 为什么重要
+
+- 减少运行时 panic 和零值 bug
+- 提高代码可读性和可维护性
+- 让新贡献者能快速理解 API 用法
+- 编译器帮你捕获更多错误
+
 ## Project Context
 
 `ProjectContextMiddleware` auto-loads this file into system prompt. After code changes, update relevant Knowledge Files to keep documentation in sync.

@@ -31,6 +31,10 @@ type PluginContext interface {
 	// Requires "tools.register" permission in manifest.
 	RegisterTool(tool PluginTool) error
 
+	// RegisterTools registers multiple tools at once.
+	// Returns the first error encountered.
+	RegisterTools(tools ...PluginTool) error
+
 	// UseMiddleware registers a plugin middleware.
 	// Middleware is called for ALL tool executions from this plugin.
 	// Requires "tools.register" permission.
@@ -275,6 +279,15 @@ func (pc *pluginContextImpl) RegisterTool(tool PluginTool) error {
 	defer pc.mu.Unlock()
 	pc.tools = append(pc.tools, tool)
 	pc.logger.Info("Tool registered", Field{Key: "tool", Value: tool.Definition().Name})
+	return nil
+}
+
+func (pc *pluginContextImpl) RegisterTools(tools ...PluginTool) error {
+	for _, tool := range tools {
+		if err := pc.RegisterTool(tool); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

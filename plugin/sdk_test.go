@@ -340,6 +340,7 @@ func (p *sdkTestPlugin) Deactivate(ctx PluginContext) error { return nil }
 type sdkMockContext struct{}
 
 func (c *sdkMockContext) RegisterTool(tool PluginTool) error                      { return nil }
+func (c *sdkMockContext) RegisterTools(tools ...PluginTool) error                 { return nil }
 func (c *sdkMockContext) UseMiddleware(middleware PluginMiddleware) error         { return nil }
 func (c *sdkMockContext) OnPreToolUse(matcher string, handler HookHandler) error  { return nil }
 func (c *sdkMockContext) OnPostToolUse(matcher string, handler HookHandler) error { return nil }

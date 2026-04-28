@@ -217,6 +217,78 @@ func TestPluginContext_RegisterTool_NoPermission(t *testing.T) {
 	}
 }
 
+func TestPluginContext_RegisterTools(t *testing.T) {
+	m := testManifest()
+	storage := &noopStorage{}
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
+
+	tool1 := &SimplePluginTool{
+		Def: ToolDef{Name: "tool_a", Description: "first tool"},
+	}
+	tool2 := &SimplePluginTool{
+		Def: ToolDef{Name: "tool_b", Description: "second tool"},
+	}
+
+	err := pc.RegisterTools(tool1, tool2)
+	if err != nil {
+		t.Fatalf("RegisterTools failed: %v", err)
+	}
+
+	tools := pc.GetTools()
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(tools))
+	}
+	if tools[0].Definition().Name != "tool_a" {
+		t.Errorf("first tool name mismatch: got %q", tools[0].Definition().Name)
+	}
+	if tools[1].Definition().Name != "tool_b" {
+		t.Errorf("second tool name mismatch: got %q", tools[1].Definition().Name)
+	}
+}
+
+func TestPluginContext_RegisterTools_PartialFailure(t *testing.T) {
+	m := testManifest()
+	storage := &noopStorage{}
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
+
+	tool1 := &SimplePluginTool{
+		Def: ToolDef{Name: "tool_a", Description: "first tool"},
+	}
+
+	// Register tool1 successfully
+	err := pc.RegisterTools(tool1)
+	if err != nil {
+		t.Fatalf("RegisterTools (first call) failed: %v", err)
+	}
+
+	// Now revoke permission and try to register more
+	m2 := testManifest()
+	m2.Permissions = []string{"hooks.subscribe"} // no tools.register
+	pc2 := newPluginContext(&m2, storage, newPluginLogger(m2.ID), nil, nil)
+
+	tool2 := &SimplePluginTool{
+		Def: ToolDef{Name: "tool_b", Description: "second tool"},
+	}
+	tool3 := &SimplePluginTool{
+		Def: ToolDef{Name: "tool_c", Description: "third tool"},
+	}
+
+	// Should fail immediately on first tool (no permission), tool3 never attempted
+	err = pc2.RegisterTools(tool2, tool3)
+	if err == nil {
+		t.Fatal("expected permission error")
+	}
+	if _, ok := err.(*PermissionError); !ok {
+		t.Errorf("expected PermissionError, got %T", err)
+	}
+
+	// pc2 should have 0 tools registered (failed before any could be added)
+	tools := pc2.GetTools()
+	if len(tools) != 0 {
+		t.Errorf("expected 0 tools on failed pc2, got %d", len(tools))
+	}
+}
+
 func TestPluginContext_RegisterHook(t *testing.T) {
 	m := testManifest()
 	storage := &noopStorage{}

@@ -27,6 +27,8 @@ const (
 	PermBusRead = "bus.read"
 	// PermBusWrite grants permission to publish to the event bus.
 	PermBusWrite = "bus.write"
+	// PermBusPlugin grants permission to use the plugin-to-plugin event bus.
+	PermBusPlugin = "bus.plugin"
 )
 
 // allPermissions is the set of all recognized permission strings.
@@ -40,6 +42,7 @@ var allPermissions = map[string]bool{
 	PermNetworkOutbound: true,
 	PermBusRead:         true,
 	PermBusWrite:        true,
+	PermBusPlugin:       true,
 }
 
 // IsValidPermission returns true if the given string is a known permission.

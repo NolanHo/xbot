@@ -36,6 +36,7 @@ type PluginManager struct {
 
 	// Factory for creating plugin runtimes
 	runtimeFactory RuntimeFactory
+	bus            *PluginEventBus
 }
 
 // RuntimeFactory creates Plugin instances for different runtime types.
@@ -49,12 +50,18 @@ func NewPluginManager(xbotHome string) *PluginManager {
 		entries:  make(map[string]*PluginEntry),
 		disabled: make(map[string]bool),
 		xbotHome: xbotHome,
+		bus:      NewPluginEventBus(),
 	}
 }
 
 // SetRuntimeFactory sets the runtime factory for creating plugin instances.
 func (pm *PluginManager) SetRuntimeFactory(factory RuntimeFactory) {
 	pm.runtimeFactory = factory
+}
+
+// Bus returns the plugin event bus.
+func (pm *PluginManager) Bus() *PluginEventBus {
+	return pm.bus
 }
 
 // AddSearchDirs adds additional directories to scan for plugins.
@@ -115,7 +122,7 @@ func (pm *PluginManager) Discover(ctx context.Context) (int, error) {
 		}
 
 		// Create PluginContext
-		entry.Context = newPluginContext(m, storage, newPluginLogger(m.ID))
+		entry.Context = newPluginContext(m, storage, newPluginLogger(m.ID), pm.bus)
 
 		// Create runtime instance
 		if pm.runtimeFactory != nil {
@@ -336,7 +343,7 @@ func (pm *PluginManager) Register(p Plugin) error {
 	entry := &PluginEntry{
 		Manifest: &m,
 		Plugin:   p,
-		Context:  newPluginContext(&m, storage, newPluginLogger(m.ID)),
+		Context:  newPluginContext(&m, storage, newPluginLogger(m.ID), pm.bus),
 		State:    StateDiscovered,
 		Dir:      pluginDir,
 	}
@@ -377,6 +384,96 @@ func (pm *PluginManager) IsPluginActive(id string) bool {
 	entry.stateMu.Lock()
 	defer entry.stateMu.Unlock()
 	return entry.State == StateActive
+}
+
+// ---------------------------------------------------------------------------
+// Hot Reload
+// ---------------------------------------------------------------------------
+
+// Reload unloads and reloads a single plugin by ID.
+// The plugin's directory is re-scanned (not a full Discover).
+// The manager's write lock is held for the entire operation.
+func (pm *PluginManager) Reload(ctx context.Context, pluginID string) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	entry, ok := pm.entries[pluginID]
+	if !ok {
+		return fmt.Errorf("plugin %s not found", pluginID)
+	}
+
+	// Deactivate if active
+	if entry.State == StateActive {
+		entry.State = StateDeactivating
+		if entry.Plugin != nil {
+			_ = entry.Plugin.Deactivate(entry.Context)
+		}
+		entry.State = StateInactive
+	}
+
+	// Delete old entry
+	delete(pm.entries, pluginID)
+
+	// Re-scan only this plugin's directory
+	dirs := DefaultPluginDirs(pm.xbotHome)
+	dirs = append(dirs, pm.extraDirs...)
+	pluginDir := pm.findPluginDir(dirs, pluginID)
+
+	m, err := LoadManifest(pluginDir)
+	if err != nil {
+		return fmt.Errorf("reload %s: failed to load manifest: %w", pluginID, err)
+	}
+
+	storage, err2 := NewFileStorage(pluginDir)
+	if err2 != nil {
+		log.WithField("plugin", m.ID).Warn("Failed to create storage on reload: ", err2)
+		storage = &noopStorage{}
+	}
+
+	newEntry := &PluginEntry{
+		Manifest: m,
+		State:    StateDiscovered,
+		Dir:      pluginDir,
+		Context:  newPluginContext(m, storage, newPluginLogger(m.ID), pm.bus),
+	}
+
+	if pm.runtimeFactory != nil {
+		plugin, err3 := pm.runtimeFactory.Create(m, pluginDir)
+		if err3 != nil {
+			log.WithField("plugin", m.ID).Warn("Failed to create runtime on reload: ", err3)
+			newEntry.State = StateError
+			pm.entries[m.ID] = newEntry
+			return fmt.Errorf("reload %s: failed to create runtime: %w", m.ID, err3)
+		}
+		newEntry.Plugin = plugin
+	}
+
+	pm.entries[m.ID] = newEntry
+
+	// Activate if has onStart event (activate only touches entry.stateMu, not pm.mu)
+	if hasActivationEvent(m, "onStart") {
+		if err4 := pm.activate(ctx, newEntry); err4 != nil {
+			return fmt.Errorf("reload %s: activation failed: %w", m.ID, err4)
+		}
+	}
+
+	log.WithField("plugin", m.ID).Info("Plugin reloaded")
+	return nil
+}
+
+// ReloadAll deactivates all plugins, clears entries, re-discovers, and re-activates.
+func (pm *PluginManager) ReloadAll(ctx context.Context) error {
+	pm.DeactivateAll(ctx)
+
+	pm.mu.Lock()
+	pm.entries = make(map[string]*PluginEntry)
+	pm.mu.Unlock()
+
+	if _, err := pm.Discover(ctx); err != nil {
+		return fmt.Errorf("reload all: discover failed: %w", err)
+	}
+
+	return pm.ActivateAll(ctx)
 }
 
 // ---------------------------------------------------------------------------

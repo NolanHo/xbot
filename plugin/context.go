@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"sync"
 
 	log "xbot/logger"
@@ -86,6 +87,16 @@ type PluginContext interface {
 
 	// Logger returns a namespaced logger for this plugin.
 	Logger() Logger
+
+	// --- Plugin Event Bus ---
+
+	// Subscribe registers a handler for plugin-to-plugin events.
+	// Requires "bus.plugin" + "bus.read" permissions.
+	Subscribe(topic string, handler PluginEventHandler) error
+
+	// Publish sends an event to all subscribers of the topic.
+	// Requires "bus.plugin" + "bus.write" permissions.
+	Publish(topic string, data any) error
 }
 
 // Logger provides structured logging for plugins.
@@ -146,6 +157,8 @@ type pluginContextImpl struct {
 	workingDir string
 	channel    string
 	chatID     string
+
+	bus *PluginEventBus
 }
 
 type hookRegistration struct {
@@ -160,7 +173,7 @@ type enricherRegistration struct {
 }
 
 // newPluginContext creates a new PluginContext for the given plugin.
-func newPluginContext(manifest *PluginManifest, storage StorageAccessor, logger Logger) *pluginContextImpl {
+func newPluginContext(manifest *PluginManifest, storage StorageAccessor, logger Logger, bus *PluginEventBus) *pluginContextImpl {
 	return &pluginContextImpl{
 		pluginID:         manifest.ID,
 		manifest:         manifest,
@@ -170,6 +183,7 @@ func newPluginContext(manifest *PluginManifest, storage StorageAccessor, logger 
 		tools:            make([]PluginTool, 0),
 		hooks:            make([]hookRegistration, 0),
 		contextEnrichers: make([]enricherRegistration, 0),
+		bus:              bus,
 	}
 }
 
@@ -300,6 +314,35 @@ func (pc *pluginContextImpl) ChatID() string {
 	return pc.chatID
 }
 func (pc *pluginContextImpl) Logger() Logger { return pc.logger }
+
+func (pc *pluginContextImpl) Subscribe(topic string, handler PluginEventHandler) error {
+	if !pc.perm.HasAll(PermBusPlugin, PermBusRead) {
+		return &PermissionError{
+			PluginID:   pc.pluginID,
+			Permission: PermBusPlugin + "+" + PermBusRead,
+			Action:     "subscribe to event bus",
+		}
+	}
+	if handler == nil {
+		return nil
+	}
+	return pc.bus.Subscribe(topic, handler)
+}
+
+func (pc *pluginContextImpl) Publish(topic string, data any) error {
+	if !pc.perm.HasAll(PermBusPlugin, PermBusWrite) {
+		return &PermissionError{
+			PluginID:   pc.pluginID,
+			Permission: PermBusPlugin + "+" + PermBusWrite,
+			Action:     "publish to event bus",
+		}
+	}
+	errs := pc.bus.Publish(context.Background(), topic, data)
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
+}
 
 // --- Internal accessors for PluginManager ---
 

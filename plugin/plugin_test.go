@@ -169,7 +169,7 @@ func TestIsValidPermission(t *testing.T) {
 func TestPluginContext_RegisterTool(t *testing.T) {
 	m := testManifest()
 	storage := &noopStorage{}
-	pc := newPluginContext(&m, storage, newPluginLogger(m.ID))
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil)
 
 	tool := &SimplePluginTool{
 		Def: ToolDef{
@@ -198,7 +198,7 @@ func TestPluginContext_RegisterTool_NoPermission(t *testing.T) {
 	m := testManifest()
 	m.Permissions = []string{"hooks.subscribe"} // no tools.register
 	storage := &noopStorage{}
-	pc := newPluginContext(&m, storage, newPluginLogger(m.ID))
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil)
 
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "test_tool", Description: "test"},
@@ -216,7 +216,7 @@ func TestPluginContext_RegisterTool_NoPermission(t *testing.T) {
 func TestPluginContext_RegisterHook(t *testing.T) {
 	m := testManifest()
 	storage := &noopStorage{}
-	pc := newPluginContext(&m, storage, newPluginLogger(m.ID))
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil)
 
 	called := false
 	_ = called
@@ -243,7 +243,7 @@ func TestPluginContext_RegisterHook(t *testing.T) {
 func TestPluginContext_EnrichContext(t *testing.T) {
 	m := testManifest()
 	storage := &noopStorage{}
-	pc := newPluginContext(&m, storage, newPluginLogger(m.ID))
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil)
 
 	err := pc.EnrichContext("test_enricher", func(ctx context.Context) (string, error) {
 		return "enriched content", nil
@@ -370,6 +370,13 @@ func (p *panicPlugin) Activate(ctx PluginContext) error {
 	panic("boom!")
 }
 func (p *panicPlugin) Deactivate(ctx PluginContext) error { return nil }
+
+// mockRuntimeFactory is a test RuntimeFactory that creates mockPlugin instances.
+type mockRuntimeFactory struct{}
+
+func (f *mockRuntimeFactory) Create(manifest *PluginManifest, dir string) (Plugin, error) {
+	return &mockPlugin{manifest: *manifest}, nil
+}
 
 func TestPluginManager_Register(t *testing.T) {
 	pm := NewPluginManager(t.TempDir())
@@ -1050,7 +1057,7 @@ func TestManifest_IDValidation(t *testing.T) {
 func TestPluginContext_SetSessionMetadata(t *testing.T) {
 	m := testManifest()
 	storage := &noopStorage{}
-	pc := newPluginContext(&m, storage, newPluginLogger(m.ID))
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil)
 
 	// Before setting, metadata should be empty
 	if pc.WorkingDir() != "" {
@@ -1765,7 +1772,7 @@ func TestWASMRuntime_Activate_NoOp(t *testing.T) {
 
 	// Activate should succeed (no-op with warning log)
 	storage := &noopStorage{}
-	ctx := newPluginContext(m, storage, newPluginLogger(m.ID))
+	ctx := newPluginContext(m, storage, newPluginLogger(m.ID), nil)
 
 	err = plugin.Activate(ctx)
 	if err != nil {
@@ -1788,5 +1795,176 @@ func TestPluginManager_DeactivateAll_NotInitialized(t *testing.T) {
 
 	if pm.ActiveCount() != 0 {
 		t.Error("expected 0 active plugins")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8 — EventBus Tests
+// ---------------------------------------------------------------------------
+
+func TestPluginEventBus_SubscribeAndPublish(t *testing.T) {
+	bus := NewPluginEventBus()
+
+	var received []string
+	handler := func(ctx context.Context, topic string, data any) error {
+		received = append(received, fmt.Sprintf("%s:%v", topic, data))
+		return nil
+	}
+
+	err := bus.Subscribe("test.topic", handler)
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	errs := bus.Publish(context.Background(), "test.topic", "hello")
+	if len(errs) > 0 {
+		t.Fatalf("Publish errors: %v", errs)
+	}
+
+	if len(received) != 1 || received[0] != "test.topic:hello" {
+		t.Errorf("received = %v, want [test.topic:hello]", received)
+	}
+}
+
+func TestPluginEventBus_Unsubscribe(t *testing.T) {
+	bus := NewPluginEventBus()
+
+	called := 0
+	handler := func(ctx context.Context, topic string, data any) error {
+		called++
+		return nil
+	}
+
+	bus.Subscribe("test", handler)
+	bus.Publish(context.Background(), "test", nil)
+	if called != 1 {
+		t.Fatalf("expected 1 call before unsubscribe, got %d", called)
+	}
+
+	err := bus.Unsubscribe("test", handler)
+	if err != nil {
+		t.Fatalf("Unsubscribe failed: %v", err)
+	}
+
+	bus.Publish(context.Background(), "test", nil)
+	if called != 1 {
+		t.Errorf("expected 1 call after unsubscribe, got %d", called)
+	}
+}
+
+func TestPluginEventBus_NoSubscribers(t *testing.T) {
+	bus := NewPluginEventBus()
+	errs := bus.Publish(context.Background(), "nonexistent", "data")
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for no subscribers, got %v", errs)
+	}
+}
+
+func TestPluginEventBus_PanicRecovery(t *testing.T) {
+	bus := NewPluginEventBus()
+
+	bus.Subscribe("panic.topic", func(ctx context.Context, topic string, data any) error {
+		panic("handler panic!")
+	})
+
+	bus.Subscribe("panic.topic", func(ctx context.Context, topic string, data any) error {
+		return nil // this should still run
+	})
+
+	errs := bus.Publish(context.Background(), "panic.topic", nil)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error (panic), got %d: %v", len(errs), errs)
+	}
+	if !strContains(errs[0].Error(), "panic") {
+		t.Errorf("error should mention panic, got: %v", errs[0])
+	}
+}
+
+func TestPluginManager_Reload(t *testing.T) {
+	baseDir := t.TempDir()
+
+	// Create plugin directory with manifest
+	pluginsDir := filepath.Join(baseDir, "plugins", "com.test.reload")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	m := PluginManifest{
+		ID:               "com.test.reload",
+		Name:             "Reload Test Plugin",
+		Version:          "1.0.0",
+		Runtime:          RuntimeNative,
+		ActivationEvents: []string{"onStart"},
+		Permissions:      []string{"tools.register"},
+	}
+	writeTestManifest(t, pluginsDir, &m)
+
+	pm := NewPluginManager(baseDir)
+	pm.SetRuntimeFactory(&mockRuntimeFactory{})
+
+	ctx := context.Background()
+	_, err := pm.Discover(ctx)
+	if err != nil {
+		t.Fatalf("Discover failed: %v", err)
+	}
+
+	if err := pm.ActivateAll(ctx); err != nil {
+		t.Fatalf("ActivateAll failed: %v", err)
+	}
+
+	entry, ok := pm.GetPlugin("com.test.reload")
+	if !ok {
+		t.Fatal("plugin not found after discover+activate")
+	}
+	if entry.State != StateActive {
+		t.Fatalf("expected active state, got %v", entry.State)
+	}
+
+	// Reload
+	if err := pm.Reload(ctx, "com.test.reload"); err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+
+	entry2, ok := pm.GetPlugin("com.test.reload")
+	if !ok {
+		t.Fatal("plugin not found after reload")
+	}
+	if entry2.State != StateActive {
+		t.Errorf("expected active state after reload, got %v", entry2.State)
+	}
+}
+
+func TestPluginManager_Reload_NonExistent(t *testing.T) {
+	pm := NewPluginManager(t.TempDir())
+	err := pm.Reload(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for non-existent plugin")
+	}
+}
+
+func TestPluginContext_Subscribe_NoPermission(t *testing.T) {
+	m := testManifest()
+	m.Permissions = []string{"bus.plugin", "bus.write"} // missing bus.read
+	storage := &noopStorage{}
+	bus := NewPluginEventBus()
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), bus)
+
+	err := pc.Subscribe("test", func(ctx context.Context, topic string, data any) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected permission error for Subscribe without bus.read")
+	}
+}
+
+func TestPluginContext_Publish_NoPermission(t *testing.T) {
+	m := testManifest()
+	m.Permissions = []string{"bus.plugin", "bus.read"} // missing bus.write
+	storage := &noopStorage{}
+	bus := NewPluginEventBus()
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), bus)
+
+	err := pc.Publish("test", "data")
+	if err == nil {
+		t.Fatal("expected permission error for Publish without bus.write")
 	}
 }

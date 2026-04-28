@@ -3,6 +3,8 @@ package channel
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -1002,8 +1004,20 @@ func (m *cliModel) handlePluginCommand(parts []string) tea.Cmd {
 		return m.handlePluginHealth()
 	case "metrics":
 		return m.handlePluginMetrics()
+	case "install":
+		if len(parts) < 3 {
+			m.showSystemMsg("Usage: /plugin install <source-directory>", feedbackInfo)
+			return nil
+		}
+		return m.handlePluginInstall(strings.Join(parts[2:], " "))
+	case "uninstall":
+		if len(parts) < 3 {
+			m.showSystemMsg("Usage: /plugin uninstall <plugin-id>", feedbackInfo)
+			return nil
+		}
+		return m.handlePluginUninstall(strings.Join(parts[2:], " "))
 	default:
-		m.showSystemMsg(fmt.Sprintf("Unknown subcommand: %s\nUsage: /plugin [list|reload <id>|reload-all|health|metrics]", subcmd), feedbackInfo)
+		m.showSystemMsg(fmt.Sprintf("Unknown subcommand: %s\nUsage: /plugin [list|install <dir>|uninstall <id>|reload <id>|reload-all|health|metrics]", subcmd), feedbackInfo)
 		return nil
 	}
 }
@@ -1153,6 +1167,69 @@ func (m *cliModel) handlePluginMetrics() tea.Cmd {
 	m.appendSystemMarkdown(sb.String())
 	m.updateViewportContent()
 	return nil
+}
+
+func (m *cliModel) handlePluginInstall(sourceDir string) tea.Cmd {
+	if m.pluginMgrFn == nil {
+		m.showSystemMsg("Plugin system is not enabled", feedbackWarning)
+		return nil
+	}
+	mgr := m.pluginMgrFn()
+	if mgr == nil {
+		m.showSystemMsg("Plugin system is not enabled", feedbackWarning)
+		return nil
+	}
+	if m.pluginReloading {
+		m.showSystemMsg("Plugin operation already in progress, please wait...", feedbackWarning)
+		return nil
+	}
+	m.pluginReloading = true
+	m.showSystemMsg(fmt.Sprintf("📦 Installing plugin from: %s...", sourceDir), feedbackInfo)
+	m.updateViewportContent()
+
+	return func() tea.Msg {
+		expanded := sourceDir
+		if strings.HasPrefix(sourceDir, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				expanded = filepath.Join(home, sourceDir[2:])
+			}
+		}
+		entry, err := mgr.InstallPlugin(context.Background(), expanded)
+		var pluginID, pluginDir string
+		if entry != nil {
+			pluginID = entry.Manifest.ID
+			pluginDir = entry.Dir
+		}
+		return cliPluginInstallResultMsg{
+			pluginID:  pluginID,
+			pluginDir: pluginDir,
+			err:       err,
+		}
+	}
+}
+
+func (m *cliModel) handlePluginUninstall(pluginID string) tea.Cmd {
+	if m.pluginMgrFn == nil {
+		m.showSystemMsg("Plugin system is not enabled", feedbackWarning)
+		return nil
+	}
+	mgr := m.pluginMgrFn()
+	if mgr == nil {
+		m.showSystemMsg("Plugin system is not enabled", feedbackWarning)
+		return nil
+	}
+	if m.pluginReloading {
+		m.showSystemMsg("Plugin operation already in progress, please wait...", feedbackWarning)
+		return nil
+	}
+	m.pluginReloading = true
+	m.showSystemMsg(fmt.Sprintf("🗑️  Uninstalling plugin: %s...", pluginID), feedbackInfo)
+	m.updateViewportContent()
+
+	return func() tea.Msg {
+		err := mgr.UninstallPlugin(context.Background(), pluginID)
+		return cliPluginUninstallResultMsg{pluginID: pluginID, err: err}
+	}
 }
 
 // pluginStateIcon returns an emoji icon for a plugin state.

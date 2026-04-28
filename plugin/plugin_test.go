@@ -2446,3 +2446,147 @@ func FuzzManifestValidation(f *testing.F) {
 		_ = validateManifest(&m, ".")
 	})
 }
+
+// ---------------------------------------------------------------------------
+// InstallPlugin Tests
+// ---------------------------------------------------------------------------
+
+func TestPluginManager_InstallPlugin(t *testing.T) {
+	baseDir := t.TempDir()
+	pm := NewPluginManager(baseDir)
+	pm.SetRuntimeFactory(&mockRuntimeFactory{})
+
+	// Create source plugin directory
+	sourceDir := filepath.Join(baseDir, "source", "com.test.install")
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	m := testManifest()
+	m.ID = "com.test.install"
+	writeTestManifest(t, sourceDir, &m)
+	// Add an extra file to verify copy
+	if err := os.WriteFile(filepath.Join(sourceDir, "data.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	entry, err := pm.InstallPlugin(ctx, sourceDir)
+	if err != nil {
+		t.Fatalf("InstallPlugin failed: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("expected non-nil entry")
+	}
+	if entry.Manifest.ID != "com.test.install" {
+		t.Errorf("expected ID %q, got %q", "com.test.install", entry.Manifest.ID)
+	}
+	if entry.State != StateActive {
+		t.Errorf("expected StateActive (has onStart event), got %v", entry.State)
+	}
+
+	// Verify files were copied
+	expectedDir := filepath.Join(baseDir, "plugins", "com.test.install")
+	data, err := os.ReadFile(filepath.Join(expectedDir, "data.txt"))
+	if err != nil {
+		t.Fatalf("data.txt not found in installed dir: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Errorf("data.txt content mismatch: got %q", string(data))
+	}
+
+	// Verify plugin is in entries
+	if _, ok := pm.GetPlugin("com.test.install"); !ok {
+		t.Error("plugin not found in manager after install")
+	}
+}
+
+func TestPluginManager_InstallPlugin_InvalidPath(t *testing.T) {
+	baseDir := t.TempDir()
+	pm := NewPluginManager(baseDir)
+
+	ctx := context.Background()
+	_, err := pm.InstallPlugin(ctx, "/nonexistent/path")
+	if err == nil {
+		t.Fatal("expected error for invalid path")
+	}
+}
+
+func TestPluginManager_UninstallPlugin(t *testing.T) {
+	baseDir := t.TempDir()
+	pm := NewPluginManager(baseDir)
+	pm.SetRuntimeFactory(&mockRuntimeFactory{})
+
+	// Create and install a plugin first
+	sourceDir := filepath.Join(baseDir, "source", "com.test.uninstall")
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	m := testManifest()
+	m.ID = "com.test.uninstall"
+	writeTestManifest(t, sourceDir, &m)
+
+	ctx := context.Background()
+	_, err := pm.InstallPlugin(ctx, sourceDir)
+	if err != nil {
+		t.Fatalf("InstallPlugin failed: %v", err)
+	}
+
+	// Verify it exists
+	expectedDir := filepath.Join(baseDir, "plugins", "com.test.uninstall")
+	if _, err := os.Stat(expectedDir); err != nil {
+		t.Fatalf("installed directory not found: %v", err)
+	}
+
+	// Uninstall
+	err = pm.UninstallPlugin(ctx, "com.test.uninstall")
+	if err != nil {
+		t.Fatalf("UninstallPlugin failed: %v", err)
+	}
+
+	// Verify removed from manager
+	if _, ok := pm.GetPlugin("com.test.uninstall"); ok {
+		t.Error("plugin still in manager after uninstall")
+	}
+
+	// Verify directory removed
+	if _, err := os.Stat(expectedDir); !os.IsNotExist(err) {
+		t.Error("plugin directory still exists after uninstall")
+	}
+}
+
+func TestPluginManager_UninstallPlugin_ActivePlugin(t *testing.T) {
+	baseDir := t.TempDir()
+	pm := NewPluginManager(baseDir)
+	pm.SetRuntimeFactory(&mockRuntimeFactory{})
+
+	// Create and install a plugin with onStart (will auto-activate)
+	sourceDir := filepath.Join(baseDir, "source", "com.test.active")
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	m := testManifest()
+	m.ID = "com.test.active"
+	writeTestManifest(t, sourceDir, &m)
+
+	ctx := context.Background()
+	entry, err := pm.InstallPlugin(ctx, sourceDir)
+	if err != nil {
+		t.Fatalf("InstallPlugin failed: %v", err)
+	}
+
+	// Verify it's active
+	if entry.State != StateActive {
+		t.Fatalf("expected active state, got %v", entry.State)
+	}
+
+	// Uninstall the active plugin
+	err = pm.UninstallPlugin(ctx, "com.test.active")
+	if err != nil {
+		t.Fatalf("UninstallPlugin failed: %v", err)
+	}
+
+	// Verify removed
+	if _, ok := pm.GetPlugin("com.test.active"); ok {
+		t.Error("plugin still in manager after uninstall")
+	}
+}

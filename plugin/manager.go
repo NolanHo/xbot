@@ -2,10 +2,13 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	log "xbot/logger"
 )
@@ -474,6 +477,344 @@ func (pm *PluginManager) ReloadAll(ctx context.Context) error {
 	}
 
 	return pm.ActivateAll(ctx)
+}
+
+// ---------------------------------------------------------------------------
+// Install & Uninstall
+// ---------------------------------------------------------------------------
+
+// InstallPlugin copies a plugin directory from source to the plugin install directory
+// (~/.xbot/plugins/<id>/) and loads it into the manager.
+// If a plugin with the same ID already exists, it returns an error (use Uninstall first).
+//
+// Note: The manager's write lock is held for the entire operation, including file copy.
+// This prevents concurrent install of the same plugin ID. Installation is a low-frequency
+// operation, so blocking other plugin operations during copy is acceptable.
+func (pm *PluginManager) InstallPlugin(ctx context.Context, sourceDir string) (*PluginEntry, error) {
+	// Step 1: Validate source directory — must contain a valid manifest
+	manifest, err := LoadManifest(sourceDir)
+	if err != nil {
+		return nil, fmt.Errorf("install: invalid plugin at %s: %w", sourceDir, err)
+	}
+
+	pluginID := manifest.ID
+
+	// Hold write lock for the entire install to prevent TOCTOU races
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	// Step 2: Check for existing plugin with same ID
+	if _, exists := pm.entries[pluginID]; exists {
+		return nil, fmt.Errorf("install: plugin %q already exists (uninstall it first)", pluginID)
+	}
+
+	// Step 3: Determine target directory
+	targetDir := filepath.Join(pm.xbotHome, "plugins", pluginID)
+
+	// Step 4: Clean target and copy source
+	os.RemoveAll(targetDir)
+	if err := os.MkdirAll(filepath.Dir(targetDir), 0o755); err != nil {
+		return nil, fmt.Errorf("install: failed to create plugin directory: %w", err)
+	}
+	if err := copyDir(sourceDir, targetDir); err != nil {
+		os.RemoveAll(targetDir)
+		return nil, fmt.Errorf("install: failed to copy plugin files: %w", err)
+	}
+
+	// Step 5: Load manifest from the installed location (re-validate after copy)
+	installedManifest, err := LoadManifest(targetDir)
+	if err != nil {
+		os.RemoveAll(targetDir)
+		return nil, fmt.Errorf("install: failed to load manifest after copy: %w", err)
+	}
+
+	// Step 6: Create entry
+	storage, storageErr := NewFileStorage(targetDir)
+	if storageErr != nil {
+		log.WithField("plugin", pluginID).Warn("Failed to create storage: ", storageErr)
+		storage = &noopStorage{}
+	}
+
+	entry := &PluginEntry{
+		Manifest: installedManifest,
+		State:    StateDiscovered,
+		Dir:      targetDir,
+		Context:  newPluginContext(installedManifest, storage, newPluginLogger(pluginID), pm.bus),
+	}
+
+	if pm.runtimeFactory != nil {
+		p, err3 := pm.runtimeFactory.Create(installedManifest, targetDir)
+		if err3 != nil {
+			log.WithField("plugin", pluginID).Warn("Failed to create runtime: ", err3)
+			entry.State = StateError
+			pm.entries[pluginID] = entry
+			return entry, fmt.Errorf("install: runtime creation failed: %w", err3)
+		}
+		entry.Plugin = p
+	}
+
+	pm.entries[pluginID] = entry
+
+	// Step 7: Auto-activate if has onStart event
+	if hasActivationEvent(installedManifest, "onStart") {
+		if err4 := pm.activate(ctx, entry); err4 != nil {
+			return entry, fmt.Errorf("install: activation failed: %w", err4)
+		}
+	}
+
+	log.WithField("plugin", pluginID).WithField("dir", targetDir).Info("Plugin installed")
+	return entry, nil
+}
+
+// UninstallPlugin deactivates (if active), removes the plugin entry from the manager,
+// and deletes the plugin directory from disk.
+// Only plugin directories under xbotHome are deleted; registered native plugins
+// are only removed from the manager.
+func (pm *PluginManager) UninstallPlugin(ctx context.Context, pluginID string) error {
+	pm.mu.Lock()
+	entry, exists := pm.entries[pluginID]
+	if !exists {
+		pm.mu.Unlock()
+		return fmt.Errorf("uninstall: plugin %q not found", pluginID)
+	}
+	pluginDir := entry.Dir
+
+	// Deactivate if active (under write lock)
+	if entry.State == StateActive && entry.Plugin != nil {
+		entry.State = StateDeactivating
+		_ = entry.Plugin.Deactivate(entry.Context)
+		entry.State = StateInactive
+	}
+
+	// Remove from entries map
+	delete(pm.entries, pluginID)
+	delete(pm.disabled, pluginID)
+	pm.mu.Unlock()
+
+	// Delete directory from disk (outside lock — pure I/O)
+	// Safety: only delete if directory is under xbotHome
+	if pluginDir != "" {
+		realDir, err1 := filepath.EvalSymlinks(pluginDir)
+		if err1 != nil {
+			realDir = pluginDir
+		}
+		realHome, err2 := filepath.EvalSymlinks(pm.xbotHome)
+		if err2 != nil {
+			realHome = pm.xbotHome
+		}
+		if strings.HasPrefix(realDir, realHome) {
+			if err := os.RemoveAll(pluginDir); err != nil {
+				log.WithField("plugin", pluginID).WithField("dir", pluginDir).
+					Warn("Failed to remove plugin directory: ", err)
+			}
+		} else {
+			log.WithField("plugin", pluginID).WithField("dir", pluginDir).
+				Warn("Skipping directory removal: plugin directory is outside xbot home")
+		}
+	}
+
+	log.WithField("plugin", pluginID).Info("Plugin uninstalled")
+	return nil
+}
+
+// copyDir recursively copies a directory from src to dst.
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		targetPath := filepath.Join(dst, relPath)
+		if info.IsDir() {
+			return os.MkdirAll(targetPath, info.Mode())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(targetPath, data, info.Mode())
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Config Watch — periodic polling for plugin config changes
+// ---------------------------------------------------------------------------
+
+// configWatcher periodically checks the plugin config file for changes.
+type configWatcher struct {
+	mu          sync.Mutex
+	pm          *PluginManager
+	configPath  string
+	lastModTime time.Time
+	lastConfig  *configChangeState
+	interval    time.Duration
+}
+
+// configChangeState captures the relevant config fields to detect changes.
+type configChangeState struct {
+	DisabledPlugins map[string]bool
+}
+
+// WatchConfig starts a background goroutine that periodically polls the config file
+// for changes to plugins.disabled_plugins. When a change is detected, it applies the
+// delta: newly disabled plugins are deactivated, newly enabled plugins are discovered
+// and activated.
+//
+// Returns a stop channel that can be closed to stop watching.
+// The caller should close the returned channel when shutting down.
+func (pm *PluginManager) WatchConfig(configPath string, interval time.Duration) chan struct{} {
+	if interval < 5*time.Second {
+		interval = 5 * time.Second
+	}
+
+	stop := make(chan struct{})
+
+	w := &configWatcher{
+		pm:         pm,
+		configPath: configPath,
+		interval:   interval,
+	}
+
+	// Initialize baseline
+	if info, err := os.Stat(configPath); err == nil {
+		w.lastModTime = info.ModTime()
+	}
+	w.lastConfig = w.readConfig()
+
+	go w.loop(stop)
+
+	return stop
+}
+
+func (w *configWatcher) loop(stop chan struct{}) {
+	ticker := time.NewTicker(w.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			w.check()
+		}
+	}
+}
+
+func (w *configWatcher) check() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	info, err := os.Stat(w.configPath)
+	if err != nil {
+		return
+	}
+
+	if info.ModTime().Equal(w.lastModTime) {
+		return
+	}
+	w.lastModTime = info.ModTime()
+
+	newState := w.readConfig()
+	if newState == nil {
+		return
+	}
+
+	w.applyDiff(w.lastConfig, newState)
+	w.lastConfig = newState
+}
+
+func (w *configWatcher) readConfig() *configChangeState {
+	data, err := os.ReadFile(w.configPath)
+	if err != nil {
+		return nil
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+
+	state := &configChangeState{DisabledPlugins: make(map[string]bool)}
+
+	pluginsVal := raw["plugins"]
+	if pluginsMap, ok := pluginsVal.(map[string]any); ok {
+		if disabledVal, ok := pluginsMap["disabled_plugins"]; ok {
+			if disabledList, ok := disabledVal.([]any); ok {
+				for _, id := range disabledList {
+					if idStr, ok := id.(string); ok {
+						state.DisabledPlugins[idStr] = true
+					}
+				}
+			}
+		}
+	}
+
+	return state
+}
+
+func (w *configWatcher) applyDiff(old, new_ *configChangeState) {
+	if old == nil {
+		old = &configChangeState{DisabledPlugins: make(map[string]bool)}
+	}
+	if new_ == nil {
+		return
+	}
+
+	pm := w.pm
+	ctx := context.Background()
+
+	// Find newly disabled plugins → deactivate them
+	for id := range new_.DisabledPlugins {
+		if !old.DisabledPlugins[id] {
+			if entry, ok := pm.GetPlugin(id); ok && entry.State == StateActive {
+				if entry.Plugin != nil {
+					entry.stateMu.Lock()
+					entry.State = StateDeactivating
+					entry.stateMu.Unlock()
+					_ = entry.Plugin.Deactivate(entry.Context)
+					entry.stateMu.Lock()
+					entry.State = StateInactive
+					entry.stateMu.Unlock()
+					log.WithField("plugin", id).Info("Plugin deactivated by config change (newly disabled)")
+				}
+			}
+			// Also add to disabled set
+			pm.mu.Lock()
+			pm.disabled[id] = true
+			pm.mu.Unlock()
+		}
+	}
+
+	// Find newly enabled plugins (removed from disabled list) → discover & activate
+	for id := range old.DisabledPlugins {
+		if !new_.DisabledPlugins[id] {
+			// Remove from disabled set
+			pm.mu.Lock()
+			delete(pm.disabled, id)
+			pm.mu.Unlock()
+
+			if entry, ok := pm.GetPlugin(id); ok {
+				// Entry exists but inactive → just reactivate
+				if entry.State == StateInactive && hasActivationEvent(entry.Manifest, "onStart") {
+					if err := pm.activate(ctx, entry); err != nil {
+						log.WithField("plugin", id).Warn("Failed to re-activate after config enable: ", err)
+					}
+				}
+			} else {
+				// Entry doesn't exist → discover from disk and activate
+				pm.Discover(ctx)
+				if entry2, ok := pm.GetPlugin(id); ok && hasActivationEvent(entry2.Manifest, "onStart") {
+					if err := pm.activate(ctx, entry2); err != nil {
+						log.WithField("plugin", id).Warn("Failed to activate after config enable: ", err)
+					}
+				}
+			}
+			log.WithField("plugin", id).Info("Plugin enabled by config change")
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

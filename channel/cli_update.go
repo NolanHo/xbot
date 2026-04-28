@@ -299,6 +299,24 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 		}
 		m.updateViewportContent()
 
+	case cliPluginInstallResultMsg:
+		m.pluginReloading = false
+		if msg.err != nil {
+			m.showSystemMsg(fmt.Sprintf("❌ Failed to install plugin: %v", msg.err), feedbackError)
+		} else {
+			m.showSystemMsg(fmt.Sprintf("✅ Plugin %s installed successfully at %s", msg.pluginID, msg.pluginDir), feedbackInfo)
+		}
+		m.updateViewportContent()
+
+	case cliPluginUninstallResultMsg:
+		m.pluginReloading = false
+		if msg.err != nil {
+			m.showSystemMsg(fmt.Sprintf("❌ Failed to uninstall plugin %s: %v", msg.pluginID, msg.err), feedbackError)
+		} else {
+			m.showSystemMsg(fmt.Sprintf("✅ Plugin %s uninstalled successfully", msg.pluginID), feedbackInfo)
+		}
+		m.updateViewportContent()
+
 	case tickerTickMsg:
 		// Legacy: ticker is now driven by cliTickMsg. Drop stale messages.
 

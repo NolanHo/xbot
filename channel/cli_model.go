@@ -805,6 +805,17 @@ type cliPluginHealthResultMsg struct {
 	results map[string]error
 }
 
+type cliPluginInstallResultMsg struct {
+	pluginID  string
+	pluginDir string
+	err       error
+}
+
+type cliPluginUninstallResultMsg struct {
+	pluginID string
+	err      error
+}
+
 // isCtrlEnter 检测 Ctrl+Enter 按键。
 // 终端对 Ctrl+Enter 没有统一标准，常见 raw sequences：
 //   - CSI u 协议: \x1b[13;5u   (kitty, Ghostty, Windows Terminal)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -167,4 +169,84 @@ func WithEnrichers(enrichers ...EnricherContribution) ManifestOption {
 		}
 		m.Contributes.ContextEnrichers = append(m.Contributes.ContextEnrichers, enrichers...)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// ToolResult Formatting - structured output helpers for plugin authors
+// ---------------------------------------------------------------------------
+
+// FormatToolResult creates a formatted tool result with structured data.
+// Sections are rendered as "key: value" lines sorted by key for deterministic output.
+// If sections is empty or nil, only the title is returned as content.
+//
+// Example:
+//
+//	result := FormatToolResult("Server Info", map[string]string{
+//	    "status":  "running",
+//	    "version": "2.0.1",
+//	})
+//	// Content: "Server Info\nstatus: running\nversion: 2.0.1"
+func FormatToolResult(title string, sections map[string]string) *ToolResult {
+	if len(sections) == 0 {
+		return NewToolResult(title)
+	}
+
+	keys := make([]string, 0, len(sections))
+	for k := range sections {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	b.WriteString(title)
+	b.WriteByte('\n')
+	for i, k := range keys {
+		b.WriteString(k)
+		b.WriteString(": ")
+		b.WriteString(sections[k])
+		if i < len(keys)-1 {
+			b.WriteByte('\n')
+		}
+	}
+
+	return NewToolResult(b.String())
+}
+
+// FormatListResult creates a tool result displaying a numbered list.
+// Each item is prefixed with "N. " where N starts from 1.
+// An empty or nil slice returns "(no items)".
+//
+// Example:
+//
+//	result := FormatListResult([]string{"alpha", "beta"})
+//	// Content: "1. alpha\n2. beta"
+func FormatListResult(items []string) *ToolResult {
+	if len(items) == 0 {
+		return NewToolResult("(no items)")
+	}
+
+	var b strings.Builder
+	for i, item := range items {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%d. %s", i+1, item)
+	}
+
+	return NewToolResult(b.String())
+}
+
+// FormatErrorResult creates a user-friendly error result.
+// If err is nil, the error message is "unknown error".
+//
+// Example:
+//
+//	result := FormatErrorResult("deploy", errors.New("timeout"))
+//	// Content: "deploy failed: timeout", IsError: true
+func FormatErrorResult(operation string, err error) *ToolResult {
+	msg := "unknown error"
+	if err != nil {
+		msg = err.Error()
+	}
+	return NewToolError(fmt.Sprintf("%s failed: %s", operation, msg))
 }

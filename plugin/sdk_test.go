@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -448,5 +449,130 @@ func TestQuickManifest_WithEnrichers(t *testing.T) {
 	}
 	if m.Contributes.ContextEnrichers[0].Name != "ctx" {
 		t.Errorf("enricher name = %q, want 'ctx'", m.Contributes.ContextEnrichers[0].Name)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FormatToolResult
+// ---------------------------------------------------------------------------
+
+func TestFormatToolResult(t *testing.T) {
+	result := FormatToolResult("Server Info", map[string]string{
+		"status":  "running",
+		"version": "2.0.1",
+		"port":    "8080",
+	})
+
+	if result.IsError {
+		t.Error("expected non-error result")
+	}
+	expected := "Server Info\nport: 8080\nstatus: running\nversion: 2.0.1"
+	if result.Content != expected {
+		t.Errorf("expected %q, got %q", expected, result.Content)
+	}
+}
+
+func TestFormatToolResult_EmptySections(t *testing.T) {
+	result := FormatToolResult("No Data", nil)
+
+	if result.IsError {
+		t.Error("expected non-error result")
+	}
+	if result.Content != "No Data" {
+		t.Errorf("expected just title, got %q", result.Content)
+	}
+}
+
+func TestFormatToolResult_SingleSection(t *testing.T) {
+	result := FormatToolResult("Status", map[string]string{"key": "value"})
+
+	expected := "Status\nkey: value"
+	if result.Content != expected {
+		t.Errorf("expected %q, got %q", expected, result.Content)
+	}
+}
+
+func TestFormatToolResult_EmptyTitle(t *testing.T) {
+	result := FormatToolResult("", map[string]string{"a": "1"})
+
+	expected := "\na: 1"
+	if result.Content != expected {
+		t.Errorf("expected %q, got %q", expected, result.Content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FormatListResult
+// ---------------------------------------------------------------------------
+
+func TestFormatListResult(t *testing.T) {
+	result := FormatListResult([]string{"alpha", "beta", "gamma"})
+
+	if result.IsError {
+		t.Error("expected non-error result")
+	}
+	expected := "1. alpha\n2. beta\n3. gamma"
+	if result.Content != expected {
+		t.Errorf("expected %q, got %q", expected, result.Content)
+	}
+}
+
+func TestFormatListResult_Empty(t *testing.T) {
+	result := FormatListResult(nil)
+
+	if result.IsError {
+		t.Error("expected non-error result")
+	}
+	if result.Content != "(no items)" {
+		t.Errorf("expected '(no items)', got %q", result.Content)
+	}
+}
+
+func TestFormatListResult_SingleItem(t *testing.T) {
+	result := FormatListResult([]string{"only"})
+
+	expected := "1. only"
+	if result.Content != expected {
+		t.Errorf("expected %q, got %q", expected, result.Content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FormatErrorResult
+// ---------------------------------------------------------------------------
+
+func TestFormatErrorResult(t *testing.T) {
+	result := FormatErrorResult("deploy", fmt.Errorf("connection refused"))
+
+	if !result.IsError {
+		t.Error("expected error result")
+	}
+	expected := "deploy failed: connection refused"
+	if result.Content != expected {
+		t.Errorf("expected %q, got %q", expected, result.Content)
+	}
+}
+
+func TestFormatErrorResult_WrappedError(t *testing.T) {
+	inner := fmt.Errorf("read failed: %w", errors.New("EOF"))
+	result := FormatErrorResult("load config", inner)
+
+	if !result.IsError {
+		t.Error("expected error result")
+	}
+	if result.Content != "load config failed: read failed: EOF" {
+		t.Errorf("unexpected content: %q", result.Content)
+	}
+}
+
+func TestFormatErrorResult_NilError(t *testing.T) {
+	result := FormatErrorResult("test", nil)
+
+	if !result.IsError {
+		t.Error("expected error result")
+	}
+	expected := "test failed: unknown error"
+	if result.Content != expected {
+		t.Errorf("expected %q, got %q", expected, result.Content)
 	}
 }

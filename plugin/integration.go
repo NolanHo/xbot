@@ -26,12 +26,25 @@ import (
 // PluginToolBridge wraps a PluginToolAdapter to implement the full tools.Tool
 // interface, bridging the plugin↔host boundary for tool execution.
 type PluginToolBridge struct {
-	adapter *PluginToolAdapter
+	adapter      *PluginToolAdapter
+	rateLimiter  *PluginRateLimiter
+	quotaManager *PluginQuotaManager
+	pluginID     string
 }
 
 // NewPluginToolBridge creates a bridge from a PluginToolAdapter.
 func NewPluginToolBridge(adapter *PluginToolAdapter) *PluginToolBridge {
 	return &PluginToolBridge{adapter: adapter}
+}
+
+// NewPluginToolBridgeWithLimits creates a bridge with rate limiting and quota enforcement.
+func NewPluginToolBridgeWithLimits(adapter *PluginToolAdapter, pluginID string, rl *PluginRateLimiter, qm *PluginQuotaManager) *PluginToolBridge {
+	return &PluginToolBridge{
+		adapter:      adapter,
+		rateLimiter:  rl,
+		quotaManager: qm,
+		pluginID:     pluginID,
+	}
 }
 
 // Name implements llm.ToolDefinition.
@@ -52,6 +65,24 @@ func (b *PluginToolBridge) Parameters() []llm.ToolParam {
 // Execute implements tools.Tool.
 // Converts tools.ToolContext → ToolCallContext for V2, or context.Context for V1.
 func (b *PluginToolBridge) Execute(ctx *tools.ToolContext, input string) (*tools.ToolResult, error) {
+	// Rate limit check
+	if b.rateLimiter != nil && b.pluginID != "" {
+		if !b.rateLimiter.Allow(b.pluginID) {
+			tr := tools.NewResult(fmt.Sprintf("rate limit exceeded for plugin %s", b.pluginID))
+			tr.IsError = true
+			return tr, nil
+		}
+	}
+
+	// Quota check — tool call budget
+	if b.quotaManager != nil && b.pluginID != "" {
+		if allowed, _ := b.quotaManager.CheckToolCall(b.pluginID); !allowed {
+			tr := tools.NewResult(fmt.Sprintf("daily quota exceeded for plugin %s", b.pluginID))
+			tr.IsError = true
+			return tr, nil
+		}
+	}
+
 	tcc := &ToolCallContext{
 		Ctx: ctx.Ctx,
 	}
@@ -91,13 +122,16 @@ func WirePluginTools(pm *PluginManager, registry *tools.Registry) error {
 	entries := pm.ListPlugins()
 	registered := 0
 
+	rl := pm.RateLimiter()
+	qm := pm.QuotaManager()
+
 	for _, entry := range entries {
 		if entry.State != StateActive {
 			continue
 		}
 		for _, tool := range entry.Context.GetTools() {
 			adapter := NewPluginToolAdapterWithContext(entry.Manifest.ID, tool, entry.Context)
-			bridge := NewPluginToolBridge(adapter)
+			bridge := NewPluginToolBridgeWithLimits(adapter, entry.Manifest.ID, rl, qm)
 			registry.Register(bridge)
 			registered++
 		}

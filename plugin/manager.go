@@ -51,6 +51,10 @@ type PluginManager struct {
 	retryMu       sync.Mutex         // protects autoRetry/maxRetries/retryCancel
 	retryInterval time.Duration      // scan interval for retry loop (default 5s)
 	auditLog      *AuditLogger
+
+	// Rate limiting and quota (optional; nil = no enforcement)
+	rateLimiter  *PluginRateLimiter
+	quotaManager *PluginQuotaManager
 }
 
 // RuntimeFactory creates Plugin instances for different runtime types.
@@ -1198,4 +1202,52 @@ func (pm *PluginManager) String() string {
 
 	return fmt.Sprintf("PluginManager{total=%d, active=%d, error=%d, disabled=%d}",
 		total, active, errCount, disabled)
+}
+
+// SetRateLimiter sets the rate limiter for the plugin manager.
+func (pm *PluginManager) SetRateLimiter(rl *PluginRateLimiter) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.rateLimiter = rl
+}
+
+// SetQuotaManager sets the quota manager for the plugin manager.
+func (pm *PluginManager) SetQuotaManager(qm *PluginQuotaManager) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.quotaManager = qm
+}
+
+// RateLimiter returns the current rate limiter (may be nil).
+func (pm *PluginManager) RateLimiter() *PluginRateLimiter {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.rateLimiter
+}
+
+// QuotaManager returns the current quota manager (may be nil).
+func (pm *PluginManager) QuotaManager() *PluginQuotaManager {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.quotaManager
+}
+
+// SetRateLimit is a convenience method to set rate limit for a specific plugin.
+func (pm *PluginManager) SetRateLimit(pluginID string, limit RateLimit) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if pm.rateLimiter == nil {
+		pm.rateLimiter = NewPluginRateLimiter(nil)
+	}
+	pm.rateLimiter.SetRateLimit(pluginID, limit)
+}
+
+// SetQuota is a convenience method to set quota for a specific plugin.
+func (pm *PluginManager) SetQuota(pluginID string, quota PluginQuota) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if pm.quotaManager == nil {
+		pm.quotaManager = NewPluginQuotaManager(nil)
+	}
+	pm.quotaManager.SetQuota(pluginID, quota)
 }

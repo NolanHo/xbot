@@ -17,6 +17,7 @@ import (
 	"xbot/config"
 	"xbot/event"
 	llm "xbot/llm"
+	"xbot/plugin"
 	"xbot/session"
 	"xbot/tools"
 
@@ -912,6 +913,7 @@ func (b *RemoteBackend) MultiSession() *session.MultiTenantSession   { return ni
 func (b *RemoteBackend) BgTaskManager() *tools.BackgroundTaskManager { return nil }
 func (b *RemoteBackend) HookManager() *hooks.Manager                 { return nil }
 func (b *RemoteBackend) ApprovalState() *hooks.ApprovalState         { return nil }
+func (b *RemoteBackend) PluginManager() *plugin.PluginManager        { return nil }
 
 // ---------------------------------------------------------------------------
 // AgentBackend — init-only no-ops (server handles these)

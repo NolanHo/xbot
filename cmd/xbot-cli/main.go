@@ -35,6 +35,7 @@ import (
 	"xbot/config"
 	"xbot/llm"
 	log "xbot/logger"
+	"xbot/plugin"
 	"xbot/serverapp"
 	"xbot/storage"
 	"xbot/storage/sqlite"
@@ -1520,6 +1521,10 @@ func main() {
 			// Inject ApprovalState for permission control approval dialog
 			if state := app.backend.ApprovalState(); state != nil {
 				cliCh.SetApprovalState(state)
+			}
+			// Inject PluginManager for /plugin command
+			if pm := app.backend.PluginManager(); pm != nil {
+				cliCh.SetPluginManager(func() *plugin.PluginManager { return pm })
 			}
 			// Inject CheckpointState for Ctrl+K rewind file rollback
 			checkpointDir := filepath.Join(os.Getenv("HOME"), ".xbot", "checkpoints", "cli-default")

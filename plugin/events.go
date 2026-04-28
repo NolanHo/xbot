@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"sync"
 	"time"
+
+	log "xbot/logger"
 )
 
 // ---------------------------------------------------------------------------
@@ -95,7 +97,11 @@ func (n *PluginEventNotifier) Notify(event PluginEvent) {
 	for _, cb := range callbacks {
 		func() {
 			defer func() {
-				recover() // silently recover — notification must not crash the manager
+				if r := recover(); r != nil {
+					log.WithField("plugin", event.PluginID).
+						WithField("event_type", string(event.Type)).
+						Warn("Plugin lifecycle callback panicked: ", r)
+				}
 			}()
 			cb(event)
 		}()

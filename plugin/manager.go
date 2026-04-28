@@ -234,8 +234,8 @@ func (pm *PluginManager) retryErrorPlugins(ctx context.Context) {
 
 		// Exponential backoff: 1s * 2^(retryNum-1), capped at 30s
 		shift := retryNum - 1
-		if shift > 30 {
-			shift = 30
+		if shift > 5 {
+			shift = 5 // 2^5 = 32s, capped at retryMaxDelay (30s)
 		}
 		delay := retryInitialDelay * time.Duration(1<<uint(shift))
 		if delay > retryMaxDelay {
@@ -331,12 +331,12 @@ func (pm *PluginManager) DisablePlugins(ids []string) {
 // Discover scans plugin directories and loads manifests.
 // Returns the number of plugins discovered.
 func (pm *PluginManager) Discover(ctx context.Context) (int, error) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
 	dirs := DefaultPluginDirs(pm.xbotHome)
 	dirs = append(dirs, pm.extraDirs...)
 	manifests := DiscoverPlugins(dirs)
-
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
 
 	loaded := 0
 	for _, m := range manifests {
@@ -443,7 +443,10 @@ func (pm *PluginManager) ActivateForEvent(ctx context.Context, event string) err
 	pm.mu.RLock()
 	var toActivate []*PluginEntry
 	for _, e := range pm.entries {
-		if e.State == StateDiscovered && hasActivationEvent(e.Manifest, event) {
+		e.stateMu.Lock()
+		isDiscovered := e.State == StateDiscovered
+		e.stateMu.Unlock()
+		if isDiscovered && hasActivationEvent(e.Manifest, event) {
 			toActivate = append(toActivate, e)
 		}
 	}

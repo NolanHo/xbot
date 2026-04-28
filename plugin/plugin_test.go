@@ -265,6 +265,34 @@ func TestPluginContext_EnrichContext(t *testing.T) {
 	}
 }
 
+func TestPluginContext_OnEvent_NilHandler(t *testing.T) {
+	m := testManifest()
+	storage := &noopStorage{}
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
+
+	err := pc.OnEvent(HookPreToolUse, "", nil)
+	if err == nil {
+		t.Fatal("expected error for nil handler")
+	}
+	if !strings.Contains(err.Error(), "must not be nil") {
+		t.Errorf("error = %v, want nil handler message", err)
+	}
+}
+
+func TestPluginContext_EnrichContext_NilEnricher(t *testing.T) {
+	m := testManifest()
+	storage := &noopStorage{}
+	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
+
+	err := pc.EnrichContext("test", nil)
+	if err == nil {
+		t.Fatal("expected error for nil enricher")
+	}
+	if !strings.Contains(err.Error(), "must not be nil") {
+		t.Errorf("error = %v, want nil enricher message", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Storage Tests
 // ---------------------------------------------------------------------------
@@ -3919,6 +3947,38 @@ func TestPluginConfigStore_Cache(t *testing.T) {
 	loaded3, _ := store.Load(pluginID)
 	if loaded3["key"] != "value1" {
 		t.Errorf("after invalidation, got %v, want 'value1'", loaded3["key"])
+	}
+}
+
+func TestPluginConfigStore_Update(t *testing.T) {
+	dir := t.TempDir()
+	store := NewPluginConfigStore(dir)
+
+	// Update a key — creates new config
+	if err := store.Update("test-plugin", "key1", "value1"); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	// Load should reflect the update
+	config, err := store.Load("test-plugin")
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if config["key1"] != "value1" {
+		t.Errorf("key1 = %v, want 'value1'", config["key1"])
+	}
+
+	// Update another key — should merge
+	if err := store.Update("test-plugin", "key2", 42); err != nil {
+		t.Fatalf("Update key2 failed: %v", err)
+	}
+
+	config, _ = store.Load("test-plugin")
+	if config["key2"] != 42 {
+		t.Errorf("key2 = %v, want 42", config["key2"])
+	}
+	if config["key1"] != "value1" {
+		t.Errorf("key1 should still be value1, got %v", config["key1"])
 	}
 }
 

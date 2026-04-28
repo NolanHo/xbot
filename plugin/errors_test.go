@@ -3,6 +3,7 @@ package plugin
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -59,10 +60,10 @@ func TestErrPluginActivationFailed(t *testing.T) {
 
 	// Error message contains useful info
 	msg := err.Error()
-	if !contains(msg, "test-plugin") {
+	if !strings.Contains(msg, "test-plugin") {
 		t.Errorf("Error() = %q, want plugin ID in message", msg)
 	}
-	if !contains(msg, "timeout after 5s") {
+	if !strings.Contains(msg, "timeout after 5s") {
 		t.Errorf("Error() = %q, want inner error in message", msg)
 	}
 }
@@ -79,10 +80,10 @@ func TestErrRateLimitExceeded(t *testing.T) {
 	}
 
 	msg := err.Error()
-	if !contains(msg, "rate limit exceeded") {
+	if !strings.Contains(msg, "rate limit exceeded") {
 		t.Errorf("Error() = %q, want rate limit message", msg)
 	}
-	if !contains(msg, "rl-plugin") {
+	if !strings.Contains(msg, "rl-plugin") {
 		t.Errorf("Error() = %q, want plugin ID", msg)
 	}
 }
@@ -116,13 +117,13 @@ func TestPermissionErrorMigration(t *testing.T) {
 	}
 
 	msg := err.Error()
-	if !contains(msg, "test-plugin") {
+	if !strings.Contains(msg, "test-plugin") {
 		t.Errorf("Error() = %q, want plugin ID", msg)
 	}
-	if !contains(msg, "tools.register") {
+	if !strings.Contains(msg, "tools.register") {
 		t.Errorf("Error() = %q, want permission", msg)
 	}
-	if !contains(msg, "register tool") {
+	if !strings.Contains(msg, "register tool") {
 		t.Errorf("Error() = %q, want action", msg)
 	}
 
@@ -134,13 +135,4 @@ func TestPermissionErrorMigration(t *testing.T) {
 	if pe.PluginID != "test-plugin" {
 		t.Errorf("PluginID = %q, want %q", pe.PluginID, "test-plugin")
 	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

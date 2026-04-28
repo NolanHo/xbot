@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"xbot/llm"
@@ -33,6 +34,7 @@ type PluginToolBridge struct {
 	quotaManager    *PluginQuotaManager
 	pluginID        string
 	middlewareChain *MiddlewareChain
+	mu              sync.Mutex
 	callTracer      *CallTracer
 }
 
@@ -54,7 +56,9 @@ func NewPluginToolBridgeWithLimits(adapter *PluginToolAdapter, pluginID string, 
 // SetCallTracer injects a CallTracer for tool call audit trail.
 // This is optional — if nil, no tracing is performed.
 func (b *PluginToolBridge) SetCallTracer(ct *CallTracer) {
+	b.mu.Lock()
 	b.callTracer = ct
+	b.mu.Unlock()
 }
 
 // Name implements llm.ToolDefinition.
@@ -79,11 +83,16 @@ func (b *PluginToolBridge) Execute(ctx *tools.ToolContext, input string) (*tools
 	// Record start time for call tracing
 	startTime := time.Now()
 
+	// Capture callTracer under lock for concurrent safety
+	b.mu.Lock()
+	tracer := b.callTracer
+	b.mu.Unlock()
+
 	// Deferred tracer recording — runs after all return paths.
 	var traceResult *ToolResult
 	var traceErr error
 	defer func() {
-		if b.callTracer == nil {
+		if tracer == nil {
 			return
 		}
 		endTime := time.Now()
@@ -99,7 +108,7 @@ func (b *PluginToolBridge) Execute(ctx *tools.ToolContext, input string) (*tools
 		if traceResult != nil {
 			trace.OutputLen = len(traceResult.Content)
 		}
-		b.callTracer.Record(trace)
+		tracer.Record(trace)
 	}()
 
 	// Rate limit check (host-level, cannot be bypassed by middleware)

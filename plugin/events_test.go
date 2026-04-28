@@ -107,3 +107,48 @@ func TestPluginEventNotifier_NotifyAfterUnsubscribe(t *testing.T) {
 		t.Errorf("remaining callback: Type = %q, want %q", received.Type, PluginEventInstalled)
 	}
 }
+
+func TestPluginEventNotifier_SubscribeNil(t *testing.T) {
+	n := NewPluginEventNotifier()
+	err := n.Subscribe(nil)
+	if err == nil {
+		t.Fatal("expected error for nil callback")
+	}
+}
+
+func TestPluginEventNotifier_UnsubscribeNil(t *testing.T) {
+	n := NewPluginEventNotifier()
+	err := n.Unsubscribe(nil)
+	if err == nil {
+		t.Fatal("expected error for nil callback")
+	}
+}
+
+func TestPluginEventNotifier_UnsubscribeNotFound(t *testing.T) {
+	n := NewPluginEventNotifier()
+	cb := func(e PluginEvent) {}
+	err := n.Unsubscribe(cb)
+	if err == nil {
+		t.Fatal("expected error for non-registered callback")
+	}
+}
+
+func TestPluginEventNotifier_PanicRecovery(t *testing.T) {
+	n := NewPluginEventNotifier()
+	panicCb := func(e PluginEvent) {
+		panic("test panic")
+	}
+	normalCalled := false
+	normalCb := func(e PluginEvent) {
+		normalCalled = true
+	}
+	n.Subscribe(panicCb)
+	n.Subscribe(normalCb)
+
+	// Should not panic — panic in first callback should not affect second
+	n.Notify(PluginEvent{Type: PluginEventActivated, PluginID: "test"})
+
+	if !normalCalled {
+		t.Error("normal callback should still be called after panic in previous callback")
+	}
+}

@@ -400,3 +400,52 @@ func (l *sdkMockLogger) WithField(key string, value any) Logger {
 func (l *sdkMockLogger) WithFields(fields ...Field) Logger {
 	return &loggerWithFields{parent: l, fields: fields}
 }
+
+func TestQuickManifest_WithActivationEvents(t *testing.T) {
+	m := QuickManifest("id", "name", "1.0.0", "desc",
+		WithActivationEvents("onTool:deploy"))
+	if len(m.ActivationEvents) != 1 || m.ActivationEvents[0] != "onTool:deploy" {
+		t.Errorf("ActivationEvents = %v, want [onTool:deploy]", m.ActivationEvents)
+	}
+}
+
+func TestQuickManifest_WithRuntime(t *testing.T) {
+	m := QuickManifest("id", "name", "1.0.0", "desc",
+		WithRuntime(RuntimeGRPC))
+	if m.Runtime != RuntimeGRPC {
+		t.Errorf("Runtime = %q, want %q", m.Runtime, RuntimeGRPC)
+	}
+}
+
+func TestQuickManifest_WithTools(t *testing.T) {
+	m := QuickManifest("id", "name", "1.0.0", "desc",
+		WithTools(ToolContribution{Name: "tool1", Description: "test tool"}))
+	if m.Contributes == nil || len(m.Contributes.Tools) != 1 {
+		t.Fatal("expected 1 tool contribution")
+	}
+	if m.Contributes.Tools[0].Name != "tool1" {
+		t.Errorf("tool name = %q, want 'tool1'", m.Contributes.Tools[0].Name)
+	}
+}
+
+func TestQuickManifest_WithHooks(t *testing.T) {
+	m := QuickManifest("id", "name", "1.0.0", "desc",
+		WithHooks(HookContribution{Event: "PreToolUse", Matcher: "Shell"}))
+	if m.Contributes == nil || len(m.Contributes.Hooks) != 1 {
+		t.Fatal("expected 1 hook contribution")
+	}
+	if m.Contributes.Hooks[0].Event != "PreToolUse" {
+		t.Errorf("hook event = %q, want 'PreToolUse'", m.Contributes.Hooks[0].Event)
+	}
+}
+
+func TestQuickManifest_WithEnrichers(t *testing.T) {
+	m := QuickManifest("id", "name", "1.0.0", "desc",
+		WithEnrichers(EnricherContribution{Name: "ctx", Description: "context enricher"}))
+	if m.Contributes == nil || len(m.Contributes.ContextEnrichers) != 1 {
+		t.Fatal("expected 1 enricher contribution")
+	}
+	if m.Contributes.ContextEnrichers[0].Name != "ctx" {
+		t.Errorf("enricher name = %q, want 'ctx'", m.Contributes.ContextEnrichers[0].Name)
+	}
+}

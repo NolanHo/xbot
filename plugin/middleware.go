@@ -64,8 +64,8 @@ func (mc *MiddlewareChain) Execute(ctx context.Context, toolName, input string, 
 }
 
 // Use appends a middleware to the chain.
-// Note: this should only be called during chain construction (WirePluginTools),
-// not during concurrent execution.
+// NOT concurrent-safe — must only be called during chain construction (WirePluginTools),
+// never during active tool execution.
 func (mc *MiddlewareChain) Use(middleware PluginMiddleware) {
 	if middleware == nil {
 		return

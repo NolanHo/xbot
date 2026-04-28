@@ -322,7 +322,7 @@ func (pc *pluginContextImpl) OnEvent(event HookEvent, matcher string, handler Ho
 		}
 	}
 	if handler == nil {
-		return nil
+		return fmt.Errorf("hook handler must not be nil")
 	}
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
@@ -344,7 +344,7 @@ func (pc *pluginContextImpl) EnrichContext(name string, enricher ContextEnricher
 		}
 	}
 	if enricher == nil {
-		return nil
+		return fmt.Errorf("context enricher must not be nil")
 	}
 	pc.mu.Lock()
 	defer pc.mu.Unlock()

@@ -48,7 +48,7 @@ func (rl *PluginRateLimiter) Allow(pluginID string) bool {
 
 	// Filter out expired timestamps
 	timestamps := rl.windows[pluginID]
-	valid := timestamps[:0]
+	valid := make([]time.Time, 0, len(timestamps))
 	for _, ts := range timestamps {
 		if ts.After(windowStart) {
 			valid = append(valid, ts)

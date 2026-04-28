@@ -2,6 +2,9 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
 	"sync"
 
 	log "xbot/logger"
@@ -70,6 +73,25 @@ type PluginContext interface {
 	// Storage returns the plugin's isolated key-value store.
 	// Requires "storage.private" permission.
 	Storage() StorageAccessor
+
+	// StorageInt retrieves a value by key and parses it as int64.
+	// Returns (0, false) if the key does not exist or the value cannot be parsed.
+	// Requires "storage.private" permission.
+	StorageInt(key string) (int64, bool)
+
+	// StorageBool retrieves a value by key and parses it as bool.
+	// Returns (false, false) if the key does not exist or the value cannot be parsed.
+	// Requires "storage.private" permission.
+	StorageBool(key string) (bool, bool)
+
+	// StorageJSON marshals the value to JSON and stores it under the given key.
+	// Requires "storage.private" permission.
+	StorageJSON(key string, value any) error
+
+	// StorageGetJSON retrieves a value by key and unmarshals it into target.
+	// Returns an error if the key does not exist or JSON unmarshaling fails.
+	// Requires "storage.private" permission.
+	StorageGetJSON(key string, target any) error
 
 	// --- Metadata ---
 
@@ -295,6 +317,56 @@ func (pc *pluginContextImpl) Storage() StorageAccessor {
 		return newDeniedStorage(pc.pluginID)
 	}
 	return pc.storage
+}
+
+func (pc *pluginContextImpl) StorageInt(key string) (int64, bool) {
+	s := pc.Storage()
+	raw, ok := s.Get(key)
+	if !ok {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+func (pc *pluginContextImpl) StorageBool(key string) (bool, bool) {
+	s := pc.Storage()
+	raw, ok := s.Get(key)
+	if !ok {
+		return false, false
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, false
+	}
+	return v, true
+}
+
+func (pc *pluginContextImpl) StorageJSON(key string, value any) error {
+	s := pc.Storage()
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("storage: marshal JSON for key %q: %w", key, err)
+	}
+	return s.Set(key, string(data))
+}
+
+func (pc *pluginContextImpl) StorageGetJSON(key string, target any) error {
+	if target == nil {
+		return fmt.Errorf("storage: target must not be nil")
+	}
+	s := pc.Storage()
+	raw, ok := s.Get(key)
+	if !ok {
+		return fmt.Errorf("storage: key %q not found", key)
+	}
+	if err := json.Unmarshal([]byte(raw), target); err != nil {
+		return fmt.Errorf("storage: unmarshal JSON for key %q: %w", key, err)
+	}
+	return nil
 }
 
 func (pc *pluginContextImpl) PluginID() string { return pc.pluginID }

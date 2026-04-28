@@ -2317,6 +2317,77 @@ func TestBuildToolDef_InputSchema_AllOptional(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// BuildToolDef JSON Schema Serialization Tests
+// ---------------------------------------------------------------------------
+
+func TestBuildToolDef_JSONSchema(t *testing.T) {
+	def := BuildToolDef("json_tool", "A tool for JSON schema testing",
+		ToolParamDef{Name: "path", Type: "string", Description: "File path", Required: true},
+		ToolParamDef{Name: "count", Type: "number", Description: "Max items"},
+		ToolParamDef{Name: "recursive", Type: "boolean", Description: "Recurse into subdirs"},
+	)
+
+	data, err := json.Marshal(def)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	// Verify top-level fields
+	if raw["name"] != "json_tool" {
+		t.Errorf("name = %v, want %q", raw["name"], "json_tool")
+	}
+	if raw["description"] != "A tool for JSON schema testing" {
+		t.Errorf("description mismatch")
+	}
+
+	// Verify inputSchema structure via JSON round-trip
+	schema, ok := raw["inputSchema"].(map[string]any)
+	if !ok {
+		t.Fatal("inputSchema should be a JSON object")
+	}
+	if schema["type"] != "object" {
+		t.Errorf("inputSchema.type = %v, want %q", schema["type"], "object")
+	}
+
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("inputSchema.properties should be a JSON object")
+	}
+	if len(props) != 3 {
+		t.Errorf("properties count = %d, want 3", len(props))
+	}
+
+	// Verify each property has type and description
+	for _, paramName := range []string{"path", "count", "recursive"} {
+		prop, ok := props[paramName].(map[string]any)
+		if !ok {
+			t.Errorf("property %q should be an object", paramName)
+			continue
+		}
+		if _, hasType := prop["type"]; !hasType {
+			t.Errorf("property %q missing 'type'", paramName)
+		}
+		if _, hasDesc := prop["description"]; !hasDesc {
+			t.Errorf("property %q missing 'description'", paramName)
+		}
+	}
+
+	// Verify required array
+	req, ok := schema["required"].([]any)
+	if !ok {
+		t.Fatalf("inputSchema.required should be an array, got %T", schema["required"])
+	}
+	if len(req) != 1 || req[0] != "path" {
+		t.Errorf("required = %v, want [path]", req)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Benchmarks
 // ---------------------------------------------------------------------------
 
@@ -2588,5 +2659,192 @@ func TestPluginManager_UninstallPlugin_ActivePlugin(t *testing.T) {
 	// Verify removed
 	if _, ok := pm.GetPlugin("com.test.active"); ok {
 		t.Error("plugin still in manager after uninstall")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Type-Safe Storage Tests
+// ---------------------------------------------------------------------------
+
+func TestPluginContext_StorageInt(t *testing.T) {
+	m := testManifest()
+	dir := t.TempDir()
+	realStorage, err := NewFileStorage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := newPluginContext(&m, realStorage, newPluginLogger(m.ID), nil)
+
+	// Key not found
+	v, ok := pc.StorageInt("missing")
+	if ok {
+		t.Error("expected false for missing key")
+	}
+	if v != 0 {
+		t.Errorf("expected 0 for missing key, got %d", v)
+	}
+
+	// Valid int
+	_ = pc.Storage().Set("count", "42")
+	v, ok = pc.StorageInt("count")
+	if !ok {
+		t.Error("expected true for existing key")
+	}
+	if v != 42 {
+		t.Errorf("expected 42, got %d", v)
+	}
+
+	// Negative int
+	_ = pc.Storage().Set("neg", "-100")
+	v, ok = pc.StorageInt("neg")
+	if !ok {
+		t.Error("expected true for negative int")
+	}
+	if v != -100 {
+		t.Errorf("expected -100, got %d", v)
+	}
+
+	// Invalid value
+	_ = pc.Storage().Set("bad", "not-a-number")
+	v, ok = pc.StorageInt("bad")
+	if ok {
+		t.Error("expected false for unparseable value")
+	}
+	if v != 0 {
+		t.Errorf("expected 0 for unparseable value, got %d", v)
+	}
+}
+
+func TestPluginContext_StorageBool(t *testing.T) {
+	m := testManifest()
+	dir := t.TempDir()
+	realStorage, err := NewFileStorage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := newPluginContext(&m, realStorage, newPluginLogger(m.ID), nil)
+
+	// Key not found
+	v, ok := pc.StorageBool("missing")
+	if ok {
+		t.Error("expected false for missing key")
+	}
+	if v {
+		t.Error("expected false (zero value) for missing key")
+	}
+
+	// true
+	_ = pc.Storage().Set("flag", "true")
+	v, ok = pc.StorageBool("flag")
+	if !ok {
+		t.Error("expected true for existing key")
+	}
+	if !v {
+		t.Error("expected true")
+	}
+
+	// false (valid parse)
+	_ = pc.Storage().Set("off", "false")
+	v, ok = pc.StorageBool("off")
+	if !ok {
+		t.Error("expected true for existing key with 'false' value")
+	}
+	if v {
+		t.Error("expected false")
+	}
+
+	// "1" is also valid for strconv.ParseBool
+	_ = pc.Storage().Set("one", "1")
+	v, ok = pc.StorageBool("one")
+	if !ok || !v {
+		t.Error("expected true for '1'")
+	}
+
+	// Invalid value
+	_ = pc.Storage().Set("bad", "maybe")
+	v, ok = pc.StorageBool("bad")
+	if ok {
+		t.Error("expected false for unparseable value")
+	}
+	if v {
+		t.Error("expected false (zero value) for unparseable value")
+	}
+}
+
+func TestPluginContext_StorageJSON(t *testing.T) {
+	m := testManifest()
+	dir := t.TempDir()
+	realStorage, err := NewFileStorage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := newPluginContext(&m, realStorage, newPluginLogger(m.ID), nil)
+
+	type config struct {
+		Host string `json:"host"`
+		Port int    `json:"port"`
+	}
+	cfg := config{Host: "localhost", Port: 8080}
+
+	// Store JSON
+	if err := pc.StorageJSON("config", cfg); err != nil {
+		t.Fatalf("StorageJSON failed: %v", err)
+	}
+
+	// Verify raw storage has the JSON string
+	raw, ok := pc.Storage().Get("config")
+	if !ok {
+		t.Fatal("key 'config' not found in storage")
+	}
+	if !strings.Contains(raw, "localhost") || !strings.Contains(raw, "8080") {
+		t.Errorf("stored JSON = %q, should contain localhost and 8080", raw)
+	}
+}
+
+func TestPluginContext_StorageGetJSON(t *testing.T) {
+	m := testManifest()
+	dir := t.TempDir()
+	realStorage, err := NewFileStorage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := newPluginContext(&m, realStorage, newPluginLogger(m.ID), nil)
+
+	type config struct {
+		Host string `json:"host"`
+		Port int    `json:"port"`
+	}
+
+	// Key not found → error
+	var cfg config
+	err = pc.StorageGetJSON("missing", &cfg)
+	if err == nil {
+		t.Fatal("expected error for missing key")
+	}
+
+	// Round-trip
+	_ = pc.StorageJSON("config", config{Host: "example.com", Port: 9090})
+	var result config
+	if err := pc.StorageGetJSON("config", &result); err != nil {
+		t.Fatalf("StorageGetJSON failed: %v", err)
+	}
+	if result.Host != "example.com" {
+		t.Errorf("Host = %q, want %q", result.Host, "example.com")
+	}
+	if result.Port != 9090 {
+		t.Errorf("Port = %d, want %d", result.Port, 9090)
+	}
+
+	// Invalid JSON → error
+	_ = pc.Storage().Set("bad", "{invalid json}")
+	err = pc.StorageGetJSON("bad", &cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+
+	// Nil target → error
+	err = pc.StorageGetJSON("config", nil)
+	if err == nil {
+		t.Fatal("expected error for nil target")
 	}
 }

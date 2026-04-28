@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"xbot/llm"
 	log "xbot/logger"
@@ -32,6 +33,7 @@ type PluginToolBridge struct {
 	quotaManager    *PluginQuotaManager
 	pluginID        string
 	middlewareChain *MiddlewareChain
+	callTracer      *CallTracer
 }
 
 // NewPluginToolBridge creates a bridge from a PluginToolAdapter.
@@ -47,6 +49,12 @@ func NewPluginToolBridgeWithLimits(adapter *PluginToolAdapter, pluginID string, 
 		quotaManager: qm,
 		pluginID:     pluginID,
 	}
+}
+
+// SetCallTracer injects a CallTracer for tool call audit trail.
+// This is optional — if nil, no tracing is performed.
+func (b *PluginToolBridge) SetCallTracer(ct *CallTracer) {
+	b.callTracer = ct
 }
 
 // Name implements llm.ToolDefinition.
@@ -68,10 +76,38 @@ func (b *PluginToolBridge) Parameters() []llm.ToolParam {
 // Converts tools.ToolContext → ToolCallContext for V2, or context.Context for V1.
 // Rate limit and quota checks run before the middleware chain (host-level enforcement).
 func (b *PluginToolBridge) Execute(ctx *tools.ToolContext, input string) (*tools.ToolResult, error) {
+	// Record start time for call tracing
+	startTime := time.Now()
+
+	// Deferred tracer recording — runs after all return paths.
+	var traceResult *ToolResult
+	var traceErr error
+	defer func() {
+		if b.callTracer == nil {
+			return
+		}
+		endTime := time.Now()
+		trace := CallTrace{
+			PluginID:  b.pluginID,
+			ToolName:  b.adapter.Name(),
+			StartTime: startTime,
+			EndTime:   endTime,
+			Duration:  endTime.Sub(startTime),
+			InputLen:  len(input),
+			IsError:   traceErr != nil || (traceResult != nil && traceResult.IsError),
+		}
+		if traceResult != nil {
+			trace.OutputLen = len(traceResult.Content)
+		}
+		b.callTracer.Record(trace)
+	}()
+
 	// Rate limit check (host-level, cannot be bypassed by middleware)
 	if b.rateLimiter != nil && b.pluginID != "" {
 		if !b.rateLimiter.Allow(b.pluginID) {
-			tr := tools.NewResult(fmt.Sprintf("rate limit exceeded for plugin %s", b.pluginID))
+			msg := fmt.Sprintf("rate limit exceeded for plugin %s", b.pluginID)
+			traceResult = &ToolResult{Content: msg, IsError: true}
+			tr := tools.NewResult(msg)
 			tr.IsError = true
 			return tr, nil
 		}
@@ -80,7 +116,9 @@ func (b *PluginToolBridge) Execute(ctx *tools.ToolContext, input string) (*tools
 	// Quota check — tool call budget (host-level)
 	if b.quotaManager != nil && b.pluginID != "" {
 		if allowed, _ := b.quotaManager.CheckToolCall(b.pluginID); !allowed {
-			tr := tools.NewResult(fmt.Sprintf("daily quota exceeded for plugin %s", b.pluginID))
+			msg := fmt.Sprintf("daily quota exceeded for plugin %s", b.pluginID)
+			traceResult = &ToolResult{Content: msg, IsError: true}
+			tr := tools.NewResult(msg)
 			tr.IsError = true
 			return tr, nil
 		}
@@ -100,6 +138,9 @@ func (b *PluginToolBridge) Execute(ctx *tools.ToolContext, input string) (*tools
 	} else {
 		result, err = final(ctx.Ctx, b.adapter.Name(), input)
 	}
+
+	traceResult = result
+	traceErr = err
 
 	if err != nil {
 		return nil, err

@@ -89,6 +89,12 @@
 - **EventBus requires `bus.plugin` permission** in addition to `bus.read`/`bus.write`. Subscribe needs `bus.plugin` + `bus.read`; Publish needs `bus.plugin` + `bus.write`. This separates plugin-to-plugin events from the core message bus.
 - **`InstallPlugin` uses `filepath.EvalSymlinks`** to resolve the real directory path before deletion check, preventing symlink-based path traversal attacks. Only directories under `xbotHome` are deleted.
 - **`WatchConfig` polls config.json every 30 seconds** (configurable, min 5s). It compares `plugins.disabled_plugins` lists via diff and reactively deactivates newly disabled / activates newly enabled plugins. Returns a stop channel for shutdown.
+- **DependencyResolver uses Kahn's algorithm (BFS topological sort).** Circular dependencies return an error (not panic). `AddManifest` with duplicate ID replaces the existing entry. Resolve() returns activation order — plugins with no dependencies first, then in dependency order.
+- **Profiler is safe for concurrent use** (sync.Mutex). `Profile(pluginID)` returns a **copy** of PluginProfile — safe to mutate without affecting internal state. Unprofiled plugins return zero-value PluginProfile.
+- **ExportConfig acquires RLock on PluginManager.** Must not be called while holding a write lock (e.g., inside custom Activate/Deactivate that calls pm.mu.Lock). ImportConfig acquires write lock internally — do not nest inside another write-locked operation.
+- **MockPlugin/MockTool chain API returns the same pointer** — each `With*` call mutates and returns `*MockPlugin`/`*MockTool`. Do not share a single mock across parallel tests without cloning.
+- **PluginRegistry MVP only supports local sources** for installation. Search operates on locally installed plugins only. GitHub/URL sources are defined but InstallFromSource is not yet implemented — Phase 3 scope.
+- **Plugin migration `Migrator` creates backup before applying migrations.** Backup is stored in `~/.xbot/plugins/<id>/backups/<version>/`. Rollback restores from the most recent backup. Migrations run sequentially by version order.
 
 ### Windows
 - `syscall.PROCESS_QUERY_LIMITED_INFORMATION` and `STILL_ACTIVE` not in Go stdlib — define as uint32 constants.

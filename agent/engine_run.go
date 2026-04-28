@@ -416,7 +416,7 @@ func (s *runState) callLLM(ctx context.Context, retryNotifyCtx context.Context) 
 
 	s.localLLMCalls++
 	if response != nil {
-		s.tokenTracker.RecordLLMCall(response.Usage.PromptTokens, response.Usage.CompletionTokens, len(s.messages))
+		s.tokenTracker.RecordLLMCall(response.Usage.PromptTokens, response.Usage.CompletionTokens)
 		s.localInputTokens += int(response.Usage.PromptTokens)
 		s.localOutputTokens += int(response.Usage.CompletionTokens)
 		s.localCachedTokens += int(response.Usage.CacheHitTokens)
@@ -484,7 +484,7 @@ func (s *runState) handleInputTooLong(ctx context.Context, retryNotifyCtx contex
 	response, err := generateResponse(retryNotifyCtx, s.cfg.LLMClient, s.cfg.Model, s.messages, toolDefs, s.cfg.ThinkingMode, s.cfg.Stream, s.cfg.StreamContentFunc, s.cfg.StreamReasoningFunc)
 	s.localLLMCalls++
 	if response != nil {
-		s.tokenTracker.RecordLLMCall(response.Usage.PromptTokens, response.Usage.CompletionTokens, len(s.messages))
+		s.tokenTracker.RecordLLMCall(response.Usage.PromptTokens, response.Usage.CompletionTokens)
 		s.localInputTokens += int(response.Usage.PromptTokens)
 		s.localOutputTokens += int(response.Usage.CompletionTokens)
 		s.localCachedTokens += int(response.Usage.CacheHitTokens)
@@ -726,11 +726,10 @@ func (s *runState) maybeCompress(ctx context.Context) {
 		promptBudget = maxTokens / 2 // fallback: reserve half for output
 	}
 
-	// Truncation detection is no longer needed — rewind restores exact
-	// token counts from DB (session_messages.context_tokens).
-	// The TokenTracker is seeded with the correct value via LastPromptTokens.
-
-	totalTokens, tokenSource := s.tokenTracker.EstimateTotal(s.messages, s.cfg.Model)
+	// Use the exact API-returned prompt_tokens — no local estimation.
+	// Offload handles large tool results; a single iteration cannot add enough
+	// tokens to justify delta estimation.
+	totalTokens, tokenSource := s.tokenTracker.GetPromptTokens()
 	if tokenSource == "no_data" {
 		// No API token data — cannot make compression decisions.
 		// Return early; compression is never triggered without real data.
@@ -744,17 +743,6 @@ func (s *runState) maybeCompress(ctx context.Context) {
 	}
 	needCompress := len(s.messages) > 3 && shouldCompact(int(totalTokens), promptBudget, compressThreshold) && (s.lastCompressIter == 0 || s.compressAttempts-s.lastCompressIter >= 5)
 
-	// Free snip layer (Claude Code style): before expensive API-based compression,
-	// trim old tool result contents that are no longer needed. This is free — no
-	// API call required, just replaces large tool result content with placeholders.
-	// Triggered when context exceeds 65% of prompt budget but before the
-	// compression threshold. Only activates when maxOutputTokens is reasonable
-	// (>100 tokens) to avoid interfering with test scenarios using extreme values.
-	snipped := false
-	if !needCompress && maxOutputTokens > 100 && totalTokens > int64(float64(promptBudget)*0.65) && len(s.messages) > 6 {
-		snipped = s.snipOldToolResults(ctx)
-	}
-
 	log.Ctx(ctx).WithFields(log.Fields{
 		"total_tokens":       totalTokens,
 		"max_context":        maxTokens,
@@ -763,7 +751,6 @@ func (s *runState) maybeCompress(ctx context.Context) {
 		"threshold":          int(float64(promptBudget) * compressThreshold),
 		"msg_count":          len(s.messages),
 		"need":               needCompress,
-		"snipped":            snipped,
 		"base_prompt_tokens": s.tokenTracker.PromptTokens(),
 		"completion_tokens":  s.tokenTracker.CompletionTokens(),
 		"source":             tokenSource,
@@ -774,53 +761,11 @@ func (s *runState) maybeCompress(ctx context.Context) {
 		return
 	}
 
-	// Layer 2: Observation masking (lightweight, no LLM call)
+	// Observation masking (lightweight, no LLM call)
 	s.maybeMaskObservations(ctx, totalTokens, maxTokens)
 }
 
 // runCompression performs the actual context compression.
-// snipOldToolResults replaces large tool result contents from earlier iterations
-// with compact placeholders. This is a FREE context reduction layer — no API call
-// needed. Inspired by Claude Code's "Snip" layer.
-//
-// Strategy: tool results from iterations before the last 3 are replaced with
-// "[Tool result cleared to save context]" if they exceed 500 chars. This preserves
-// the message structure (tool_use/tool_result pairing) while freeing tokens.
-func (s *runState) snipOldToolResults(ctx context.Context) bool {
-	const (
-		minIterationsBeforeSnip = 3
-		maxContentLen           = 500
-		placeholder             = "[Old tool result cleared to save context]"
-	)
-
-	snipped := false
-	for i := range s.messages {
-		msg := &s.messages[i]
-		if msg.Role != "tool" || len(msg.Content) <= maxContentLen {
-			continue
-		}
-		// Check if this tool result is from an old iteration by finding the
-		// corresponding tool_use (assistant message with matching ToolCallID).
-		// Simple heuristic: if message index is far from the end, it's old.
-		distanceFromEnd := len(s.messages) - i
-		if distanceFromEnd < minIterationsBeforeSnip*3 { // ~3 messages per iteration
-			continue
-		}
-		oldLen := len(msg.Content)
-		msg.Content = placeholder
-		snipped = true
-		log.Ctx(ctx).WithFields(log.Fields{
-			"msg_index":    i,
-			"old_content":  oldLen,
-			"distance_end": distanceFromEnd,
-		}).Debug("Snipped old tool result")
-	}
-	if snipped {
-		log.Ctx(ctx).Debug("Snipped old tool results to reduce context")
-	}
-	return snipped
-}
-
 func (s *runState) runCompression(ctx context.Context, cm ContextManager, totalTokens, maxTokens int) {
 	if s.structuredProgress != nil {
 		s.structuredProgress.Phase = PhaseCompressing

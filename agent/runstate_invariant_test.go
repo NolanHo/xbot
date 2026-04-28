@@ -29,7 +29,7 @@ func TestValidateInvariants(t *testing.T) {
 				persistence: NewPersistenceBridge(nil, 3),
 				tokenTracker: func() *TokenTracker {
 					tt := &TokenTracker{}
-					tt.RecordLLMCall(100, 50, 4)
+					tt.RecordLLMCall(100, 50)
 					return tt
 				}(),
 			},
@@ -74,26 +74,6 @@ func TestValidateInvariants(t *testing.T) {
 			errContains: "promptTokens=0 but hadLLMCall=true restoredFromDB=false",
 		},
 		{
-			name: "violation: msgCountAtCall > len(messages)",
-			state: &runState{
-				messages: []llm.ChatMessage{
-					{Role: "user", Content: "hi"},
-					{Role: "assistant", Content: "hello"},
-					{Role: "user", Content: "msg"},
-					{Role: "assistant", Content: "ok"},
-					{Role: "user", Content: "bye"},
-				},
-				persistence: NewPersistenceBridge(nil, 3),
-				tokenTracker: &TokenTracker{
-					promptTokens:   200,
-					hadLLMCall:     true,
-					msgCountAtCall: 10,
-				},
-			},
-			wantErr:     true,
-			errContains: "msgCountAtCall(10) > len(messages)(5)",
-		},
-		{
 			name: "valid after compress",
 			state: func() *runState {
 				msgs := []llm.ChatMessage{
@@ -102,8 +82,8 @@ func TestValidateInvariants(t *testing.T) {
 					{Role: "assistant", Content: "summary"},
 				}
 				tt := &TokenTracker{}
-				tt.RecordLLMCall(500, 100, 8) // original call with more messages
-				tt.ResetAfterCompress(50, 3)  // after compress: fewer messages, lower tokens
+				tt.RecordLLMCall(500, 100)
+				tt.ResetAfterCompress()
 				return &runState{
 					messages:     msgs,
 					persistence:  NewPersistenceBridge(nil, 0),

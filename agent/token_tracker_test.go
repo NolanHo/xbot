@@ -2,20 +2,7 @@ package agent
 
 import (
 	"testing"
-
-	"xbot/llm"
 )
-
-const testModel = "gpt-4o"
-
-// helper to build simple messages for token counting tests
-func makeMessages(n int) []llm.ChatMessage {
-	msgs := make([]llm.ChatMessage, n)
-	for i := range msgs {
-		msgs[i] = llm.ChatMessage{Role: "user", Content: "hello world"}
-	}
-	return msgs
-}
 
 // ----------------------------------------------------------------
 // NewTokenTracker
@@ -34,9 +21,6 @@ func TestTokenTracker_New_ZeroValues(t *testing.T) {
 	}
 	if tt.HadLLMCall() {
 		t.Error("expected hadLLMCall=false initially")
-	}
-	if tt.MsgCountAtCall() != 0 {
-		t.Errorf("expected msgCountAtCall=0, got %d", tt.MsgCountAtCall())
 	}
 }
 
@@ -67,16 +51,13 @@ func TestTokenTracker_New_NonZeroCompletionOnly(t *testing.T) {
 
 func TestTokenTracker_RecordLLMCall(t *testing.T) {
 	tt := NewTokenTracker(0, 0)
-	tt.RecordLLMCall(1000, 250, 5)
+	tt.RecordLLMCall(1000, 250)
 
 	if tt.PromptTokens() != 1000 {
 		t.Errorf("expected promptTokens=1000, got %d", tt.PromptTokens())
 	}
 	if tt.CompletionTokens() != 250 {
 		t.Errorf("expected completionTokens=250, got %d", tt.CompletionTokens())
-	}
-	if tt.MsgCountAtCall() != 5 {
-		t.Errorf("expected msgCountAtCall=5, got %d", tt.MsgCountAtCall())
 	}
 	if !tt.HadLLMCall() {
 		t.Error("expected hadLLMCall=true after RecordLLMCall")
@@ -85,7 +66,7 @@ func TestTokenTracker_RecordLLMCall(t *testing.T) {
 
 func TestTokenTracker_RecordLLMCall_Overwrite(t *testing.T) {
 	tt := NewTokenTracker(100, 50)
-	tt.RecordLLMCall(2000, 400, 8)
+	tt.RecordLLMCall(2000, 400)
 
 	if tt.PromptTokens() != 2000 {
 		t.Errorf("expected promptTokens=2000, got %d", tt.PromptTokens())
@@ -101,11 +82,11 @@ func TestTokenTracker_RecordLLMCall_Overwrite(t *testing.T) {
 
 func TestTokenTracker_ResetAfterCompress(t *testing.T) {
 	tt := NewTokenTracker(0, 0)
-	tt.RecordLLMCall(5000, 800, 10)
+	tt.RecordLLMCall(5000, 800)
 
 	// After compression, all tracking fields should be zeroed.
 	// The tracker returns "no_data" until the next LLM API call.
-	tt.ResetAfterCompress(2000, 4)
+	tt.ResetAfterCompress()
 
 	if tt.PromptTokens() != 0 {
 		t.Errorf("expected promptTokens=0 after compress reset, got %d", tt.PromptTokens())
@@ -113,14 +94,11 @@ func TestTokenTracker_ResetAfterCompress(t *testing.T) {
 	if tt.CompletionTokens() != 0 {
 		t.Errorf("expected completionTokens=0 after compress reset, got %d", tt.CompletionTokens())
 	}
-	if tt.MsgCountAtCall() != 0 {
-		t.Errorf("expected msgCountAtCall=0 after compress reset, got %d", tt.MsgCountAtCall())
-	}
 	if tt.HadLLMCall() {
 		t.Error("expected hadLLMCall=false after compress reset")
 	}
-	// Verify EstimateTotal returns no_data
-	total, source := tt.EstimateTotal(makeMessages(5), testModel)
+	// Verify GetPromptTokens returns no_data
+	total, source := tt.GetPromptTokens()
 	if total != 0 {
 		t.Errorf("expected total=0 after compress reset, got %d", total)
 	}
@@ -145,98 +123,42 @@ func TestTokenTracker_MarkRestoredFromDB(t *testing.T) {
 }
 
 // ----------------------------------------------------------------
-// EstimateTotal
+// GetPromptTokens
 // ----------------------------------------------------------------
 
-func TestTokenTracker_EstimateTotal_APIPrompt(t *testing.T) {
+func TestTokenTracker_GetPromptTokens_API(t *testing.T) {
 	tt := NewTokenTracker(0, 0)
-	tt.RecordLLMCall(1000, 200, 5)
+	tt.RecordLLMCall(1000, 200)
 
-	// Exactly 5 messages — no tool messages after boundary
-	msgs := makeMessages(5)
-	total, source := tt.EstimateTotal(msgs, testModel)
-
-	// Total should be promptTokens only — completionTokens are output tokens, not context.
+	total, source := tt.GetPromptTokens()
 	if total != 1000 {
-		t.Errorf("expected total=1000 (prompt only), got %d", total)
+		t.Errorf("expected total=1000, got %d", total)
 	}
-	if source != "api_prompt" {
-		t.Errorf("expected source='api_prompt', got %q", source)
-	}
-}
-
-func TestTokenTracker_EstimateTotal_APIPromptPlusToolDelta(t *testing.T) {
-	tt := NewTokenTracker(0, 0)
-	tt.RecordLLMCall(1000, 200, 3)
-
-	// 6 messages total, boundary at 3 → tool messages from index 4 onward (indices 4,5)
-	msgs := makeMessages(6)
-	total, source := tt.EstimateTotal(msgs, testModel)
-
-	// Total should be promptTokens + tool delta (not including completionTokens)
-	if total <= 1000 {
-		t.Errorf("expected total > 1000 (with tool delta), got %d", total)
-	}
-	if source != "api_prompt+tool_delta" {
-		t.Errorf("expected source='api_prompt+tool_delta', got %q", source)
+	if source != "api" {
+		t.Errorf("expected source='api', got %q", source)
 	}
 }
 
-func TestTokenTracker_EstimateTotal_APIPromptExactBoundary(t *testing.T) {
-	tt := NewTokenTracker(0, 0)
-	tt.RecordLLMCall(1000, 200, 5)
-
-	// 6 messages → len=6, boundary+1=6 → NOT greater than boundary+1, no delta
-	msgs := makeMessages(6)
-	total, source := tt.EstimateTotal(msgs, testModel)
-
-	if total != 1000 {
-		t.Errorf("expected total=1000 (prompt only, no delta), got %d", total)
-	}
-	if source != "api_prompt" {
-		t.Errorf("expected source='api_prompt', got %q", source)
-	}
-}
-
-func TestTokenTracker_EstimateTotal_Restored(t *testing.T) {
+func TestTokenTracker_GetPromptTokens_Restored(t *testing.T) {
 	tt := NewTokenTracker(800, 300)
-	// No RecordLLMCall → msgCountAtCall=0, but promptTokens > 0
+	// No RecordLLMCall → restored from previous Run
 
-	msgs := makeMessages(3)
-	total, source := tt.EstimateTotal(msgs, testModel)
-
-	// Restored path: uses promptTokens only (not completionTokens)
+	total, source := tt.GetPromptTokens()
 	if total != 800 {
-		t.Errorf("expected total=800 (restored, prompt only), got %d", total)
+		t.Errorf("expected total=800, got %d", total)
 	}
 	if source != "restored" {
 		t.Errorf("expected source='restored', got %q", source)
 	}
 }
 
-func TestTokenTracker_EstimateTotal_NoEstimation(t *testing.T) {
+func TestTokenTracker_GetPromptTokens_NoData(t *testing.T) {
 	tt := NewTokenTracker(0, 0)
-	// No tokens, no LLM call — should return 0, never estimate
+	// No tokens, no LLM call
 
-	msgs := makeMessages(3)
-	total, source := tt.EstimateTotal(msgs, testModel)
-
+	total, source := tt.GetPromptTokens()
 	if total != 0 {
-		t.Errorf("expected total=0 (no estimation), got %d", total)
-	}
-	if source != "no_data" {
-		t.Errorf("expected source='no_data', got %q", source)
-	}
-}
-
-func TestTokenTracker_EstimateTotal_NoData(t *testing.T) {
-	tt := NewTokenTracker(0, 0)
-	// No tokens, no LLM call, no messages
-
-	total, source := tt.EstimateTotal([]llm.ChatMessage{}, testModel)
-
-	if total != 0 {
-		t.Errorf("expected total=0 for no data, got %d", total)
+		t.Errorf("expected total=0, got %d", total)
 	}
 	if source != "no_data" {
 		t.Errorf("expected source='no_data', got %q", source)
@@ -249,7 +171,7 @@ func TestTokenTracker_EstimateTotal_NoData(t *testing.T) {
 
 func TestTokenTracker_SaveState_NilFn(t *testing.T) {
 	tt := NewTokenTracker(0, 0)
-	tt.RecordLLMCall(1000, 200, 5)
+	tt.RecordLLMCall(1000, 200)
 	// Should not panic with nil saveFn
 	tt.SaveState(nil)
 }
@@ -269,7 +191,7 @@ func TestTokenTracker_SaveState_ZeroPromptTokens(t *testing.T) {
 	called := false
 	tt := NewTokenTracker(0, 0)
 	// Manually set hadLLMCall without promptTokens
-	tt.RecordLLMCall(0, 100, 3)
+	tt.RecordLLMCall(0, 100)
 	tt.SaveState(func(pt, ct int64) {
 		called = true
 	})
@@ -281,7 +203,7 @@ func TestTokenTracker_SaveState_ZeroPromptTokens(t *testing.T) {
 func TestTokenTracker_SaveState_Called(t *testing.T) {
 	var savedPrompt, savedCompletion int64
 	tt := NewTokenTracker(0, 0)
-	tt.RecordLLMCall(1000, 250, 5)
+	tt.RecordLLMCall(1000, 250)
 
 	tt.SaveState(func(pt, ct int64) {
 		savedPrompt = pt
@@ -310,9 +232,6 @@ func TestTokenTracker_Getters(t *testing.T) {
 	if tt.CompletionTokens() != 50 {
 		t.Errorf("CompletionTokens() = %d, want 50", tt.CompletionTokens())
 	}
-	if tt.MsgCountAtCall() != 0 {
-		t.Errorf("MsgCountAtCall() = %d, want 0", tt.MsgCountAtCall())
-	}
 	if tt.HadLLMCall() {
 		t.Error("HadLLMCall() = true, want false")
 	}
@@ -321,15 +240,12 @@ func TestTokenTracker_Getters(t *testing.T) {
 	}
 
 	// After LLM call
-	tt.RecordLLMCall(2000, 400, 7)
+	tt.RecordLLMCall(2000, 400)
 	if tt.PromptTokens() != 2000 {
 		t.Errorf("PromptTokens() = %d, want 2000", tt.PromptTokens())
 	}
 	if tt.CompletionTokens() != 400 {
 		t.Errorf("CompletionTokens() = %d, want 400", tt.CompletionTokens())
-	}
-	if tt.MsgCountAtCall() != 7 {
-		t.Errorf("MsgCountAtCall() = %d, want 7", tt.MsgCountAtCall())
 	}
 	if !tt.HadLLMCall() {
 		t.Error("HadLLMCall() = false, want true")

@@ -25,14 +25,6 @@ func (s *runState) ValidateInvariants() error {
 			s.tokenTracker.PromptTokens(), s.tokenTracker.HadLLMCall(), s.tokenTracker.RestoredFromDB())
 	}
 
-	// Invariant 3: msgCountAtCall <= len(messages), unless after compress
-	// After compress, msgCountAtCall is reset to the new (smaller) message count,
-	// so it should always be <= len(messages).
-	if mc := s.tokenTracker.MsgCountAtCall(); mc > len(s.messages) {
-		return fmt.Errorf("invariant violation: msgCountAtCall(%d) > len(messages)(%d)",
-			mc, len(s.messages))
-	}
-
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -44,6 +45,33 @@ func LoadManifest(dir string) (*PluginManifest, error) {
 	}
 
 	return &manifest, nil
+}
+
+// LoadManifestOptions controls optional behavior during manifest loading.
+type LoadManifestOptions struct {
+	// VerifyChecksum enables SHA256 integrity verification of plugin.json.
+	// When true, LoadManifestWithOptions reads plugin.sha256 from the plugin
+	// directory and verifies it matches the SHA256 of plugin.json.
+	// Missing plugin.sha256 is treated as a verification failure.
+	VerifyChecksum bool
+}
+
+// LoadManifestWithOptions reads and validates a plugin.json with optional
+// checksum verification. When opts.VerifyChecksum is true, it verifies
+// plugin.sha256 matches plugin.json's SHA256 before returning the manifest.
+func LoadManifestWithOptions(dir string, opts LoadManifestOptions) (*PluginManifest, error) {
+	manifest, err := LoadManifest(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	if opts.VerifyChecksum {
+		if err := manifest.VerifyChecksum(dir); err != nil {
+			return nil, fmt.Errorf("checksum verification failed: %w", err)
+		}
+	}
+
+	return manifest, nil
 }
 
 // validateManifest checks that a manifest has all required fields and valid values.
@@ -344,4 +372,32 @@ func DefaultPluginDirs(xbotHome string) []string {
 		filepath.Join(xbotHome, "plugins"),            // user-installed plugins
 		filepath.Join(xbotHome, "plugins", "builtin"), // built-in plugin packages
 	}
+}
+
+// VerifyChecksum reads plugin.sha256 from dir and verifies it matches
+// the SHA256 of plugin.json. Returns nil on success.
+// Accepts both "hash" and "hash  filename" formats (GNU coreutils style).
+func (m PluginManifest) VerifyChecksum(dir string) error {
+	manifestData, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
+	if err != nil {
+		return fmt.Errorf("read plugin.json for checksum: %w", err)
+	}
+
+	checksumData, err := os.ReadFile(filepath.Join(dir, "plugin.sha256"))
+	if err != nil {
+		return fmt.Errorf("read plugin.sha256: %w", err)
+	}
+
+	// Parse expected checksum: support "hash" or "hash  filename" format
+	expected := strings.TrimSpace(strings.Split(string(checksumData), " ")[0])
+	if expected == "" {
+		return fmt.Errorf("plugin.sha256 is empty")
+	}
+
+	actual := fmt.Sprintf("%x", sha256.Sum256(manifestData))
+
+	if actual != expected {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+	}
+	return nil
 }

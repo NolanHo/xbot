@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	log "xbot/logger"
 )
@@ -133,6 +134,14 @@ type PluginContext interface {
 	// (activation failure, runtime crash, etc.).
 	// Requires "hooks.subscribe" permission.
 	OnPluginError(callback PluginErrorCallback) error
+
+	// --- Resource Tracking ---
+
+	// ToolCallCount returns the cumulative number of tool executions for this plugin.
+	ToolCallCount() int64
+
+	// HookCallCount returns the cumulative number of hook dispatches for this plugin.
+	HookCallCount() int64
 }
 
 // Logger provides structured logging for plugins.
@@ -197,6 +206,10 @@ type pluginContextImpl struct {
 	bus *PluginEventBus
 
 	errorCallback PluginErrorCallback
+
+	// Runtime resource tracking (atomic for lock-free reads)
+	toolCallCount int64
+	hookCallCount int64
 }
 
 type hookRegistration struct {
@@ -559,4 +572,28 @@ func (l *pluginLogger) buildFields(fields []Field) log.Fields {
 		f[field.Key] = field.Value
 	}
 	return f
+}
+
+// ---------------------------------------------------------------------------
+// Resource Tracking — runtime call counters
+// ---------------------------------------------------------------------------
+
+// incrementToolCallCount atomically increments the tool call counter.
+func (pc *pluginContextImpl) incrementToolCallCount() {
+	atomic.AddInt64(&pc.toolCallCount, 1)
+}
+
+// incrementHookCallCount atomically increments the hook call counter.
+func (pc *pluginContextImpl) incrementHookCallCount() {
+	atomic.AddInt64(&pc.hookCallCount, 1)
+}
+
+// ToolCallCount returns the total number of tool executions for this plugin.
+func (pc *pluginContextImpl) ToolCallCount() int64 {
+	return atomic.LoadInt64(&pc.toolCallCount)
+}
+
+// HookCallCount returns the total number of hook dispatches for this plugin.
+func (pc *pluginContextImpl) HookCallCount() int64 {
+	return atomic.LoadInt64(&pc.hookCallCount)
 }

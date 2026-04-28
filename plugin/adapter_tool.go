@@ -21,6 +21,7 @@ type PluginToolAdapter struct {
 	pluginID string
 	tool     PluginTool
 	def      ToolDef
+	ctx      *pluginContextImpl // for resource tracking; may be nil
 }
 
 // NewPluginToolAdapter creates an adapter from a PluginTool.
@@ -30,6 +31,17 @@ func NewPluginToolAdapter(pluginID string, tool PluginTool) *PluginToolAdapter {
 		pluginID: pluginID,
 		tool:     tool,
 		def:      def,
+	}
+}
+
+// NewPluginToolAdapterWithContext creates an adapter that tracks tool call counts.
+func NewPluginToolAdapterWithContext(pluginID string, tool PluginTool, ctx *pluginContextImpl) *PluginToolAdapter {
+	def := tool.Definition()
+	return &PluginToolAdapter{
+		pluginID: pluginID,
+		tool:     tool,
+		def:      def,
+		ctx:      ctx,
 	}
 }
 
@@ -52,6 +64,9 @@ func (a *PluginToolAdapter) Parameters() []llm.ToolParam {
 // If the underlying tool implements PluginToolV2, it uses ExecuteWithContext
 // with a basic ToolCallContext; otherwise falls back to V1 Execute.
 func (a *PluginToolAdapter) Execute(ctx context.Context, input string) (*ToolResult, error) {
+	if a.ctx != nil {
+		a.ctx.incrementToolCallCount()
+	}
 	if v2, ok := a.tool.(PluginToolV2); ok {
 		tcc := &ToolCallContext{Ctx: ctx}
 		return v2.ExecuteWithContext(tcc, input)
@@ -61,6 +76,9 @@ func (a *PluginToolAdapter) Execute(ctx context.Context, input string) (*ToolRes
 
 // ExecuteWithContext runs the plugin tool with a rich call context.
 func (a *PluginToolAdapter) ExecuteWithContext(ctx *ToolCallContext, input string) (*ToolResult, error) {
+	if a.ctx != nil {
+		a.ctx.incrementToolCallCount()
+	}
 	if v2, ok := a.tool.(PluginToolV2); ok {
 		return v2.ExecuteWithContext(ctx, input)
 	}

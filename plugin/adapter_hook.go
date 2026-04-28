@@ -16,7 +16,8 @@ import (
 // It is registered with the hooks.Manager as a builtin callback.
 type PluginHookBridge struct {
 	mu       sync.RWMutex
-	handlers map[string][]pluginHookEntry // event → entries
+	handlers map[string][]pluginHookEntry  // event → entries
+	contexts map[string]*pluginContextImpl // pluginID → context (for tracking)
 }
 
 type pluginHookEntry struct {
@@ -29,6 +30,7 @@ type pluginHookEntry struct {
 func NewPluginHookBridge() *PluginHookBridge {
 	return &PluginHookBridge{
 		handlers: make(map[string][]pluginHookEntry),
+		contexts: make(map[string]*pluginContextImpl),
 	}
 }
 
@@ -46,6 +48,13 @@ func (b *PluginHookBridge) Register(pluginID string, event HookEvent, matcher st
 		Debug("Plugin hook registered")
 }
 
+// SetContext registers a plugin context for resource tracking.
+func (b *PluginHookBridge) SetContext(pluginID string, ctx *pluginContextImpl) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.contexts[pluginID] = ctx
+}
+
 // Dispatch sends an event to all matching plugin hooks.
 // Returns an aggregated HookDecision.
 func (b *PluginHookBridge) Dispatch(ctx context.Context, payload *HookPayload) *HookResult {
@@ -54,6 +63,11 @@ func (b *PluginHookBridge) Dispatch(ctx context.Context, payload *HookPayload) *
 	b.mu.RLock()
 	entries := make([]pluginHookEntry, len(b.handlers[key]))
 	copy(entries, b.handlers[key])
+	// Snapshot contexts for tracking (under same RLock)
+	contexts := make(map[string]*pluginContextImpl, len(b.contexts))
+	for k, v := range b.contexts {
+		contexts[k] = v
+	}
 	b.mu.RUnlock()
 
 	if len(entries) == 0 {
@@ -69,6 +83,11 @@ func (b *PluginHookBridge) Dispatch(ctx context.Context, payload *HookPayload) *
 			if !matchToolName(entry.matcher, payload.ToolName) {
 				continue
 			}
+		}
+
+		// Track hook call for resource monitoring
+		if bCtx, ok := contexts[entry.pluginID]; ok {
+			bCtx.incrementHookCallCount()
 		}
 
 		result, err := entry.handler(ctx, payload)

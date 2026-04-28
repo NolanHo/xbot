@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1510,6 +1511,8 @@ func TestPluginMetrics_JSON(t *testing.T) {
 		TotalTools:     10,
 		TotalHooks:     7,
 		TotalEnrichers: 2,
+		ToolCallCount:  42,
+		HookCallCount:  18,
 	}
 
 	data, err := json.Marshal(m)
@@ -1523,6 +1526,12 @@ func TestPluginMetrics_JSON(t *testing.T) {
 	}
 	if !strContains(string(data), "activePlugins") {
 		t.Error("JSON should contain activePlugins")
+	}
+	if !strContains(string(data), "toolCallCount") {
+		t.Error("JSON should contain toolCallCount")
+	}
+	if !strContains(string(data), "hookCallCount") {
+		t.Error("JSON should contain hookCallCount")
 	}
 
 	// Round-trip
@@ -3070,4 +3079,414 @@ func TestPluginManager_AutoRetry_MaxRetries(t *testing.T) {
 	}
 
 	pm.SetAutoRetry(false, 0)
+}
+
+// ---------------------------------------------------------------------------
+// Iteration 20: Manifest Checksum & Resource Tracking Tests
+// ---------------------------------------------------------------------------
+
+func TestManifest_ChecksumVerification(t *testing.T) {
+	t.Run("ValidChecksum", func(t *testing.T) {
+		dir := testPluginDir(t)
+		m := testManifest()
+		writeTestManifest(t, dir, &m)
+
+		// Compute SHA256 of plugin.json
+		manifestData, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		checksum := fmt.Sprintf("%x", sha256.Sum256(manifestData))
+		if err := os.WriteFile(filepath.Join(dir, "plugin.sha256"), []byte(checksum), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatalf("LoadManifest failed: %v", err)
+		}
+		if err := loaded.VerifyChecksum(dir); err != nil {
+			t.Fatalf("VerifyChecksum failed: %v", err)
+		}
+	})
+
+	t.Run("Sha256WithFilename", func(t *testing.T) {
+		dir := testPluginDir(t)
+		m := testManifest()
+		writeTestManifest(t, dir, &m)
+
+		manifestData, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		checksum := fmt.Sprintf("%x", sha256.Sum256(manifestData))
+		// GNU coreutils style: "hash  filename"
+		content := checksum + "  plugin.json"
+		if err := os.WriteFile(filepath.Join(dir, "plugin.sha256"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatalf("LoadManifest failed: %v", err)
+		}
+		if err := loaded.VerifyChecksum(dir); err != nil {
+			t.Fatalf("VerifyChecksum with filename format failed: %v", err)
+		}
+	})
+
+	t.Run("MissingSha256File", func(t *testing.T) {
+		dir := testPluginDir(t)
+		m := testManifest()
+		writeTestManifest(t, dir, &m)
+
+		loaded, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatalf("LoadManifest failed: %v", err)
+		}
+		err = loaded.VerifyChecksum(dir)
+		if err == nil {
+			t.Fatal("expected error for missing plugin.sha256")
+		}
+		if !strings.Contains(err.Error(), "plugin.sha256") {
+			t.Errorf("error should mention plugin.sha256, got: %v", err)
+		}
+	})
+
+	t.Run("CorruptedChecksum", func(t *testing.T) {
+		dir := testPluginDir(t)
+		m := testManifest()
+		writeTestManifest(t, dir, &m)
+
+		if err := os.WriteFile(filepath.Join(dir, "plugin.sha256"), []byte("0000000000000000"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatalf("LoadManifest failed: %v", err)
+		}
+		err = loaded.VerifyChecksum(dir)
+		if err == nil {
+			t.Fatal("expected error for corrupted checksum")
+		}
+		if !strings.Contains(err.Error(), "mismatch") {
+			t.Errorf("error should mention mismatch, got: %v", err)
+		}
+	})
+
+	t.Run("EmptySha256File", func(t *testing.T) {
+		dir := testPluginDir(t)
+		m := testManifest()
+		writeTestManifest(t, dir, &m)
+
+		if err := os.WriteFile(filepath.Join(dir, "plugin.sha256"), []byte(""), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded, err := LoadManifest(dir)
+		if err != nil {
+			t.Fatalf("LoadManifest failed: %v", err)
+		}
+		err = loaded.VerifyChecksum(dir)
+		if err == nil {
+			t.Fatal("expected error for empty sha256 file")
+		}
+	})
+
+	t.Run("LoadManifestWithOptions_VerifyTrue", func(t *testing.T) {
+		dir := testPluginDir(t)
+		m := testManifest()
+		writeTestManifest(t, dir, &m)
+
+		manifestData, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		checksum := fmt.Sprintf("%x", sha256.Sum256(manifestData))
+		if err := os.WriteFile(filepath.Join(dir, "plugin.sha256"), []byte(checksum), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		loaded, err := LoadManifestWithOptions(dir, LoadManifestOptions{VerifyChecksum: true})
+		if err != nil {
+			t.Fatalf("LoadManifestWithOptions with valid checksum failed: %v", err)
+		}
+		if loaded.ID != m.ID {
+			t.Errorf("ID mismatch: got %q, want %q", loaded.ID, m.ID)
+		}
+	})
+
+	t.Run("LoadManifestWithOptions_VerifyFalse", func(t *testing.T) {
+		dir := testPluginDir(t)
+		m := testManifest()
+		writeTestManifest(t, dir, &m)
+		// No plugin.sha256 file
+
+		loaded, err := LoadManifestWithOptions(dir, LoadManifestOptions{VerifyChecksum: false})
+		if err != nil {
+			t.Fatalf("LoadManifestWithOptions with VerifyChecksum=false should succeed: %v", err)
+		}
+		if loaded.ID != m.ID {
+			t.Errorf("ID mismatch: got %q, want %q", loaded.ID, m.ID)
+		}
+	})
+
+	t.Run("LoadManifestWithOptions_VerifyTrue_Mismatch", func(t *testing.T) {
+		dir := testPluginDir(t)
+		m := testManifest()
+		writeTestManifest(t, dir, &m)
+
+		if err := os.WriteFile(filepath.Join(dir, "plugin.sha256"), []byte("deadbeef"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := LoadManifestWithOptions(dir, LoadManifestOptions{VerifyChecksum: true})
+		if err == nil {
+			t.Fatal("expected error for checksum mismatch")
+		}
+		if !strings.Contains(err.Error(), "checksum") {
+			t.Errorf("error should mention checksum, got: %v", err)
+		}
+	})
+}
+
+func TestPluginContext_ResourceTracking(t *testing.T) {
+	t.Run("InitialCountsZero", func(t *testing.T) {
+		m := testManifest()
+		pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil)
+
+		if pc.ToolCallCount() != 0 {
+			t.Errorf("initial ToolCallCount = %d, want 0", pc.ToolCallCount())
+		}
+		if pc.HookCallCount() != 0 {
+			t.Errorf("initial HookCallCount = %d, want 0", pc.HookCallCount())
+		}
+	})
+
+	t.Run("IncrementToolCalls", func(t *testing.T) {
+		m := testManifest()
+		pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil)
+
+		for i := 0; i < 3; i++ {
+			pc.incrementToolCallCount()
+		}
+		if pc.ToolCallCount() != 3 {
+			t.Errorf("ToolCallCount = %d, want 3", pc.ToolCallCount())
+		}
+		// Hook should still be 0
+		if pc.HookCallCount() != 0 {
+			t.Errorf("HookCallCount = %d, want 0", pc.HookCallCount())
+		}
+	})
+
+	t.Run("IncrementHookCalls", func(t *testing.T) {
+		m := testManifest()
+		pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil)
+
+		for i := 0; i < 5; i++ {
+			pc.incrementHookCallCount()
+		}
+		if pc.HookCallCount() != 5 {
+			t.Errorf("HookCallCount = %d, want 5", pc.HookCallCount())
+		}
+		// Tool should still be 0
+		if pc.ToolCallCount() != 0 {
+			t.Errorf("ToolCallCount = %d, want 0", pc.ToolCallCount())
+		}
+	})
+
+	t.Run("ConcurrentIncrements", func(t *testing.T) {
+		m := testManifest()
+		pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil)
+
+		const goroutines = 100
+		const increments = 100
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+
+		for i := 0; i < goroutines; i++ {
+			go func() {
+				defer wg.Done()
+				for j := 0; j < increments; j++ {
+					pc.incrementToolCallCount()
+					pc.incrementHookCallCount()
+				}
+			}()
+		}
+		wg.Wait()
+
+		expected := int64(goroutines * increments)
+		if pc.ToolCallCount() != expected {
+			t.Errorf("ToolCallCount = %d, want %d", pc.ToolCallCount(), expected)
+		}
+		if pc.HookCallCount() != expected {
+			t.Errorf("HookCallCount = %d, want %d", pc.HookCallCount(), expected)
+		}
+	})
+
+	t.Run("ToolAdapterIncrementsCount", func(t *testing.T) {
+		m := testManifest()
+		pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil)
+
+		tool := &SimplePluginTool{
+			Def: ToolDef{Name: "track_tool", Description: "test"},
+			ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+				return NewToolResult("ok"), nil
+			},
+		}
+
+		adapter := NewPluginToolAdapterWithContext("test.plugin", tool, pc)
+		adapter.Execute(context.Background(), `{"input":"test"}`)
+		adapter.Execute(context.Background(), `{"input":"test2"}`)
+		adapter.ExecuteWithContext(&ToolCallContext{Ctx: context.Background()}, `{"input":"test3"}`)
+
+		if pc.ToolCallCount() != 3 {
+			t.Errorf("ToolCallCount = %d, want 3 after 3 executions", pc.ToolCallCount())
+		}
+	})
+
+	t.Run("ToolAdapterWithoutContext_NoPanic", func(t *testing.T) {
+		tool := &SimplePluginTool{
+			Def: ToolDef{Name: "no_ctx_tool", Description: "test"},
+			ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
+				return NewToolResult("ok"), nil
+			},
+		}
+
+		adapter := NewPluginToolAdapter("test.plugin", tool)
+		result, err := adapter.Execute(context.Background(), `{"input":"test"}`)
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+		if result.Content != "ok" {
+			t.Errorf("result = %q, want %q", result.Content, "ok")
+		}
+	})
+}
+
+func TestPluginManager_Metrics_AfterToolExecution(t *testing.T) {
+	t.Run("ToolCallCountInMetrics", func(t *testing.T) {
+		pm := NewPluginManager(t.TempDir())
+		p := &mockPlugin{manifest: testManifest()}
+		pm.RegisterAndActivate(context.Background(), p)
+
+		// Before any tracked execution
+		m := pm.Metrics()
+		if m.ToolCallCount != 0 {
+			t.Errorf("initial ToolCallCount = %d, want 0", m.ToolCallCount)
+		}
+		if m.HookCallCount != 0 {
+			t.Errorf("initial HookCallCount = %d, want 0", m.HookCallCount)
+		}
+
+		// Simulate tool executions via context
+		entry, _ := pm.GetPlugin("com.test.example")
+		for i := 0; i < 3; i++ {
+			entry.Context.incrementToolCallCount()
+		}
+
+		m = pm.Metrics()
+		if m.ToolCallCount != 3 {
+			t.Errorf("ToolCallCount = %d, want 3", m.ToolCallCount)
+		}
+		if m.TotalTools != 1 {
+			t.Errorf("TotalTools = %d, want 1 (static registration count)", m.TotalTools)
+		}
+	})
+
+	t.Run("HookCallCountInMetrics", func(t *testing.T) {
+		pm := NewPluginManager(t.TempDir())
+		p := &mockPlugin{manifest: testManifest()}
+		pm.RegisterAndActivate(context.Background(), p)
+
+		// Simulate hook dispatches via context
+		entry, _ := pm.GetPlugin("com.test.example")
+		for i := 0; i < 5; i++ {
+			entry.Context.incrementHookCallCount()
+		}
+
+		m := pm.Metrics()
+		if m.HookCallCount != 5 {
+			t.Errorf("HookCallCount = %d, want 5", m.HookCallCount)
+		}
+	})
+
+	t.Run("CombinedMetrics", func(t *testing.T) {
+		pm := NewPluginManager(t.TempDir())
+
+		// Plugin 1
+		m1 := testManifest()
+		m1.ID = "com.test.plugin1"
+		p1 := &mockPlugin{manifest: m1}
+		pm.RegisterAndActivate(context.Background(), p1)
+
+		// Plugin 2
+		m2 := testManifest()
+		m2.ID = "com.test.plugin2"
+		p2 := &mockPlugin{manifest: m2}
+		pm.RegisterAndActivate(context.Background(), p2)
+
+		// Plugin 1: 3 tool calls, 1 hook call
+		e1, _ := pm.GetPlugin("com.test.plugin1")
+		for i := 0; i < 3; i++ {
+			e1.Context.incrementToolCallCount()
+		}
+		e1.Context.incrementHookCallCount()
+
+		// Plugin 2: 7 tool calls, 4 hook calls
+		e2, _ := pm.GetPlugin("com.test.plugin2")
+		for i := 0; i < 7; i++ {
+			e2.Context.incrementToolCallCount()
+		}
+		for i := 0; i < 4; i++ {
+			e2.Context.incrementHookCallCount()
+		}
+
+		m := pm.Metrics()
+		if m.TotalPlugins != 2 {
+			t.Errorf("TotalPlugins = %d, want 2", m.TotalPlugins)
+		}
+		if m.ActivePlugins != 2 {
+			t.Errorf("ActivePlugins = %d, want 2", m.ActivePlugins)
+		}
+		if m.ToolCallCount != 10 {
+			t.Errorf("ToolCallCount = %d, want 10", m.ToolCallCount)
+		}
+		if m.HookCallCount != 5 {
+			t.Errorf("HookCallCount = %d, want 5", m.HookCallCount)
+		}
+	})
+
+	t.Run("MetricsJSON_WithCallCounts", func(t *testing.T) {
+		m := PluginMetrics{
+			TotalPlugins:   3,
+			ActivePlugins:  2,
+			TotalTools:     5,
+			TotalHooks:     8,
+			TotalEnrichers: 2,
+			ToolCallCount:  150,
+			HookCallCount:  320,
+		}
+
+		data, err := json.Marshal(m)
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+
+		var m2 PluginMetrics
+		if err := json.Unmarshal(data, &m2); err != nil {
+			t.Fatalf("json.Unmarshal failed: %v", err)
+		}
+
+		if m2.ToolCallCount != 150 {
+			t.Errorf("ToolCallCount = %d, want 150", m2.ToolCallCount)
+		}
+		if m2.HookCallCount != 320 {
+			t.Errorf("HookCallCount = %d, want 320", m2.HookCallCount)
+		}
+		if m2.TotalPlugins != 3 {
+			t.Errorf("TotalPlugins = %d, want 3", m2.TotalPlugins)
+		}
+	})
 }

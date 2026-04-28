@@ -96,7 +96,7 @@ func WirePluginTools(pm *PluginManager, registry *tools.Registry) error {
 			continue
 		}
 		for _, tool := range entry.Context.GetTools() {
-			adapter := NewPluginToolAdapter(entry.Manifest.ID, tool)
+			adapter := NewPluginToolAdapterWithContext(entry.Manifest.ID, tool, entry.Context)
 			bridge := NewPluginToolBridge(adapter)
 			registry.Register(bridge)
 			registered++
@@ -122,6 +122,7 @@ func WirePluginHooks(bridge *PluginHookBridge, pm *PluginManager) {
 		if entry.State != StateActive {
 			continue
 		}
+		bridge.SetContext(entry.Manifest.ID, entry.Context)
 		for _, hook := range entry.Context.GetHooks() {
 			bridge.Register(entry.Manifest.ID, hook.Event, hook.Matcher, hook.Handler)
 		}

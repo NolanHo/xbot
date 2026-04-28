@@ -281,6 +281,61 @@ func NewToolError(content string) *ToolResult {
 }
 
 // ---------------------------------------------------------------------------
+// ToolResult Builder — fluent API for constructing ToolResult
+// ---------------------------------------------------------------------------
+
+// ToolResultBuilder provides a fluent API for building ToolResult instances.
+// It allows step-by-step construction of tool results with optional metadata.
+//
+// Example:
+//
+//	result := NewResultBuilder().
+//	    Content("hello").
+//	    Metadata("format", "json").
+//	    Build()
+type ToolResultBuilder struct {
+	result *ToolResult
+}
+
+// NewResultBuilder creates a new ToolResultBuilder with default values.
+func NewResultBuilder() *ToolResultBuilder {
+	return &ToolResultBuilder{result: &ToolResult{}}
+}
+
+// Content sets the primary output content.
+func (b *ToolResultBuilder) Content(content string) *ToolResultBuilder {
+	b.result.Content = content
+	return b
+}
+
+// Error sets both the content and marks the result as an error.
+func (b *ToolResultBuilder) Error(content string) *ToolResultBuilder {
+	b.result.Content = content
+	b.result.IsError = true
+	return b
+}
+
+// IsError explicitly sets the error flag.
+func (b *ToolResultBuilder) IsError(isError bool) *ToolResultBuilder {
+	b.result.IsError = isError
+	return b
+}
+
+// Metadata adds a key-value pair to the result metadata.
+func (b *ToolResultBuilder) Metadata(key, value string) *ToolResultBuilder {
+	if b.result.Metadata == nil {
+		b.result.Metadata = make(map[string]string)
+	}
+	b.result.Metadata[key] = value
+	return b
+}
+
+// Build returns the constructed ToolResult.
+func (b *ToolResultBuilder) Build() *ToolResult {
+	return b.result
+}
+
+// ---------------------------------------------------------------------------
 // Hook Types
 // ---------------------------------------------------------------------------
 

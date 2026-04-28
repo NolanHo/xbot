@@ -4608,3 +4608,69 @@ func TestPluginLogger_WithFields(t *testing.T) {
 		t.Errorf("expected field {status completed}, got %+v", cl.entries[3].fields[1])
 	}
 }
+
+func TestToolResultBuilder_Basic(t *testing.T) {
+	result := NewResultBuilder().
+		Content("hello world").
+		Metadata("key1", "value1").
+		Build()
+
+	if result.Content != "hello world" {
+		t.Errorf("expected content 'hello world', got %q", result.Content)
+	}
+	if result.IsError {
+		t.Error("expected IsError to be false")
+	}
+	if v, ok := result.Metadata["key1"]; !ok || v != "value1" {
+		t.Errorf("expected metadata key1=value1, got %q", v)
+	}
+}
+
+func TestToolResultBuilder_WithError(t *testing.T) {
+	result := NewResultBuilder().
+		Error("something went wrong").
+		Build()
+
+	if result.Content != "something went wrong" {
+		t.Errorf("expected content 'something went wrong', got %q", result.Content)
+	}
+	if !result.IsError {
+		t.Error("expected IsError to be true")
+	}
+}
+
+func TestToolResultBuilder_WithMetadata(t *testing.T) {
+	result := NewResultBuilder().
+		Content("data").
+		Metadata("format", "json").
+		Metadata("version", "2").
+		IsError(false).
+		Build()
+
+	if result.Content != "data" {
+		t.Errorf("expected content 'data', got %q", result.Content)
+	}
+	if len(result.Metadata) != 2 {
+		t.Fatalf("expected 2 metadata entries, got %d", len(result.Metadata))
+	}
+	if result.Metadata["format"] != "json" {
+		t.Errorf("expected format=json, got %q", result.Metadata["format"])
+	}
+	if result.Metadata["version"] != "2" {
+		t.Errorf("expected version=2, got %q", result.Metadata["version"])
+	}
+}
+
+func TestToolResultBuilder_Empty(t *testing.T) {
+	result := NewResultBuilder().Build()
+
+	if result.Content != "" {
+		t.Errorf("expected empty content, got %q", result.Content)
+	}
+	if result.IsError {
+		t.Error("expected IsError to be false")
+	}
+	if result.Metadata != nil {
+		t.Errorf("expected nil metadata, got %v", result.Metadata)
+	}
+}

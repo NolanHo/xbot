@@ -485,7 +485,7 @@ func (pc *pluginContextImpl) Publish(topic string, data any) error {
 	return nil
 }
 
-// --- Internal accessors for PluginManager ---
+// GetTools returns a snapshot of all tools registered by this plugin.
 
 func (pc *pluginContextImpl) GetTools() []PluginTool {
 	pc.mu.RLock()
@@ -495,6 +495,7 @@ func (pc *pluginContextImpl) GetTools() []PluginTool {
 	return result
 }
 
+// GetHooks returns a snapshot of all hooks registered by this plugin.
 func (pc *pluginContextImpl) GetHooks() []hookRegistration {
 	pc.mu.RLock()
 	defer pc.mu.RUnlock()
@@ -503,6 +504,7 @@ func (pc *pluginContextImpl) GetHooks() []hookRegistration {
 	return result
 }
 
+// GetEnrichers returns a snapshot of all context enrichers registered by this plugin.
 func (pc *pluginContextImpl) GetEnrichers() []enricherRegistration {
 	pc.mu.RLock()
 	defer pc.mu.RUnlock()
@@ -568,6 +570,8 @@ func (pc *pluginContextImpl) GetErrorCallback() PluginErrorCallback {
 // deniedStorage — no-op storage returned when permission is missing
 // ---------------------------------------------------------------------------
 
+// deniedStorage implements StorageAccessor by rejecting all write operations
+// with PermissionError. Reads return zero values. Used when a plugin lacks storage permissions.
 type deniedStorage struct {
 	pluginID string
 }
@@ -584,6 +588,8 @@ func (d *deniedStorage) Delete(key string) error {
 	return &PermissionError{PluginID: d.pluginID, Permission: PermStoragePrivate, Action: "storage delete"}
 }
 func (d *deniedStorage) Keys() []string { return nil }
+
+// Clear rejects with PermissionError — the plugin does not have storage:private permission.
 func (d *deniedStorage) Clear() error {
 	return &PermissionError{PluginID: d.pluginID, Permission: PermStoragePrivate, Action: "storage clear"}
 }

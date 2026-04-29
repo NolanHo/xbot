@@ -3838,11 +3838,21 @@ func TestAuditLogger_QueryByTimeRange(t *testing.T) {
 	}
 	defer al.Close()
 
+	// Use explicit timestamps to avoid Windows 15ms timer resolution issues.
+	// Windows time.Now() has ~15ms granularity, so back-to-back time.Now()
+	// calls may return the same value, breaking time-range assertions.
 	before := time.Now()
-	al.Log(AuditEntry{PluginID: "p1", Action: AuditActivate})
+	time.Sleep(20 * time.Millisecond)
+	p1Time := time.Now()
+	time.Sleep(20 * time.Millisecond)
 	mid := time.Now()
-	al.Log(AuditEntry{PluginID: "p2", Action: AuditActivate})
+	time.Sleep(20 * time.Millisecond)
+	p2Time := time.Now()
+	time.Sleep(20 * time.Millisecond)
 	after := time.Now()
+
+	al.Log(AuditEntry{PluginID: "p1", Action: AuditActivate, Timestamp: p1Time})
+	al.Log(AuditEntry{PluginID: "p2", Action: AuditActivate, Timestamp: p2Time})
 
 	// Only second entry
 	entries := al.Query(AuditFilter{From: mid, To: after})

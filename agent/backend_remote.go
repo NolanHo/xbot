@@ -17,6 +17,7 @@ import (
 	"xbot/config"
 	"xbot/event"
 	llm "xbot/llm"
+	"xbot/plugin"
 	"xbot/session"
 	"xbot/tools"
 
@@ -912,6 +913,7 @@ func (b *RemoteBackend) MultiSession() *session.MultiTenantSession   { return ni
 func (b *RemoteBackend) BgTaskManager() *tools.BackgroundTaskManager { return nil }
 func (b *RemoteBackend) HookManager() *hooks.Manager                 { return nil }
 func (b *RemoteBackend) ApprovalState() *hooks.ApprovalState         { return nil }
+func (b *RemoteBackend) PluginManager() *plugin.PluginManager        { return nil }
 
 // ---------------------------------------------------------------------------
 // AgentBackend — init-only no-ops (server handles these)
@@ -1437,5 +1439,10 @@ func RPCMethodList() []string {
 		"get_channel_config", "set_channel_config",
 		"is_processing", "get_active_progress",
 		"rewind_checkpoints",
+		// Plugin system
+		"plugin_status", "plugin_widgets",
+		"plugin_reload", "plugin_reload_all",
+		"plugin_install", "plugin_uninstall",
+		"plugin_health", "plugin_metrics",
 	}
 }

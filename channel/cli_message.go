@@ -176,6 +176,18 @@ func (m *cliModel) appendSystemMarkdown(content string) {
 	})
 }
 
+// appendSystemStyled adds a pre-styled system message (content already contains ANSI codes).
+// The message bypasses both glamour rendering and systemMsgStyle wrapping.
+func (m *cliModel) appendSystemStyled(content string) {
+	m.messages = append(m.messages, cliMessage{
+		role:      "system",
+		content:   content,
+		timestamp: time.Now(),
+		dirty:     true,
+		styled:    true,
+	})
+}
+
 // sendInbound sends a message to the agent's inbound channel.
 // Uses non-blocking send to prevent the BubbleTea event loop from freezing
 // if the channel is full (e.g., agent is busy with a long LLM call).
@@ -593,6 +605,9 @@ func (m *cliModel) handleSlashCommand(cmd string) tea.Cmd {
 		}
 		m.handleUserCommand(userArg)
 
+	case "/plugin":
+		return m.handlePluginCommand(parts)
+
 	default:
 		// 🥚 彩蛋 #7: /version 三连检测
 		if command == "/version" {
@@ -704,9 +719,13 @@ func (m *cliModel) handleAgentMessage(msg bus.OutboundMessage) {
 		m.renderCacheValid = false
 		m.updateViewportContent()
 
-		// §11.5 Session reset: clear token usage bar after /new
+		// §11.5 Session reset: clear messages and token usage bar after /new
 		if msg.Metadata != nil && msg.Metadata["session_reset"] == "true" {
 			m.lastTokenUsage = nil
+			m.messages = make([]cliMessage, 0, cliMsgBufSize)
+			m.streamingMsgIdx = -1
+			m.invalidateAllCache(true)
+			m.viewport.GotoBottom()
 		}
 
 		// §12 AskUser panel: detect WaitingUser and open interactive panel
@@ -1318,7 +1337,7 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 
 	// 渲染 Markdown（assistant 消息 + 带 markdown 标记的 system 消息）
 	var rendered string
-	if msg.role == "assistant" || (msg.role == "system" && msg.markdown) {
+	if msg.role == "assistant" || (msg.role == "system" && msg.markdown && !msg.styled) {
 		// Pre-process: render mermaid code blocks to ASCII art
 		// Truncate to glamour wrap width to prevent wrapping.
 		preprocessed := msg.content
@@ -1458,7 +1477,10 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 		}
 		sb.WriteString(toolSummaryStyle.Render(toolSb.String()))
 	case "system":
-		if msg.markdown {
+		if msg.styled {
+			// Pre-styled content: output as-is, no wrapping
+			sb.WriteString(msg.content)
+		} else if msg.markdown {
 			// Markdown system messages (e.g. /usage tables): use glamour-rendered output directly
 			sb.WriteString(rendered)
 		} else if isErrorContent(msg.content) {

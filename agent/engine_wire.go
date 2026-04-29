@@ -47,11 +47,24 @@ func (a *todoManagerAdapter) ClearTodos(sessionKey string) {
 // 创建一个新的 ContextManagerConfig 副本并覆盖 MaxContextTokens，
 // 避免污染 Agent 级别的原始配置（含 sync.RWMutex）。
 func applyUserMaxContext(base *ContextManagerConfig, userMaxCtx int) *ContextManagerConfig {
-	if userMaxCtx <= 0 || base == nil {
+	if base == nil {
+		return nil
+	}
+	// userMaxCtx is the model's native context window (from subscription).
+	// base.MaxContextTokens is the user-configured cap (from settings panel, default 200k).
+	// Use the user's cap if set and lower than the model's window, otherwise use the model's.
+	effective := base.MaxContextTokens
+	if userMaxCtx > 0 && (effective <= 0 || userMaxCtx < effective) {
+		effective = userMaxCtx
+	}
+	if effective <= 0 {
+		return base
+	}
+	if effective == base.MaxContextTokens {
 		return base
 	}
 	return &ContextManagerConfig{
-		MaxContextTokens:     userMaxCtx,
+		MaxContextTokens:     effective,
 		CompressionThreshold: base.CompressionThreshold,
 		DefaultMode:          base.DefaultMode,
 	}
@@ -226,6 +239,14 @@ func (a *Agent) buildMainRunConfig(
 	// 注入 ContextManager
 	cfg.ContextManager = a.GetContextManager()
 	cfg.ContextManagerConfig = applyUserMaxContext(a.contextManagerConfig, userMaxCtx)
+
+	// After Cd changes session CWD, refresh all plugin contexts so script plugins
+	// (e.g. git-info) re-execute in the new directory.
+	if a.pluginMgr != nil {
+		cfg.RefreshPluginWorkDir = func(dir string) {
+			a.pluginMgr.RefreshWorkDir(dir)
+		}
+	}
 
 	// Per-user token usage tracking (persisted to SQLite)
 	cfg.RecordUserTokenUsage = func(senderID, model string, inputTokens, outputTokens, cachedTokens, conversationCount, llmCallCount int) {

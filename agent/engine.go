@@ -229,6 +229,10 @@ type RunConfig struct {
 	// StreamReasoningFunc is called with accumulated reasoning content on each
 	// reasoning delta during LLM streaming. Nil by default (no reasoning streaming).
 	StreamReasoningFunc func(content string)
+
+	// RefreshPluginWorkDir is called after Cd changes the working directory,
+	// so script plugins (e.g. git-info) can re-execute in the new directory.
+	RefreshPluginWorkDir func(dir string)
 }
 
 // TodoManagerProvider 提供 TODO 状态查询和清理
@@ -937,6 +941,9 @@ func buildToolContext(ctx context.Context, cfg *RunConfig) *tools.ToolContext {
 		}
 		tc.SetCurrentDir = func(dir string) {
 			cfg.Session.SetCurrentDir(dir)
+			if cfg.RefreshPluginWorkDir != nil {
+				cfg.RefreshPluginWorkDir(dir)
+			}
 		}
 	} else {
 		// No session — use InitialCWD for CWD persistence (SubAgent or sessionless mode).

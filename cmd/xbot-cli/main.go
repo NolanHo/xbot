@@ -35,6 +35,7 @@ import (
 	"xbot/config"
 	"xbot/llm"
 	log "xbot/logger"
+	"xbot/plugin"
 	"xbot/serverapp"
 	"xbot/storage"
 	"xbot/storage/sqlite"
@@ -1521,6 +1522,11 @@ func main() {
 			if state := app.backend.ApprovalState(); state != nil {
 				cliCh.SetApprovalState(state)
 			}
+			// Inject PluginManager for /plugin command
+			if pm := app.backend.PluginManager(); pm != nil {
+				cliCh.SetPluginManager(func() *plugin.PluginManager { return pm })
+				cliCh.SetWidgetRegistry(pm.WidgetRegistry())
+			}
 			// Inject CheckpointState for Ctrl+K rewind file rollback
 			checkpointDir := filepath.Join(os.Getenv("HOME"), ".xbot", "checkpoints", "cli-default")
 			if cpStore, err := tools.NewCheckpointStore(checkpointDir); err == nil {
@@ -1700,6 +1706,14 @@ func main() {
 		// events are silently buffered.
 		if rb, ok := app.backend.(*agent.RemoteBackend); ok {
 			rb.SubscribeChat(remoteChatID)
+
+			// Initialize remote plugin cache for /plugin commands and widget rendering.
+			remoteCache := channel.NewRemotePluginCache(func(method string, params any) (json.RawMessage, error) {
+				return rb.CallRPC(method, params)
+			})
+			cliCh.SetRemotePluginCache(remoteCache)
+			// Initial fetch + periodic refresh for widget zone content (30s).
+			remoteCache.StartPeriodicRefresh(30 * time.Second)
 		}
 		// Check if server has an active agent turn for this chat (mid-session reconnect).
 		// Run in goroutine to avoid blocking TUI startup on RPC timeout.

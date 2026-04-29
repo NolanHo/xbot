@@ -97,9 +97,9 @@ func setupLogging(cfg *config.Config) {
 func setupLLM(cfg *config.Config) (llm_pkg.LLM, error) {
 	return createLLM(cfg.LLM, llm_pkg.RetryConfig{
 		Attempts: uint(cfg.Agent.LLMRetryAttempts),
-		Delay:    cfg.Agent.LLMRetryDelay,
-		MaxDelay: cfg.Agent.LLMRetryMaxDelay,
-		Timeout:  cfg.Agent.LLMRetryTimeout,
+		Delay:    time.Duration(cfg.Agent.LLMRetryDelay),
+		MaxDelay: time.Duration(cfg.Agent.LLMRetryMaxDelay),
+		Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
 	})
 }
 
@@ -153,7 +153,14 @@ func createAdminLLM(cfg *config.Config) (llm_pkg.LLM, error) {
 			MaxTokens:    cfg.LLM.MaxOutputTokens,
 		}), nil
 	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.LLM.Provider)
+			// All other providers (custom, openrouter, ollama, azure, google, deepseek, etc.)
+			// use OpenAI-compatible API — same as LLMFactory.createClient.
+			return llm_pkg.NewOpenAILLM(llm_pkg.OpenAIConfig{
+				BaseURL:      cfg.LLM.BaseURL,
+				APIKey:       cfg.LLM.APIKey,
+				DefaultModel: cfg.LLM.Model,
+				MaxTokens:    cfg.LLM.MaxOutputTokens,
+			}), nil
 	}
 }
 
@@ -545,9 +552,9 @@ func Run(args []string) error {
 	backend.LLMFactory().SetModelTiers(cfg.LLM)
 	backend.LLMFactory().SetRetryConfig(llm_pkg.RetryConfig{
 		Attempts: uint(cfg.Agent.LLMRetryAttempts),
-		Delay:    cfg.Agent.LLMRetryDelay,
-		MaxDelay: cfg.Agent.LLMRetryMaxDelay,
-		Timeout:  cfg.Agent.LLMRetryTimeout,
+		Delay:    time.Duration(cfg.Agent.LLMRetryDelay),
+		MaxDelay: time.Duration(cfg.Agent.LLMRetryMaxDelay),
+		Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
 	})
 
 	tokenDB, err := sqlite.Open(dbPath)
@@ -803,7 +810,13 @@ func createLLM(cfg config.LLMConfig, retryCfg llm_pkg.RetryConfig) (llm_pkg.LLM,
 			DefaultModel: cfg.Model,
 		})
 	default:
-		return nil, fmt.Errorf("unknown LLM provider: %s", cfg.Provider)
+		// All other providers (custom, openrouter, ollama, azure, google, deepseek, etc.)
+		// use OpenAI-compatible API — same as LLMFactory.createClient.
+		inner = llm_pkg.NewOpenAILLM(llm_pkg.OpenAIConfig{
+			BaseURL:      cfg.BaseURL,
+			APIKey:       cfg.APIKey,
+			DefaultModel: cfg.Model,
+		})
 	}
 
 	return llm_pkg.NewRetryLLM(inner, retryCfg), nil

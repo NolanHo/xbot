@@ -574,9 +574,9 @@ func newCLIApp(serverURL, token string, forceLocal bool) *cliApp {
 
 	llmClient, err := createLLM(cfg.LLM, llm.RetryConfig{
 		Attempts: uint(cfg.Agent.LLMRetryAttempts),
-		Delay:    cfg.Agent.LLMRetryDelay,
-		MaxDelay: cfg.Agent.LLMRetryMaxDelay,
-		Timeout:  cfg.Agent.LLMRetryTimeout,
+		Delay:    time.Duration(cfg.Agent.LLMRetryDelay),
+		MaxDelay: time.Duration(cfg.Agent.LLMRetryMaxDelay),
+		Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
 	})
 	if err != nil {
 		log.WithError(err).Fatal("Failed to create LLM client")
@@ -616,9 +616,9 @@ func newCLIApp(serverURL, token string, forceLocal bool) *cliApp {
 		backend.LLMFactory().SetModelTiers(cfg.LLM)
 		backend.LLMFactory().SetRetryConfig(llm.RetryConfig{
 			Attempts: uint(cfg.Agent.LLMRetryAttempts),
-			Delay:    cfg.Agent.LLMRetryDelay,
-			MaxDelay: cfg.Agent.LLMRetryMaxDelay,
-			Timeout:  cfg.Agent.LLMRetryTimeout,
+			Delay:    time.Duration(cfg.Agent.LLMRetryDelay),
+			MaxDelay: time.Duration(cfg.Agent.LLMRetryMaxDelay),
+			Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
 		})
 	}
 
@@ -2211,7 +2211,20 @@ func createLLM(cfg config.LLMConfig, retryCfg llm.RetryConfig) (llm.LLM, error) 
 			MaxTokens:    cfg.MaxOutputTokens,
 		})
 	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.Provider)
+		// All other providers (custom, openrouter, ollama, azure, google, deepseek, etc.)
+		// use OpenAI-compatible API — same as LLMFactory.createClient.
+		inner = llm.NewOpenAILLM(llm.OpenAIConfig{
+			BaseURL:        cfg.BaseURL,
+			APIKey:         cfg.APIKey,
+			DefaultModel:   cfg.Model,
+			MaxTokens:      cfg.MaxOutputTokens,
+			OnModelsLoadError: func(err error) {
+				select {
+				case channel.ModelsLoadErrorCh() <- err:
+				default:
+				}
+			},
+		})
 	}
 	return llm.NewRetryLLM(inner, retryCfg), nil
 }

@@ -365,23 +365,62 @@ func (s *runState) maybeMaskObservations(ctx context.Context, totalTokens int64,
 	if count == 0 {
 		return
 	}
+	// Diagnostic: log which groups were masked and which were kept
+	{
+		var groups []int
+		for i := range s.messages {
+			if s.messages[i].Role == "assistant" && len(s.messages[i].ToolCalls) > 0 {
+				groups = append(groups, i)
+			}
+		}
+		firstMasked := -1
+		if len(maskedEntries) > 0 {
+			firstMasked = maskedEntries[0].MessageIndex
+		}
+		log.Ctx(ctx).WithFields(log.Fields{
+			"keep_groups":  keepGroups,
+			"total_groups": len(groups),
+			"masked_count": count,
+			"first_masked": firstMasked,
+			"msg_count":    len(s.messages),
+			"token_ratio":  fmt.Sprintf("%.2f", float64(totalTokens)/float64(maxTokens)),
+		}).Info("Observation masking applied")
+	}
 	s.messages = s.syncMessages(masked)
 	GlobalMetrics.MaskingEvents.Add(1)
 	GlobalMetrics.MaskedItems.Add(int64(count))
 
+	// Persist masked content to session so the next Run() loads masked messages.
+	// CRITICAL: s.messages indices include system messages (not in DB).
+	// The session DB indices skip system messages. Calculate the offset so
+	// masked content lands on the correct DB rows.
+	dbOffset := 0
+	for _, msg := range s.messages {
+		if msg.Role == "system" {
+			dbOffset++
+		} else {
+			break
+		}
+	}
 	if s.cfg.Session != nil {
 		persistedMasked := 0
 		for _, entry := range maskedEntries {
+			dbIdx := entry.MessageIndex - dbOffset
+			if dbIdx < 0 {
+				continue // system message, not in DB
+			}
 			if s.persistence.IsPersisted(entry.MessageIndex) {
-				if err := s.cfg.Session.UpdateMessageContent(entry.MessageIndex, entry.Content); err != nil {
-					log.Ctx(ctx).WithError(err).WithField("idx", entry.MessageIndex).Warn("Failed to persist masked message to session")
+				// Use NonDisplayOnly variant to align with GetAllMessages
+				// (both filter WHERE COALESCE(display_only, 0) = 0).
+				if err := s.cfg.Session.UpdateMessageContentNonDisplayOnly(dbIdx, entry.Content); err != nil {
+					log.Ctx(ctx).WithError(err).WithField("idx", dbIdx).WithField("raw_idx", entry.MessageIndex).Warn("Failed to persist masked message to session")
 				} else {
 					persistedMasked++
 				}
 			}
 		}
 		if persistedMasked > 0 {
-			log.Ctx(ctx).WithField("persisted_masked", persistedMasked).Info("Persisted masked messages to session")
+			log.Ctx(ctx).WithField("persisted_masked", persistedMasked).WithField("db_offset", dbOffset).Info("Persisted masked messages to session")
 		}
 	}
 

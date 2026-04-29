@@ -116,6 +116,13 @@ func (pm *PluginManager) SetWorkDir(wd string) {
 	pm.workDir = wd
 }
 
+// WorkDir returns the current working directory (set by SetWorkDir or RefreshWorkDir).
+func (pm *PluginManager) WorkDir() string {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.workDir
+}
+
 // RefreshWorkDir updates the working directory on ALL active plugin contexts.
 // Call this when the session CWD changes (e.g. after Cd) so script plugins
 // re-execute in the new directory.
@@ -1335,6 +1342,44 @@ type HealthChecker interface {
 // WidgetRegistry returns the shared UI widget registry.
 func (pm *PluginManager) WidgetRegistry() *WidgetRegistry {
 	return pm.widgetRegistry
+}
+
+// RenderZoneForWorkDir renders widget content for a zone using the given workDir,
+// without reading or updating global slot content. Each session sees its own
+// per-workDir output — no cross-session contamination.
+func (pm *PluginManager) RenderZoneForWorkDir(zone, workDir string) string {
+	if workDir == "" {
+		return pm.widgetRegistry.RenderZone(zone)
+	}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	// Set workDir on all plugin contexts so providers' Render() reads
+	// from the correct per-workDir output cache.
+	for _, entry := range pm.entries {
+		if entry.Context != nil {
+			entry.Context.SetSessionMetadata(workDir, "", "")
+		}
+	}
+
+	// Render on-the-fly — do NOT use RenderZone which reads global slot content.
+	return pm.widgetRegistry.RenderZoneForContext(zone)
+}
+
+// WidgetInfoForWorkDir returns widget info after setting workDir on contexts.
+func (pm *PluginManager) WidgetInfoForWorkDir(workDir string) []WidgetInfo {
+	if workDir == "" {
+		return pm.widgetRegistry.WidgetInfo()
+	}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	for _, entry := range pm.entries {
+		if entry.Context != nil {
+			entry.Context.SetSessionMetadata(workDir, "", "")
+		}
+	}
+	return pm.widgetRegistry.WidgetInfo()
 }
 
 func (pm *PluginManager) HealthCheck(ctx context.Context) map[string]error {

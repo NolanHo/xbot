@@ -62,6 +62,7 @@ func writeTestManifest(t *testing.T, dir string, m *PluginManifest) {
 // ---------------------------------------------------------------------------
 
 func TestLoadManifest(t *testing.T) {
+	t.Parallel()
 	dir := testPluginDir(t)
 	m := testManifest()
 	writeTestManifest(t, dir, &m)
@@ -82,6 +83,7 @@ func TestLoadManifest(t *testing.T) {
 }
 
 func TestLoadManifestValidation_MissingID(t *testing.T) {
+	t.Parallel()
 	dir := testPluginDir(t)
 	m := testManifest()
 	m.ID = ""
@@ -94,6 +96,7 @@ func TestLoadManifestValidation_MissingID(t *testing.T) {
 }
 
 func TestLoadManifestValidation_InvalidRuntime(t *testing.T) {
+	t.Parallel()
 	dir := testPluginDir(t)
 	m := testManifest()
 	m.Runtime = "invalid"
@@ -106,6 +109,7 @@ func TestLoadManifestValidation_InvalidRuntime(t *testing.T) {
 }
 
 func TestValidateActivationEvent(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		event string
 		valid bool
@@ -132,6 +136,7 @@ func TestValidateActivationEvent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPermissionChecker(t *testing.T) {
+	t.Parallel()
 	pc := NewPermissionChecker([]string{"tools.register", "hooks.subscribe"})
 
 	if !pc.Has(PermToolsRegister) {
@@ -155,6 +160,7 @@ func TestPermissionChecker(t *testing.T) {
 }
 
 func TestPermissionChecker_Wildcard(t *testing.T) {
+	t.Parallel()
 	pc := NewPermissionChecker([]string{"*"})
 	if !pc.Has(PermToolsRegister) {
 		t.Error("wildcard should grant all permissions")
@@ -165,6 +171,7 @@ func TestPermissionChecker_Wildcard(t *testing.T) {
 }
 
 func TestIsValidPermission(t *testing.T) {
+	t.Parallel()
 	for _, perm := range AllPermissions() {
 		if !IsValidPermission(perm) {
 			t.Errorf("AllPermissions() contains invalid permission %q", perm)
@@ -180,6 +187,7 @@ func TestIsValidPermission(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginContext_RegisterTool(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -208,6 +216,7 @@ func TestPluginContext_RegisterTool(t *testing.T) {
 }
 
 func TestPluginContext_RegisterTool_NoPermission(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	m.Permissions = []string{"hooks.subscribe"} // no tools.register
 	storage := &noopStorage{}
@@ -227,6 +236,7 @@ func TestPluginContext_RegisterTool_NoPermission(t *testing.T) {
 }
 
 func TestPluginContext_RegisterTools(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -256,6 +266,7 @@ func TestPluginContext_RegisterTools(t *testing.T) {
 }
 
 func TestPluginContext_RegisterTools_PartialFailure(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -299,6 +310,7 @@ func TestPluginContext_RegisterTools_PartialFailure(t *testing.T) {
 }
 
 func TestPluginContext_RegisterHook(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -326,6 +338,7 @@ func TestPluginContext_RegisterHook(t *testing.T) {
 }
 
 func TestPluginContext_EnrichContext(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -347,6 +360,7 @@ func TestPluginContext_EnrichContext(t *testing.T) {
 }
 
 func TestPluginContext_OnEvent_NilHandler(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -361,6 +375,7 @@ func TestPluginContext_OnEvent_NilHandler(t *testing.T) {
 }
 
 func TestPluginContext_EnrichContext_NilEnricher(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -379,6 +394,7 @@ func TestPluginContext_EnrichContext_NilEnricher(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFileStorage(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	storage, err := NewFileStorage(dir)
 	if err != nil {
@@ -421,6 +437,7 @@ func TestFileStorage(t *testing.T) {
 }
 
 func TestFileStorage_Persistence(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	// Create and write
@@ -492,6 +509,7 @@ func (f *mockRuntimeFactory) Create(manifest *PluginManifest, dir string) (Plugi
 }
 
 func TestPluginManager_Register(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p := &mockPlugin{manifest: testManifest()}
 
@@ -510,6 +528,7 @@ func TestPluginManager_Register(t *testing.T) {
 }
 
 func TestPluginManager_Activate(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p := &mockPlugin{manifest: testManifest()}
 	pm.Register(p)
@@ -535,6 +554,7 @@ func TestPluginManager_Activate(t *testing.T) {
 }
 
 func TestPluginManager_DeactivateAll(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p := &mockPlugin{manifest: testManifest()}
 	pm.Register(p)
@@ -553,6 +573,7 @@ func TestPluginManager_DeactivateAll(t *testing.T) {
 }
 
 func TestPluginManager_DuplicateRegistration(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p1 := &mockPlugin{manifest: testManifest()}
 	p2 := &mockPlugin{manifest: testManifest()}
@@ -565,6 +586,7 @@ func TestPluginManager_DuplicateRegistration(t *testing.T) {
 }
 
 func TestPluginManager_ActivateForEvent(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	m.ActivationEvents = []string{"onTool:code_review"}
 
@@ -592,6 +614,7 @@ func TestPluginManager_ActivateForEvent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHookBridge_Dispatch(t *testing.T) {
+	t.Parallel()
 	bridge := NewPluginHookBridge()
 
 	// Register a hook that denies Shell commands
@@ -630,6 +653,7 @@ func TestHookBridge_Dispatch(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnricherRegistry(t *testing.T) {
+	t.Parallel()
 	reg := NewEnricherRegistry()
 
 	reg.Register("plugin1", "status", func(ctx context.Context) (string, error) {
@@ -657,6 +681,7 @@ func TestEnricherRegistry(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginToolAdapter(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{
 			Name:        "test_tool",
@@ -678,6 +703,7 @@ func TestPluginToolAdapter(t *testing.T) {
 }
 
 func TestPluginToolAdapter_DescriptionWithPrefix(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{
 			Name:        "test_tool",
@@ -701,6 +727,7 @@ func TestPluginToolAdapter_DescriptionWithPrefix(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDiscoverPlugins(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pluginsDir := filepath.Join(baseDir, "plugins")
 	os.MkdirAll(pluginsDir, 0755)
@@ -730,6 +757,7 @@ func TestDiscoverPlugins(t *testing.T) {
 }
 
 func TestDiscoverPlugins_EmptyDir(t *testing.T) {
+	t.Parallel()
 	manifests := DiscoverPlugins([]string{"/nonexistent"})
 	if len(manifests) != 0 {
 		t.Errorf("expected 0 plugins from nonexistent dir, got %d", len(manifests))
@@ -741,6 +769,7 @@ func TestDiscoverPlugins_EmptyDir(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMatchToolName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		pattern string
 		name    string
@@ -782,6 +811,7 @@ func TestMatchToolName(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParseToolInputString(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		input   string
@@ -845,6 +875,7 @@ func TestParseToolInputString(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginToolAdapter_Execute(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{
 			Name:        "test_exec",
@@ -878,6 +909,7 @@ func TestPluginToolAdapter_Execute(t *testing.T) {
 }
 
 func TestPluginToolAdapter_ErrorResult(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "err_tool", Description: "error tool"},
 		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
@@ -917,6 +949,7 @@ func strSearch(s, substr string) bool {
 // ---------------------------------------------------------------------------
 
 func TestEnricherRegistry_ErrorHandling(t *testing.T) {
+	t.Parallel()
 	reg := NewEnricherRegistry()
 
 	reg.Register("plugin1", "failing", func(ctx context.Context) (string, error) {
@@ -944,6 +977,7 @@ func TestEnricherRegistry_ErrorHandling(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLoadManifest_GRPCExecutable(t *testing.T) {
+	t.Parallel()
 	dir := testPluginDir(t)
 	m := testManifest()
 	m.Runtime = RuntimeGRPC
@@ -965,6 +999,7 @@ func TestLoadManifest_GRPCExecutable(t *testing.T) {
 }
 
 func TestLoadManifest_GRPCNoEntryOrExecutable(t *testing.T) {
+	t.Parallel()
 	dir := testPluginDir(t)
 	m := testManifest()
 	m.Runtime = RuntimeGRPC
@@ -983,6 +1018,7 @@ func TestLoadManifest_GRPCNoEntryOrExecutable(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginManager_DisabledPlugin(t *testing.T) {
+	t.Parallel()
 	// Create a plugin directory
 	baseDir := t.TempDir()
 	pluginsDir := filepath.Join(baseDir, "plugins")
@@ -1018,6 +1054,7 @@ func TestPluginManager_DisabledPlugin(t *testing.T) {
 }
 
 func TestPluginManager_RegisterAndActivate(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p := &mockPlugin{manifest: testManifest()}
 
@@ -1039,6 +1076,7 @@ func TestPluginManager_RegisterAndActivate(t *testing.T) {
 }
 
 func TestPluginManager_PanicRecovery(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	// The activate method already has panic recovery, but let's test with
@@ -1063,6 +1101,7 @@ func TestPluginManager_PanicRecovery(t *testing.T) {
 }
 
 func TestPluginManager_ConcurrentActivation(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	var wg sync.WaitGroup
@@ -1095,6 +1134,7 @@ func TestPluginManager_ConcurrentActivation(t *testing.T) {
 }
 
 func TestEnricherRegistry_Empty(t *testing.T) {
+	t.Parallel()
 	reg := NewEnricherRegistry()
 
 	if reg.Count() != 0 {
@@ -1114,6 +1154,7 @@ func TestEnricherRegistry_Empty(t *testing.T) {
 }
 
 func TestPluginBridge_NoHandlers(t *testing.T) {
+	t.Parallel()
 	bridge := NewPluginHookBridge()
 
 	ctx := context.Background()
@@ -1128,6 +1169,7 @@ func TestPluginBridge_NoHandlers(t *testing.T) {
 }
 
 func TestPermissionChecker_EmptyPermissions(t *testing.T) {
+	t.Parallel()
 	pc := NewPermissionChecker(nil)
 
 	if pc.Has(PermToolsRegister) {
@@ -1151,6 +1193,7 @@ func TestPermissionChecker_EmptyPermissions(t *testing.T) {
 }
 
 func TestManifest_IDValidation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		id     string
 		wantOK bool
@@ -1188,6 +1231,7 @@ func TestManifest_IDValidation(t *testing.T) {
 }
 
 func TestPluginContext_SetSessionMetadata(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -1222,6 +1266,7 @@ func TestPluginContext_SetSessionMetadata(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSimplePluginTool_ExecuteWithContext_V2(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "v2_tool", Description: "V2 test tool"},
 		ExecV2Fn: func(ctx *ToolCallContext, input string) (*ToolResult, error) {
@@ -1246,6 +1291,7 @@ func TestSimplePluginTool_ExecuteWithContext_V2(t *testing.T) {
 }
 
 func TestSimplePluginTool_ExecuteWithContext_Fallback(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "fallback_tool", Description: "fallback test"},
 		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
@@ -1265,6 +1311,7 @@ func TestSimplePluginTool_ExecuteWithContext_Fallback(t *testing.T) {
 }
 
 func TestSimplePluginTool_ExecuteWithContext_NoFunc(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "nofunc_tool", Description: "no func"},
 	}
@@ -1280,6 +1327,7 @@ func TestSimplePluginTool_ExecuteWithContext_NoFunc(t *testing.T) {
 }
 
 func TestPluginToolAdapter_V2Detection(t *testing.T) {
+	t.Parallel()
 	// Create a V2 tool
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "adapter_v2", Description: "adapter v2 test"},
@@ -1312,6 +1360,7 @@ func TestPluginToolAdapter_V2Detection(t *testing.T) {
 }
 
 func TestPluginToolAdapter_V1Fallback(t *testing.T) {
+	t.Parallel()
 	// V1-only tool (no ExecV2Fn)
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "v1_only", Description: "V1 only"},
@@ -1343,6 +1392,7 @@ func TestPluginToolAdapter_V1Fallback(t *testing.T) {
 }
 
 func TestPluginToolV2_InterfaceAssertion(t *testing.T) {
+	t.Parallel()
 	v2Tool := &SimplePluginTool{
 		Def: ToolDef{Name: "interface_check", Description: "check"},
 		ExecV2Fn: func(ctx *ToolCallContext, input string) (*ToolResult, error) {
@@ -1401,6 +1451,7 @@ func (s *sickPlugin) HealthCheck(ctx context.Context) error {
 }
 
 func TestPluginManager_HealthCheck_Healthy(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p := &healthyPlugin{manifest: testManifest()}
 	pm.RegisterAndActivate(context.Background(), p)
@@ -1415,6 +1466,7 @@ func TestPluginManager_HealthCheck_Healthy(t *testing.T) {
 }
 
 func TestPluginManager_HealthCheck_Sick(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	m := testManifest()
 	m.ID = "com.test.sick"
@@ -1431,6 +1483,7 @@ func TestPluginManager_HealthCheck_Sick(t *testing.T) {
 }
 
 func TestPluginManager_HealthCheck_NoHealthChecker(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p := &mockPlugin{manifest: testManifest()}
 	pm.RegisterAndActivate(context.Background(), p)
@@ -1446,6 +1499,7 @@ func TestPluginManager_HealthCheck_NoHealthChecker(t *testing.T) {
 }
 
 func TestPluginManager_HealthCheck_Mixed(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	// Healthy
@@ -1480,6 +1534,7 @@ func TestPluginManager_HealthCheck_Mixed(t *testing.T) {
 }
 
 func TestPluginManager_HealthCheck_InactivePlugin(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p := &healthyPlugin{manifest: testManifest()}
 	// Register but don't activate
@@ -1496,6 +1551,7 @@ func TestPluginManager_HealthCheck_InactivePlugin(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginManager_Metrics_Empty(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	m := pm.Metrics()
 	if m.TotalPlugins != 0 {
@@ -1507,6 +1563,7 @@ func TestPluginManager_Metrics_Empty(t *testing.T) {
 }
 
 func TestPluginManager_Metrics_Active(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	p := &mockPlugin{manifest: testManifest()}
 	pm.RegisterAndActivate(context.Background(), p)
@@ -1525,6 +1582,7 @@ func TestPluginManager_Metrics_Active(t *testing.T) {
 }
 
 func TestPluginManager_Metrics_MultiplePlugins(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	// Register 3 plugins with different capabilities
@@ -1558,6 +1616,7 @@ func TestPluginManager_Metrics_MultiplePlugins(t *testing.T) {
 }
 
 func TestPluginManager_Metrics_WithHooks(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	m := testManifest()
 	m.Permissions = []string{"tools.register", "hooks.subscribe", "context.enrich", "storage.private"}
@@ -1609,6 +1668,7 @@ func (r *richMockPlugin) Deactivate(ctx PluginContext) error { return nil }
 // ---------------------------------------------------------------------------
 
 func TestToolCallContext_AllFields(t *testing.T) {
+	t.Parallel()
 	bg := context.Background()
 	tcc := &ToolCallContext{
 		SessionID: "sess-001",
@@ -1636,6 +1696,7 @@ func TestToolCallContext_AllFields(t *testing.T) {
 }
 
 func TestPluginMetrics_JSON(t *testing.T) {
+	t.Parallel()
 	m := PluginMetrics{
 		TotalPlugins:   5,
 		ActivePlugins:  3,
@@ -1680,6 +1741,7 @@ func TestPluginMetrics_JSON(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginManager_String(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	// Empty manager
@@ -1715,6 +1777,7 @@ func TestPluginManager_String(t *testing.T) {
 }
 
 func TestPluginManager_String_WithErrors(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	// Activate a plugin that fails
@@ -1730,6 +1793,7 @@ func TestPluginManager_String_WithErrors(t *testing.T) {
 }
 
 func TestPluginManager_HealthCheck_Empty(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	// No plugins at all
@@ -1740,6 +1804,7 @@ func TestPluginManager_HealthCheck_Empty(t *testing.T) {
 }
 
 func TestPluginManager_Metrics_AfterActivation(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	// Before activation
@@ -1771,6 +1836,7 @@ func TestPluginManager_Metrics_AfterActivation(t *testing.T) {
 }
 
 func TestManifest_DependencyValidation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		deps    []PluginDependency
@@ -1849,6 +1915,7 @@ func TestManifest_DependencyValidation(t *testing.T) {
 }
 
 func TestWASMRuntime_Create(t *testing.T) {
+	t.Parallel()
 	factory := NewWASMRuntime()
 
 	m := &PluginManifest{
@@ -1879,6 +1946,7 @@ func TestWASMRuntime_Create(t *testing.T) {
 }
 
 func TestWASMRuntime_Create_WrongRuntime(t *testing.T) {
+	t.Parallel()
 	factory := NewWASMRuntime()
 
 	m := &PluginManifest{
@@ -1895,6 +1963,7 @@ func TestWASMRuntime_Create_WrongRuntime(t *testing.T) {
 }
 
 func TestWASMRuntime_Activate_NoOp(t *testing.T) {
+	t.Parallel()
 	factory := NewWASMRuntime()
 
 	m := &PluginManifest{
@@ -1928,6 +1997,7 @@ func TestWASMRuntime_Activate_NoOp(t *testing.T) {
 }
 
 func TestPluginManager_DeactivateAll_NotInitialized(t *testing.T) {
+	t.Parallel()
 	// nil-safe: calling DeactivateAll on a manager with no active plugins
 	pm := newTestPM(t)
 
@@ -1944,6 +2014,7 @@ func TestPluginManager_DeactivateAll_NotInitialized(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginEventBus_SubscribeAndPublish(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 
 	var received []string
@@ -1968,6 +2039,7 @@ func TestPluginEventBus_SubscribeAndPublish(t *testing.T) {
 }
 
 func TestPluginEventBus_Unsubscribe(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 
 	called := 0
@@ -1994,6 +2066,7 @@ func TestPluginEventBus_Unsubscribe(t *testing.T) {
 }
 
 func TestPluginEventBus_NoSubscribers(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 	errs := bus.Publish(context.Background(), "nonexistent", "data")
 	if len(errs) != 0 {
@@ -2002,6 +2075,7 @@ func TestPluginEventBus_NoSubscribers(t *testing.T) {
 }
 
 func TestPluginEventBus_PanicRecovery(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 
 	bus.Subscribe("panic.topic", func(ctx context.Context, topic string, data any) error {
@@ -2022,6 +2096,7 @@ func TestPluginEventBus_PanicRecovery(t *testing.T) {
 }
 
 func TestPluginManager_Reload(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 
 	// Create plugin directory with manifest
@@ -2076,6 +2151,7 @@ func TestPluginManager_Reload(t *testing.T) {
 }
 
 func TestPluginManager_Reload_NonExistent(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	err := pm.Reload(context.Background(), "nonexistent")
 	if err == nil {
@@ -2084,6 +2160,7 @@ func TestPluginManager_Reload_NonExistent(t *testing.T) {
 }
 
 func TestPluginContext_Subscribe_NoPermission(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	m.Permissions = []string{"bus.plugin", "bus.write"} // missing bus.read
 	storage := &noopStorage{}
@@ -2099,6 +2176,7 @@ func TestPluginContext_Subscribe_NoPermission(t *testing.T) {
 }
 
 func TestPluginContext_Publish_NoPermission(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	m.Permissions = []string{"bus.plugin", "bus.read"} // missing bus.write
 	storage := &noopStorage{}
@@ -2165,6 +2243,7 @@ func (p *e2eFullPlugin) Deactivate(ctx PluginContext) error { return nil }
 func (p *e2eFullPlugin) HealthCheck(ctx context.Context) error { return nil }
 
 func TestPluginE2E_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	// 1. Create PluginManager
 	pm := newTestPM(t)
 
@@ -2308,6 +2387,7 @@ func TestPluginE2E_FullLifecycle(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParseVersion(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		version   string
 		wantMajor int
@@ -2350,6 +2430,7 @@ func TestParseVersion(t *testing.T) {
 }
 
 func TestLoadManifest_InvalidVersion(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		version string
@@ -2382,6 +2463,7 @@ func TestLoadManifest_InvalidVersion(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildToolDef_InputSchema(t *testing.T) {
+	t.Parallel()
 	def := BuildToolDef("test_tool", "A test tool",
 		ToolParamDef{Name: "name", Type: "string", Description: "The name", Required: true},
 		ToolParamDef{Name: "count", Type: "number", Description: "The count"},
@@ -2425,6 +2507,7 @@ func TestBuildToolDef_InputSchema(t *testing.T) {
 }
 
 func TestBuildToolDef_InputSchema_NoParams(t *testing.T) {
+	t.Parallel()
 	def := BuildToolDef("empty_tool", "No params")
 
 	if def.InputSchema == nil {
@@ -2448,6 +2531,7 @@ func TestBuildToolDef_InputSchema_NoParams(t *testing.T) {
 }
 
 func TestBuildToolDef_InputSchema_AllOptional(t *testing.T) {
+	t.Parallel()
 	def := BuildToolDef("optional_tool", "All optional",
 		ToolParamDef{Name: "a", Type: "string", Description: "A"},
 		ToolParamDef{Name: "b", Type: "number", Description: "B"},
@@ -2463,6 +2547,7 @@ func TestBuildToolDef_InputSchema_AllOptional(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildToolDef_JSONSchema(t *testing.T) {
+	t.Parallel()
 	def := BuildToolDef("json_tool", "A tool for JSON schema testing",
 		ToolParamDef{Name: "path", Type: "string", Description: "File path", Required: true},
 		ToolParamDef{Name: "count", Type: "number", Description: "Max items"},
@@ -2534,6 +2619,7 @@ func TestBuildToolDef_JSONSchema(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestToolDef_ToJSONSchema(t *testing.T) {
+	t.Parallel()
 	def := BuildToolDef("read_file", "Read a file from disk",
 		ToolParamDef{Name: "path", Type: "string", Description: "File path", Required: true},
 		ToolParamDef{Name: "max_lines", Type: "number", Description: "Max lines to read"},
@@ -2582,6 +2668,7 @@ func TestToolDef_ToJSONSchema(t *testing.T) {
 }
 
 func TestToolDef_ToJSONSchema_WithRequired(t *testing.T) {
+	t.Parallel()
 	// Test with multiple required parameters
 	def := BuildToolDef("create_file", "Create a new file",
 		ToolParamDef{Name: "path", Type: "string", Description: "File path", Required: true},
@@ -2622,6 +2709,7 @@ func TestToolDef_ToJSONSchema_WithRequired(t *testing.T) {
 }
 
 func TestToolDef_ToJSONSchema_Empty(t *testing.T) {
+	t.Parallel()
 	// Test with no parameters and no version
 	def := ToolDef{
 		Name:        "ping",
@@ -2795,6 +2883,7 @@ func FuzzManifestValidation(f *testing.F) {
 // ---------------------------------------------------------------------------
 
 func TestPluginManager_InstallPlugin(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -2845,6 +2934,7 @@ func TestPluginManager_InstallPlugin(t *testing.T) {
 }
 
 func TestPluginManager_InstallPlugin_InvalidPath(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -2857,6 +2947,7 @@ func TestPluginManager_InstallPlugin_InvalidPath(t *testing.T) {
 }
 
 func TestPluginManager_UninstallPlugin(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -2901,6 +2992,7 @@ func TestPluginManager_UninstallPlugin(t *testing.T) {
 }
 
 func TestPluginManager_UninstallPlugin_ActivePlugin(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -2943,6 +3035,7 @@ func TestPluginManager_UninstallPlugin_ActivePlugin(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginContext_StorageInt(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	dir := t.TempDir()
 	realStorage, err := NewFileStorage(dir)
@@ -2992,6 +3085,7 @@ func TestPluginContext_StorageInt(t *testing.T) {
 }
 
 func TestPluginContext_StorageBool(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	dir := t.TempDir()
 	realStorage, err := NewFileStorage(dir)
@@ -3048,6 +3142,7 @@ func TestPluginContext_StorageBool(t *testing.T) {
 }
 
 func TestPluginContext_StorageJSON(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	dir := t.TempDir()
 	realStorage, err := NewFileStorage(dir)
@@ -3078,6 +3173,7 @@ func TestPluginContext_StorageJSON(t *testing.T) {
 }
 
 func TestPluginContext_StorageGetJSON(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	dir := t.TempDir()
 	realStorage, err := NewFileStorage(dir)
@@ -3157,6 +3253,7 @@ func (p *flakyPlugin) getAttempts() int {
 }
 
 func TestPluginContext_OnPluginError(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	bus := NewPluginEventBus()
 	pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), bus, nil)
@@ -3182,6 +3279,7 @@ func TestPluginContext_OnPluginError(t *testing.T) {
 }
 
 func TestPluginContext_OnPluginError_NoPermission(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	m.Permissions = []string{} // no hooks.subscribe
 	bus := NewPluginEventBus()
@@ -3197,6 +3295,7 @@ func TestPluginContext_OnPluginError_NoPermission(t *testing.T) {
 }
 
 func TestManifest_Timeout(t *testing.T) {
+	t.Parallel()
 	dir := testPluginDir(t)
 	m := testManifest()
 	raw := map[string]any{
@@ -3227,6 +3326,7 @@ func TestManifest_Timeout(t *testing.T) {
 }
 
 func TestManifest_DefaultTimeout(t *testing.T) {
+	t.Parallel()
 	dir := testPluginDir(t)
 	m := testManifest()
 	writeTestManifest(t, dir, &m)
@@ -3318,11 +3418,11 @@ func TestPluginManager_AutoRetry_MaxRetries(t *testing.T) {
 	// Activate — should fail
 	pm.ActivateAll(ctx)
 
-	// Enable auto-retry with maxRetries=2
+	// Enable auto-retry with maxRetries=2 and fast retry interval for tests.
+	pm.SetRetryInterval(50 * time.Millisecond)
 	pm.SetAutoRetry(true, 2)
 
-	// Wait enough time for retries to complete
-	// With exponential backoff: 1s + 2s = 3s total delay for 2 retries
+	// Wait enough time for retries to complete (retryInitialDelay=1s exponential: 1s+2s=3s)
 	time.Sleep(5 * time.Second)
 
 	entry, _ := pm.GetPlugin("com.test.example")
@@ -3352,6 +3452,7 @@ func TestPluginManager_AutoRetry_MaxRetries(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestManifest_ChecksumVerification(t *testing.T) {
+	t.Parallel()
 	t.Run("ValidChecksum", func(t *testing.T) {
 		dir := testPluginDir(t)
 		m := testManifest()
@@ -3518,6 +3619,7 @@ func TestManifest_ChecksumVerification(t *testing.T) {
 }
 
 func TestPluginContext_ResourceTracking(t *testing.T) {
+	t.Parallel()
 	t.Run("InitialCountsZero", func(t *testing.T) {
 		m := testManifest()
 		pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil, nil)
@@ -3632,6 +3734,7 @@ func TestPluginContext_ResourceTracking(t *testing.T) {
 }
 
 func TestPluginManager_Metrics_AfterToolExecution(t *testing.T) {
+	t.Parallel()
 	t.Run("ToolCallCountInMetrics", func(t *testing.T) {
 		pm := newTestPM(t)
 		p := &mockPlugin{manifest: testManifest()}
@@ -3762,6 +3865,7 @@ func TestPluginManager_Metrics_AfterToolExecution(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAuditLogger_LogAndQuery(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.jsonl")
 	al, err := NewAuditLogger(path)
@@ -3801,6 +3905,7 @@ func TestAuditLogger_LogAndQuery(t *testing.T) {
 }
 
 func TestAuditLogger_QueryByPlugin(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	al, err := NewAuditLogger(filepath.Join(dir, "audit.jsonl"))
 	if err != nil {
@@ -3831,6 +3936,7 @@ func TestAuditLogger_QueryByPlugin(t *testing.T) {
 }
 
 func TestAuditLogger_QueryByTimeRange(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	al, err := NewAuditLogger(filepath.Join(dir, "audit.jsonl"))
 	if err != nil {
@@ -3842,13 +3948,13 @@ func TestAuditLogger_QueryByTimeRange(t *testing.T) {
 	// Windows time.Now() has ~15ms granularity, so back-to-back time.Now()
 	// calls may return the same value, breaking time-range assertions.
 	before := time.Now()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(time.Millisecond)
 	p1Time := time.Now()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(time.Millisecond)
 	mid := time.Now()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(time.Millisecond)
 	p2Time := time.Now()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(time.Millisecond)
 	after := time.Now()
 
 	al.Log(AuditEntry{PluginID: "p1", Action: AuditActivate, Timestamp: p1Time})
@@ -3880,6 +3986,7 @@ func TestAuditLogger_QueryByTimeRange(t *testing.T) {
 }
 
 func TestAuditLogger_Clear(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	al, err := NewAuditLogger(filepath.Join(dir, "audit.jsonl"))
 	if err != nil {
@@ -3910,6 +4017,7 @@ func TestAuditLogger_Clear(t *testing.T) {
 }
 
 func TestPluginManager_AuditLog_Activate(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	defer pm.AuditLog().Close()
 
@@ -3936,6 +4044,7 @@ func TestPluginManager_AuditLog_Activate(t *testing.T) {
 }
 
 func TestPluginManager_AuditLog_Install(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	defer pm.AuditLog().Close()
 	pm.SetRuntimeFactory(&mockRuntimeFactory{})
@@ -3973,6 +4082,7 @@ func TestPluginManager_AuditLog_Install(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNativeRuntime(t *testing.T) {
+	t.Parallel()
 	nr := NewNativeRuntime()
 	p := &mockPlugin{manifest: testManifest()}
 	nr.RegisterPlugin(p)
@@ -4000,6 +4110,7 @@ func TestNativeRuntime(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginToolBridge_Execute(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "test-tool", Description: "A test tool"},
 		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
@@ -4028,6 +4139,7 @@ func TestPluginToolBridge_Execute(t *testing.T) {
 }
 
 func TestPluginToolBridge_RateLimited(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "limited-tool", Description: "A limited tool"},
 		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
@@ -4059,6 +4171,7 @@ func TestPluginToolBridge_RateLimited(t *testing.T) {
 }
 
 func TestPluginToolBridge_QuotaExceeded(t *testing.T) {
+	t.Parallel()
 	tool := &SimplePluginTool{
 		Def: ToolDef{Name: "quota-tool", Description: "A quota tool"},
 		ExecFn: func(ctx context.Context, input string) (*ToolResult, error) {
@@ -4094,6 +4207,7 @@ func TestPluginToolBridge_QuotaExceeded(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginEventBus_Unsubscribe_NilHandler(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 	err := bus.Unsubscribe("topic", nil)
 	if err == nil {
@@ -4109,6 +4223,7 @@ func TestPluginEventBus_Unsubscribe_NilHandler(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestWirePluginTools_NilRegistry(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	err := WirePluginTools(pm, nil)
 	if err == nil {
@@ -4121,6 +4236,7 @@ func TestWirePluginTools_NilRegistry(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginConfigStore_LoadEmpty(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := NewPluginConfigStore(dir)
 
@@ -4134,6 +4250,7 @@ func TestPluginConfigStore_LoadEmpty(t *testing.T) {
 }
 
 func TestPluginConfigStore_SaveAndLoad(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := NewPluginConfigStore(dir)
 	pluginID := "com.test.save"
@@ -4171,6 +4288,7 @@ func TestPluginConfigStore_SaveAndLoad(t *testing.T) {
 }
 
 func TestPluginConfigStore_Cache(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := NewPluginConfigStore(dir)
 	pluginID := "com.test.cache"
@@ -4197,6 +4315,7 @@ func TestPluginConfigStore_Cache(t *testing.T) {
 }
 
 func TestPluginConfigStore_Update(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := NewPluginConfigStore(dir)
 
@@ -4229,6 +4348,7 @@ func TestPluginConfigStore_Update(t *testing.T) {
 }
 
 func TestGetDefaultConfig(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		manifest *PluginManifest
@@ -4303,6 +4423,7 @@ func TestGetDefaultConfig(t *testing.T) {
 }
 
 func TestPluginContext_Config(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := NewPluginConfigStore(dir)
 
@@ -4360,6 +4481,7 @@ func TestPluginContext_Config(t *testing.T) {
 }
 
 func TestPluginContext_Config_NilStore(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	// nil configStore should not panic
 	pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil, nil)
@@ -4379,6 +4501,7 @@ func TestPluginContext_Config_NilStore(t *testing.T) {
 }
 
 func TestPluginContext_SetConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	store := NewPluginConfigStore(dir)
 	pluginID := "com.test.setconfig"
@@ -4428,6 +4551,7 @@ func TestPluginContext_SetConfig(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginRegistry_New(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 	reg := NewPluginRegistry(pm)
 	if reg == nil {
@@ -4458,6 +4582,7 @@ func TestPluginRegistry_New(t *testing.T) {
 }
 
 func TestPluginRegistry_Search(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	// Register two plugins with different metadata
@@ -4542,6 +4667,7 @@ func TestPluginRegistry_Search(t *testing.T) {
 }
 
 func TestPluginRegistry_List(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -4594,6 +4720,7 @@ func TestPluginRegistry_List(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginContext_OnAllToolUse(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -4616,6 +4743,7 @@ func TestPluginContext_OnAllToolUse(t *testing.T) {
 }
 
 func TestPluginContext_OnError(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -4635,6 +4763,7 @@ func TestPluginContext_OnError(t *testing.T) {
 }
 
 func TestPluginContext_OnUserPrompt(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -4654,6 +4783,7 @@ func TestPluginContext_OnUserPrompt(t *testing.T) {
 }
 
 func TestPluginContext_OnAgentStop(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -4670,6 +4800,7 @@ func TestPluginContext_OnAgentStop(t *testing.T) {
 }
 
 func TestPluginContext_OnSessionStart(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -4686,6 +4817,7 @@ func TestPluginContext_OnSessionStart(t *testing.T) {
 }
 
 func TestPluginContext_OnSessionEnd(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	storage := &noopStorage{}
 	pc := newPluginContext(&m, storage, newPluginLogger(m.ID), nil, nil)
@@ -4702,6 +4834,7 @@ func TestPluginContext_OnSessionEnd(t *testing.T) {
 }
 
 func TestDeniedStorage(t *testing.T) {
+	t.Parallel()
 	ds := newDeniedStorage("test.plugin")
 
 	// Get always returns empty
@@ -4740,6 +4873,7 @@ func TestDeniedStorage(t *testing.T) {
 }
 
 func TestCloneMap(t *testing.T) {
+	t.Parallel()
 	original := map[string]any{"a": 1, "b": "hello", "c": true}
 	cloned := cloneMap(original)
 
@@ -4771,6 +4905,7 @@ func TestCloneMap(t *testing.T) {
 }
 
 func TestPluginLogger_WithField(t *testing.T) {
+	t.Parallel()
 	cl := &captureLogger{}
 
 	// Single WithField
@@ -4843,6 +4978,7 @@ func TestPluginLogger_WithField(t *testing.T) {
 }
 
 func TestPluginLogger_WithFields(t *testing.T) {
+	t.Parallel()
 	cl := &captureLogger{}
 
 	// Batch fields
@@ -4917,6 +5053,7 @@ func TestPluginLogger_WithFields(t *testing.T) {
 }
 
 func TestToolResultBuilder_Basic(t *testing.T) {
+	t.Parallel()
 	result := NewResultBuilder().
 		Content("hello world").
 		Metadata("key1", "value1").
@@ -4934,6 +5071,7 @@ func TestToolResultBuilder_Basic(t *testing.T) {
 }
 
 func TestToolResultBuilder_WithError(t *testing.T) {
+	t.Parallel()
 	result := NewResultBuilder().
 		Error("something went wrong").
 		Build()
@@ -4947,6 +5085,7 @@ func TestToolResultBuilder_WithError(t *testing.T) {
 }
 
 func TestToolResultBuilder_WithMetadata(t *testing.T) {
+	t.Parallel()
 	result := NewResultBuilder().
 		Content("data").
 		Metadata("format", "json").
@@ -4969,6 +5108,7 @@ func TestToolResultBuilder_WithMetadata(t *testing.T) {
 }
 
 func TestToolResultBuilder_Empty(t *testing.T) {
+	t.Parallel()
 	result := NewResultBuilder().Build()
 
 	if result.Content != "" {
@@ -4996,6 +5136,7 @@ func (f *failingRuntimeFactory) Create(manifest *PluginManifest, dir string) (Pl
 // TestPluginManager_Reload_ManifestLoadFails verifies Reload returns an error
 // when the manifest file has been deleted from disk.
 func TestPluginManager_Reload_ManifestLoadFails(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 
 	// Create plugin directory with manifest
@@ -5043,6 +5184,7 @@ func TestPluginManager_Reload_ManifestLoadFails(t *testing.T) {
 // TestPluginManager_Reload_RuntimeCreateFails verifies Reload returns an error
 // when the runtime factory fails to create the plugin.
 func TestPluginManager_Reload_RuntimeCreateFails(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 
 	// Create plugin directory with manifest
@@ -5088,6 +5230,7 @@ func TestPluginManager_Reload_RuntimeCreateFails(t *testing.T) {
 // TestPluginManager_InstallPlugin_AlreadyExists verifies InstallPlugin returns
 // ErrPluginAlreadyRegistered when a plugin with the same ID is already registered.
 func TestPluginManager_InstallPlugin_AlreadyExists(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5118,6 +5261,7 @@ func TestPluginManager_InstallPlugin_AlreadyExists(t *testing.T) {
 // TestPluginManager_InstallPlugin_InvalidManifest verifies InstallPlugin returns
 // an error when the source directory contains an invalid manifest.
 func TestPluginManager_InstallPlugin_InvalidManifest(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5139,6 +5283,7 @@ func TestPluginManager_InstallPlugin_InvalidManifest(t *testing.T) {
 // TestPluginManager_InstallPlugin_RuntimeCreateFails verifies InstallPlugin returns
 // an entry with StateError when the runtime factory fails.
 func TestPluginManager_InstallPlugin_RuntimeCreateFails(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5173,6 +5318,7 @@ func TestPluginManager_InstallPlugin_RuntimeCreateFails(t *testing.T) {
 // TestPluginManager_UninstallPlugin_NotFound verifies UninstallPlugin returns
 // ErrPluginNotFound when the plugin doesn't exist.
 func TestPluginManager_UninstallPlugin_NotFound(t *testing.T) {
+	t.Parallel()
 	pm := newTestPM(t)
 
 	err := pm.UninstallPlugin(context.Background(), "nonexistent")
@@ -5187,6 +5333,7 @@ func TestPluginManager_UninstallPlugin_NotFound(t *testing.T) {
 // TestPluginEventBus_Subscribe_NilHandler verifies Subscribe returns an error
 // when the handler is nil.
 func TestPluginEventBus_Subscribe_NilHandler(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 
 	err := bus.Subscribe("topic", nil)
@@ -5201,6 +5348,7 @@ func TestPluginEventBus_Subscribe_NilHandler(t *testing.T) {
 // TestPluginEventBus_Unsubscribe_NoHandlers verifies Unsubscribe returns an error
 // when no handlers exist for the topic.
 func TestPluginEventBus_Unsubscribe_NoHandlers(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 
 	handler := func(ctx context.Context, topic string, data any) error {
@@ -5219,6 +5367,7 @@ func TestPluginEventBus_Unsubscribe_NoHandlers(t *testing.T) {
 // TestPluginEventBus_Unsubscribe_HandlerNotFound verifies Unsubscribe returns an error
 // when the specific handler is not subscribed to the topic.
 func TestPluginEventBus_Unsubscribe_HandlerNotFound(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 
 	handler1 := func(ctx context.Context, topic string, data any) error {
@@ -5243,6 +5392,7 @@ func TestPluginEventBus_Unsubscribe_HandlerNotFound(t *testing.T) {
 
 // TestPluginEventBus_HandlerReturnsError verifies Publish collects errors from handlers.
 func TestPluginEventBus_HandlerReturnsError(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 
 	expectedErr := fmt.Errorf("handler error")
@@ -5261,6 +5411,7 @@ func TestPluginEventBus_HandlerReturnsError(t *testing.T) {
 
 // TestPluginEventBus_ConcurrentPublish verifies no panic or race under concurrent use.
 func TestPluginEventBus_ConcurrentPublish(t *testing.T) {
+	t.Parallel()
 	bus := NewPluginEventBus()
 
 	var wg sync.WaitGroup
@@ -5283,6 +5434,7 @@ func TestPluginEventBus_ConcurrentPublish(t *testing.T) {
 
 // TestQuotaManager_NoConfigUnlimited verifies plugins without quota config get unlimited access.
 func TestQuotaManager_NoConfigUnlimited(t *testing.T) {
+	t.Parallel()
 	qm := NewPluginQuotaManager(nil)
 
 	allowed, remaining := qm.CheckToolCall("unknown-plugin")
@@ -5312,6 +5464,7 @@ func TestQuotaManager_NoConfigUnlimited(t *testing.T) {
 
 // TestQuotaManager_ZeroMaxToolCalls verifies MaxToolCallsPerDay=0 means unlimited.
 func TestQuotaManager_ZeroMaxToolCalls(t *testing.T) {
+	t.Parallel()
 	qm := NewPluginQuotaManager(map[string]PluginQuota{
 		"zero-plugin": {MaxToolCallsPerDay: 0, MaxStorageMB: 100},
 	})
@@ -5327,6 +5480,7 @@ func TestQuotaManager_ZeroMaxToolCalls(t *testing.T) {
 
 // TestMiddlewareChain_UseNil verifies Use(nil) does not add anything to the chain.
 func TestMiddlewareChain_UseNil(t *testing.T) {
+	t.Parallel()
 	chain := NewMiddlewareChain()
 	before := chain.Len()
 	chain.Use(nil)
@@ -5360,6 +5514,7 @@ func (p *deactivateErrPlugin) Deactivate(ctx PluginContext) error {
 // TestPluginManager_UninstallPlugin_DeactivateFails verifies that UninstallPlugin
 // completes successfully even when Deactivate returns an error (error is logged, not propagated).
 func TestPluginManager_UninstallPlugin_DeactivateFails(t *testing.T) {
+	t.Parallel()
 	baseDir := t.TempDir()
 	pm := NewPluginManager(baseDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5395,6 +5550,7 @@ func TestPluginManager_UninstallPlugin_DeactivateFails(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPluginManager_ExportConfig(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5447,6 +5603,7 @@ func TestPluginManager_ExportConfig(t *testing.T) {
 }
 
 func TestPluginManager_ExportConfig_EmptyManager(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5470,6 +5627,7 @@ func TestPluginManager_ExportConfig_EmptyManager(t *testing.T) {
 }
 
 func TestPluginManager_ExportConfig_WithDisabled(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5503,6 +5661,7 @@ func TestPluginManager_ExportConfig_WithDisabled(t *testing.T) {
 }
 
 func TestPluginManager_ImportConfig(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5561,6 +5720,7 @@ func TestPluginManager_ImportConfig(t *testing.T) {
 }
 
 func TestPluginManager_ImportConfig_EmptyData(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5575,6 +5735,7 @@ func TestPluginManager_ImportConfig_EmptyData(t *testing.T) {
 }
 
 func TestPluginManager_ImportConfig_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5585,6 +5746,7 @@ func TestPluginManager_ImportConfig_InvalidJSON(t *testing.T) {
 }
 
 func TestPluginManager_ImportConfig_FutureVersion(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5596,6 +5758,7 @@ func TestPluginManager_ImportConfig_FutureVersion(t *testing.T) {
 }
 
 func TestPluginManager_ImportConfig_UnknownPlugin(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5622,6 +5785,7 @@ func TestPluginManager_ImportConfig_UnknownPlugin(t *testing.T) {
 }
 
 func TestPluginManager_ExportImport_RoundTrip(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	pm := NewPluginManager(tmpDir)
 	t.Cleanup(func() { pm.Close() })
@@ -5670,6 +5834,7 @@ func TestPluginManager_ExportImport_RoundTrip(t *testing.T) {
 }
 
 func TestPluginContext_SetValue_GetValue(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil, nil)
 
@@ -5695,6 +5860,7 @@ func TestPluginContext_SetValue_GetValue(t *testing.T) {
 }
 
 func TestPluginContext_SetValue_Overwrite(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil, nil)
 
@@ -5711,6 +5877,7 @@ func TestPluginContext_SetValue_Overwrite(t *testing.T) {
 }
 
 func TestPluginContext_GetValue_NotFound(t *testing.T) {
+	t.Parallel()
 	m := testManifest()
 	pc := newPluginContext(&m, &noopStorage{}, newPluginLogger(m.ID), nil, nil)
 

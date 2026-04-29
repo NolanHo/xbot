@@ -686,7 +686,7 @@ func abs(x float64) float64 {
 func buildWidgetRenderFn(st cliStyles) func(spans []plugin.WidgetSpan, width int) string {
 	styleMap := map[plugin.StyleClass]lipgloss.Style{
 		plugin.StyleNormal:  lipgloss.NewStyle(),
-		plugin.StyleDim:     st.TextMutedSt,
+		plugin.StyleDim:     st.ProgressDim,
 		plugin.StyleAccent:  st.Accent,
 		plugin.StyleSuccess: st.ReadyStatus,
 		plugin.StyleWarning: st.WarningSt,

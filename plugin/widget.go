@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -35,6 +36,39 @@ func NewWidgetRegistry() *WidgetRegistry {
 		slots:  make(map[string]*widgetSlot),
 		byZone: make(map[string][]*widgetSlot),
 	}
+}
+
+// BasicANSIRender maps StyleClass to simple ANSI escape codes.
+// Used as the default render function for server-side widget rendering
+// (e.g., plugin_widgets RPC). The TUI overrides this with lipgloss rendering
+// via SetDefaultRenderFn in CLIChannel.
+func BasicANSIRender(spans []WidgetSpan, _ int) string {
+	var sb strings.Builder
+	for _, sp := range spans {
+		color := ""
+		switch sp.Style {
+		case StyleDim:
+			color = "\033[2m" // dim
+		case StyleAccent:
+			color = "\033[36m" // cyan
+		case StyleSuccess:
+			color = "\033[32m" // green
+		case StyleWarning:
+			color = "\033[33m" // yellow
+		case StyleError:
+			color = "\033[31m" // red
+		case StyleInfo:
+			color = "\033[34m" // blue
+		case StyleMuted:
+			color = "\033[37;2m" // white dim
+		default:
+			color = "\033[0m"
+		}
+		sb.WriteString(color)
+		sb.WriteString(sp.Text)
+		sb.WriteString("\033[0m")
+	}
+	return sb.String()
 }
 
 // OnUpdated sets a callback that fires after any widget content is updated.
@@ -181,18 +215,40 @@ func (r *WidgetRegistry) RefreshAllWidgets(width int, renderFn RenderFunc) {
 }
 
 func (r *WidgetRegistry) RenderZone(zone string) string {
+	return r.renderZone(zone, true)
+}
+
+// RenderZoneForContext renders zone content by calling providers' Render()
+// directly, bypassing the global slot cache. Each call re-renders from the
+// provider, which reads pctx.WorkingDir() for per-session output.
+func (r *WidgetRegistry) RenderZoneForContext(zone string) string {
+	return r.renderZone(zone, false)
+}
+
+func (r *WidgetRegistry) renderZone(zone string, useCache bool) string {
 	r.mu.RLock()
 	slots := r.byZone[zone]
 	slotsCopy := make([]*widgetSlot, len(slots))
 	copy(slotsCopy, slots)
+	fn := r.defaultRenderFn
 	r.mu.RUnlock()
 	if len(slotsCopy) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(slotsCopy))
 	for _, s := range slotsCopy {
-		if cached := s.content.Load(); cached != nil && *cached != "" {
-			parts = append(parts, *cached)
+		if useCache {
+			if cached := s.content.Load(); cached != nil && *cached != "" {
+				parts = append(parts, *cached)
+			}
+		} else {
+			// Render on-the-fly from provider
+			spans := SanitizeSpans(s.provider.Render(0))
+			if fn != nil {
+				parts = append(parts, fn(spans, 0))
+			} else {
+				parts = append(parts, BasicANSIRender(spans, 0))
+			}
 		}
 	}
 	if len(parts) == 0 {

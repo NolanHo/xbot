@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"xbot/agent"
@@ -28,6 +29,10 @@ type rpcContext struct {
 	backend agent.AgentBackend
 	disp    *channel.Dispatcher
 	msgBus  *bus.MessageBus
+
+	// pluginWidgetsMu serializes plugin_widgets RPC calls so concurrent
+	// sessions don't race on the shared PluginContext.workingDir.
+	pluginWidgetsMu sync.Mutex
 }
 
 func (h *rpcContext) requireAdmin(next rpcHandler) rpcHandler {
@@ -805,35 +810,37 @@ func registerPluginHandlers(t rpcTable, h *rpcContext) {
 		}, nil
 	})
 
-	t["plugin_widgets"] = rpc0err(func(ctx context.Context) (any, error) {
+	t["plugin_widgets"] = rpc1(func(ctx context.Context, p struct {
+		ChatID string `json:"chat_id"`
+	}) (any, error) {
 		pm := backend.PluginManager()
 		if pm == nil {
 			return map[string]any{"zones": map[string]string{}, "infos": []struct{}{}}, nil
 		}
-		// Resolve the calling session's CWD so widget content is per-tenant.
-		// Different CLI windows (different chatIDs) have different working directories,
-		// and each should see its own git branch — not the global one.
-		chatID := rpcBizID(ctx)
-		if chatID != "" && backend.MultiSession() != nil {
-			if sess, err := backend.MultiSession().GetOrCreateSession("cli", chatID); err == nil {
-				if cwd := sess.GetCurrentDir(); cwd != "" {
-					pm.RefreshWorkDir(cwd)
-				}
+		h.pluginWidgetsMu.Lock()
+		defer h.pluginWidgetsMu.Unlock()
+
+		// Look up the session CWD using the chat_id sent by the CLI client.
+		// Each CLI window has a session keyed by its working directory path.
+		cwd := ""
+		if p.ChatID != "" && backend.MultiSession() != nil {
+			if sess, err := backend.MultiSession().GetOrCreateSession("cli", p.ChatID); err == nil {
+				cwd = sess.GetCurrentDir()
 			}
 		}
-		wr := pm.WidgetRegistry()
-		if wr == nil {
-			return map[string]any{"zones": map[string]string{}, "infos": []struct{}{}}, nil
-		}
+
+		// Render per-workDir — bypass global WidgetRegistry slot content.
+		// Each session's widget is rendered on-the-fly from the script's
+		// per-workDir output cache, so sessions never interfere.
 		zoneNames := []string{"titleBarLeft", "titleBarRight", "statusBarLeft", "statusBarRight", "infoBar", "footer"}
 		zones := make(map[string]string)
 		for _, z := range zoneNames {
-			zones[z] = wr.RenderZone(z)
+			zones[z] = pm.RenderZoneForWorkDir(z, cwd)
 		}
 		return map[string]any{
 			"zones": zones,
-			"infos": wr.WidgetInfo(),
-			"count": wr.Count(),
+			"infos": pm.WidgetInfoForWorkDir(cwd),
+			"count": pm.WidgetRegistry().Count(),
 		}, nil
 	})
 

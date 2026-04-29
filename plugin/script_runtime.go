@@ -46,9 +46,8 @@ type scriptPlugin struct {
 
 	// Per-workDir output cache — each CLI window (different workDir) sees
 	// its own git branch, not the branch of whichever window last refreshed.
-	outputMu       sync.RWMutex
-	outputs        map[string]string // workDir → last script output
-	currentWorkDir string            // set by OnWorkDirChanged, used by Render()
+	outputMu sync.RWMutex
+	outputs  map[string]string // workDir → last script output
 
 	pctx PluginContext // captured in Activate for UpdateWidget
 }
@@ -108,11 +107,16 @@ func (p *scriptPlugin) Deactivate(ctx PluginContext) error {
 // UIWidget — returns the last script output as widget spans
 // ---------------------------------------------------------------------------
 
-// Render returns the cached script output as widget content.
-// Uses per-workDir output so different CLI windows see their own git branch.
+// Render returns the cached script output as widget content for the
+// PluginContext's current working directory. Each session sees its own
+// output because ~pctx.WorkingDir()~ is per-session (set by RefreshWorkDir
+// in the RPC handler).
 func (p *scriptPlugin) Render(width int) []WidgetSpan {
 	p.outputMu.RLock()
-	text := p.outputs[p.currentWorkDir]
+	var text string
+	if p.pctx != nil {
+		text = p.outputs[p.pctx.WorkingDir()]
+	}
 	p.outputMu.RUnlock()
 	if text == "" {
 		return []WidgetSpan{{Text: "", Style: StyleDim}}
@@ -121,13 +125,9 @@ func (p *scriptPlugin) Render(width int) []WidgetSpan {
 }
 
 // OnWorkDirChanged triggers an immediate script re-run when the session CWD changes.
-// This ensures the widget refreshes instantly after Cd, without waiting for the
-// periodic timer or a hook trigger. The new workDir is also stored so Render()
-// returns per-directory output (no cross-session mixing).
+// The output is stored per-workDir in the outputs map, and Render() reads from
+// pctx.WorkingDir() which is set per-RPC-call — no cross-session mixing.
 func (p *scriptPlugin) OnWorkDirChanged(dir string) {
-	p.outputMu.Lock()
-	p.currentWorkDir = dir
-	p.outputMu.Unlock()
 	select {
 	case p.triggerCh <- struct{}{}:
 	default:
@@ -158,23 +158,26 @@ func (p *scriptPlugin) refreshLoop(ctx context.Context, interval time.Duration) 
 }
 
 func (p *scriptPlugin) runAndUpdate() {
-	output, err := p.runScript()
+	// Capture the workDir ONCE before running — concurrent RPCs may change
+	// pctx.WorkingDir() between runScript() and output storage. Using the
+	// same wd for both ensures output goes to the correct key.
+	var wd string
+	if p.pctx != nil {
+		wd = p.pctx.WorkingDir()
+	}
+	output, err := p.runScript(wd)
 	if err != nil {
 		log.Info(fmt.Sprintf("Script plugin %s execution failed: %v", p.manifest.ID, err))
 		return
 	}
 	// Store output per workDir so each CLI window sees its own result
-	if p.pctx != nil {
-		wd := p.pctx.WorkingDir()
-		if wd != "" {
-			p.outputMu.Lock()
-			if p.outputs == nil {
-				p.outputs = make(map[string]string)
-			}
-			p.outputs[wd] = output
-			p.currentWorkDir = wd
-			p.outputMu.Unlock()
+	if wd != "" {
+		p.outputMu.Lock()
+		if p.outputs == nil {
+			p.outputs = make(map[string]string)
 		}
+		p.outputs[wd] = output
+		p.outputMu.Unlock()
 	}
 
 	// Push update to TUI via PluginContext
@@ -211,7 +214,7 @@ func (p *scriptPlugin) subscribeTrigger(ctx PluginContext, trigger string) error
 }
 
 // ---------------------------------------------------------------------------
-func (p *scriptPlugin) runScript() (string, error) {
+func (p *scriptPlugin) runScript(workDir string) (string, error) {
 	// Split entry into command and args (safe shell-free splitting)
 	parts := strings.Fields(p.manifest.Entry)
 	if len(parts) == 0 {
@@ -227,15 +230,9 @@ func (p *scriptPlugin) runScript() (string, error) {
 		parts[1] = filepath.Join(p.dir, parts[1])
 		cmd = exec.CommandContext(ctx, parts[0], parts[1:]...)
 	}
-	// Set working directory to the session CWD (via PluginContext), not the process CWD.
-	// In remote mode, Cd changes the session CWD but NOT the server process CWD.
-	// Without this, git-info always shows "git: —" because the server's initial CWD
-	// is not a git repo.
-	if p.pctx != nil {
-		wd := p.pctx.WorkingDir()
-		if wd != "" {
-			cmd.Dir = wd
-		}
+	// Use the captured workDir — concurrent RPCs cannot corrupt it.
+	if workDir != "" {
+		cmd.Dir = workDir
 	}
 	out, err := cmd.Output()
 	if err != nil {

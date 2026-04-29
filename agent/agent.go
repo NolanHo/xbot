@@ -885,6 +885,9 @@ func New(cfg Config) (*Agent, error) {
 		// Set the agent's working directory so script plugins (e.g. git-info)
 		// run in the user's workspace, not the plugin install dir.
 		agent.pluginMgr.SetWorkDir(agent.workDir)
+		// Set default ANSI render so server-side widget rendering (plugin_widgets RPC)
+		// produces colored output. The TUI overrides this with lipgloss rendering.
+		agent.pluginMgr.WidgetRegistry().SetDefaultRenderFn(plugin.BasicANSIRender)
 		// Add extra plugin directories from config
 		if len(cfg.PluginDirs) > 0 {
 			agent.pluginMgr.AddSearchDirs(cfg.PluginDirs)

@@ -1708,7 +1708,7 @@ func main() {
 			rb.SubscribeChat(remoteChatID)
 
 			// Initialize remote plugin cache for /plugin commands and widget rendering.
-			remoteCache := channel.NewRemotePluginCache(func(method string, params any) (json.RawMessage, error) {
+			remoteCache := channel.NewRemotePluginCache(remoteChatID, func(method string, params any) (json.RawMessage, error) {
 				return rb.CallRPC(method, params)
 			})
 			cliCh.SetRemotePluginCache(remoteCache)

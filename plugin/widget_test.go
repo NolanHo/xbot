@@ -288,9 +288,11 @@ func TestScriptPluginE2E(t *testing.T) {
 		},
 	})
 
-	// Create PluginManager
+	// Create PluginManager — MUST close to stop ScriptRuntime goroutines
 	pm := NewPluginManager(tmpHome)
+	t.Cleanup(func() { pm.Close() })
 	pm.SetRuntimeFactory(NewCompositeRuntimeFactory())
+	pm.SetWorkDir(tmpHome)
 
 	// Discover
 	discovered, err := pm.Discover(context.Background())

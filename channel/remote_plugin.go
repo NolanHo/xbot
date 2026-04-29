@@ -17,6 +17,10 @@ import (
 type remotePluginCache struct {
 	mu sync.RWMutex
 
+	// ChatID is the CLI window's session key (working directory path),
+	// used to pass to plugin_widgets RPC for per-session widget content.
+	chatID string
+
 	// Plugin status
 	plugins []remotePluginEntry
 	active  int
@@ -55,8 +59,9 @@ func (c *remotePluginCache) SetOnUpdated(fn func()) {
 	c.onUpdated = fn
 }
 
-func NewRemotePluginCache(callRPC func(method string, params any) (json.RawMessage, error)) *remotePluginCache {
+func NewRemotePluginCache(chatID string, callRPC func(method string, params any) (json.RawMessage, error)) *remotePluginCache {
 	return &remotePluginCache{
+		chatID:      chatID,
 		widgetZones: make(map[string]string),
 		callRPC:     callRPC,
 	}
@@ -99,7 +104,7 @@ func (c *remotePluginCache) refreshWidgets() {
 	if c.callRPC == nil {
 		return
 	}
-	raw, err := c.callRPC("plugin_widgets", nil)
+	raw, err := c.callRPC("plugin_widgets", map[string]string{"chat_id": c.chatID})
 	if err != nil {
 		log.WithError(err).Warn("RemotePlugin: plugin_widgets RPC failed")
 		return

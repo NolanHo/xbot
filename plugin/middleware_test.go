@@ -398,7 +398,7 @@ func TestTimeoutMiddleware_Exceeded(t *testing.T) {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(5 * time.Second):
+		case <-time.After(1 * time.Second):
 			return NewToolResult("slow"), nil
 		}
 	}
@@ -738,7 +738,7 @@ func TestToolTimeout_Exceeded(t *testing.T) {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(5 * time.Second):
+			case <-time.After(1 * time.Second):
 				return NewToolResult("should not reach"), nil
 			}
 		},
@@ -801,7 +801,7 @@ func TestToolTimeout_V2Exceeded(t *testing.T) {
 			select {
 			case <-ctx.Ctx.Done():
 				return nil, ctx.Ctx.Err()
-			case <-time.After(5 * time.Second):
+			case <-time.After(1 * time.Second):
 				return NewToolResult("should not reach"), nil
 			}
 		},
@@ -1115,7 +1115,7 @@ func TestToolCache_Expired(t *testing.T) {
 		},
 	}
 
-	wrapped := ToolCache(inner, 50*time.Millisecond)
+	wrapped := ToolCache(inner, 10*time.Millisecond)
 
 	// First call — invoke inner
 	_, err := wrapped.Execute(context.Background(), `{"key":"val"}`)
@@ -1127,7 +1127,7 @@ func TestToolCache_Expired(t *testing.T) {
 	}
 
 	// Wait for TTL to expire
-	time.Sleep(80 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 
 	// Second call — cache should have expired, inner invoked again
 	_, err = wrapped.Execute(context.Background(), `{"key":"val"}`)

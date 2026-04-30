@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
-	"github.com/mattn/go-runewidth"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"sync"
 	"time"
@@ -50,17 +50,17 @@ func truncateToWidth(s string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
 	}
-	if runewidth.StringWidth(s) <= maxWidth {
+	if ansi.StringWidth(s) <= maxWidth {
 		return s
 	}
 	ellipsis := "..."
-	target := maxWidth - runewidth.StringWidth(ellipsis)
+	target := maxWidth - ansi.StringWidth(ellipsis)
 	if target <= 0 {
 		return ellipsis[:maxWidth]
 	}
 	w := 0
 	for i, r := range s {
-		rw := runewidth.RuneWidth(r)
+		rw := ansi.StringWidth(string(r))
 		if w+rw > target {
 			return s[:i] + ellipsis
 		}
@@ -96,7 +96,7 @@ func hardWrapRunes(line string, maxW int) string {
 			}
 			continue
 		}
-		rw := runewidth.RuneWidth(r)
+		rw := ansi.StringWidth(string(r))
 		// Safety: if a rune has zero display width (combining chars, control
 		// chars, zero-width joiners), still emit it but don't let it block
 		// line wrapping.  Without this, a run of zero-width runes causes

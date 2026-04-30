@@ -1524,7 +1524,7 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 						label, icon, sty := toolDisplayInfo(tool, toolItemStyle, toolErrorItemStyle)
 						elapsed := ""
 						if tool.Elapsed > 0 {
-							elapsed = fmt.Sprintf(" (%dms)", tool.Elapsed)
+							elapsed = fmt.Sprintf(" (%s)", formatElapsed(tool.Elapsed))
 						}
 						toolSb.WriteString(sty.Render(fmt.Sprintf("    %s %s%s", icon, label, elapsed)))
 						toolSb.WriteString("\n")
@@ -1542,7 +1542,7 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 					label, icon, sty := toolDisplayInfo(tool, toolItemStyle, toolErrorItemStyle)
 					elapsed := ""
 					if tool.Elapsed > 0 {
-						elapsed = fmt.Sprintf(" (%dms)", tool.Elapsed)
+						elapsed = fmt.Sprintf(" (%s)", formatElapsed(tool.Elapsed))
 					}
 					toolSb.WriteString(sty.Render(fmt.Sprintf("  %s %s%s", icon, label, elapsed)))
 					toolSb.WriteString("\n")

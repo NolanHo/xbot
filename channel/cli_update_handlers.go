@@ -558,9 +558,7 @@ func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPaylo
 		}
 	}
 	// Reset all iteration tracking state (always, even if handleAgentMessage ran first)
-	m.todos = nil
-	m.todosDoneCleared = false
-	m.endAgentTurn(turnID)
+	m.endAgentTurn(turnID) // also clears todos and does relayoutViewport
 	if turnID == m.agentTurnID {
 		m.inputReady = true
 		if len(m.messageQueue) > 0 {

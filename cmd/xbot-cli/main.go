@@ -85,24 +85,46 @@ func (app *cliApp) refreshRemoteValuesCache() {
 		}
 	}
 	vals["context_mode"] = app.backend.GetContextMode()
-	if _, ok := vals["sandbox_mode"]; !ok {
-		vals["sandbox_mode"] = "none"
-	}
-	if _, ok := vals["memory_provider"]; !ok {
-		vals["memory_provider"] = "flat"
-	}
-	if _, ok := vals["max_iterations"]; !ok {
-		vals["max_iterations"] = "30"
-	}
-	if _, ok := vals["max_concurrency"]; !ok {
-		vals["max_concurrency"] = "3"
-	}
-	if _, ok := vals["max_context_tokens"]; !ok {
-		vals["max_context_tokens"] = "200000" // default from config.go
-	}
-	if _, ok := vals["compression_threshold"]; !ok {
-		vals["compression_threshold"] = "0.9"
-	}
+	// ScopeGlobal keys: always override DB values with config (single source of truth).
+	// Old versions may have left stale values in user_settings DB; these must not
+	// override the config.json value. See Issue #18.
+	vals["sandbox_mode"] = func() string {
+		if app.cfg.Sandbox.Mode != "" {
+			return app.cfg.Sandbox.Mode
+		}
+		return "none"
+	}()
+	vals["memory_provider"] = func() string {
+		if app.cfg.Agent.MemoryProvider != "" {
+			return app.cfg.Agent.MemoryProvider
+		}
+		return "flat"
+	}()
+	vals["max_iterations"] = func() string {
+		if app.cfg.Agent.MaxIterations > 0 {
+			return fmt.Sprintf("%d", app.cfg.Agent.MaxIterations)
+		}
+		return "30"
+	}()
+	vals["max_concurrency"] = func() string {
+		if app.cfg.Agent.MaxConcurrency > 0 {
+			return fmt.Sprintf("%d", app.cfg.Agent.MaxConcurrency)
+		}
+		return "3"
+	}()
+	vals["max_context_tokens"] = func() string {
+		if app.cfg.Agent.MaxContextTokens > 0 {
+			return fmt.Sprintf("%d", app.cfg.Agent.MaxContextTokens)
+		}
+		return "200000"
+	}()
+	vals["compression_threshold"] = func() string {
+		if app.cfg.Agent.CompressionThreshold > 0 {
+			return fmt.Sprintf("%g", app.cfg.Agent.CompressionThreshold)
+		}
+		return "0.9"
+	}()
+	vals["tavily_api_key"] = app.cfg.TavilyAPIKey
 	app.valuesCacheMu.Lock()
 	app.valuesCache = vals
 	app.valuesCacheMu.Unlock()

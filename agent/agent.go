@@ -1086,6 +1086,7 @@ func (a *Agent) Close() error {
 	// Close NotifyCh to unblock bgNotifyLoop goroutine
 	if a.bgTaskMgr != nil && a.bgTaskMgr.NotifyCh != nil {
 		close(a.bgTaskMgr.NotifyCh)
+		a.bgTaskMgr.NotifyCh = nil
 	}
 	// 再关闭数据库连接
 	if a.multiSession != nil {

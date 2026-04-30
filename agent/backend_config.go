@@ -2,6 +2,7 @@ package agent
 
 import (
 	"path/filepath"
+	"time"
 
 	"xbot/bus"
 	"xbot/config"
@@ -66,16 +67,16 @@ func (bc BackendConfig) AgentConfig() Config {
 		EmbeddingAPIKey:      embAPIKey,
 		EmbeddingModel:       cfg.Embedding.Model,
 		EmbeddingMaxTokens:   cfg.Embedding.MaxTokens,
-		MCPInactivityTimeout: cfg.Agent.MCPInactivityTimeout,
-		MCPCleanupInterval:   cfg.Agent.MCPCleanupInterval,
-		SessionCacheTimeout:  cfg.Agent.SessionCacheTimeout,
+		MCPInactivityTimeout: time.Duration(cfg.Agent.MCPInactivityTimeout),
+		MCPCleanupInterval:   time.Duration(cfg.Agent.MCPCleanupInterval),
+		SessionCacheTimeout:  time.Duration(cfg.Agent.SessionCacheTimeout),
 		EnableAutoCompress:   cfg.Agent.EffectiveEnableAutoCompress(),
 		MaxContextTokens:     cfg.Agent.MaxContextTokens,
 		CompressionThreshold: cfg.Agent.CompressionThreshold,
 		ContextMode:          ContextMode(cfg.Agent.ContextMode),
 		MaxSubAgentDepth:     cfg.Agent.MaxSubAgentDepth,
 		PurgeOldMessages:     cfg.Agent.PurgeOldMessages,
-		SandboxIdleTimeout:   cfg.Sandbox.IdleTimeout,
+		SandboxIdleTimeout:   time.Duration(cfg.Sandbox.IdleTimeout),
 		PersonaIsolation:     bc.PersonaIsolation,
 		OffloadDir:           offloadDir,
 		MaskDir:              maskDir,

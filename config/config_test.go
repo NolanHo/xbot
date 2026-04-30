@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSubscriptionConfigRoundtrip(t *testing.T) {
@@ -298,5 +299,164 @@ func TestSaveToFileLoadSaveRoundtrip(t *testing.T) {
 	}
 	if cfg3.Feishu.AppID != "test-app" {
 		t.Errorf("feishu app_id lost: got %q", cfg3.Feishu.AppID)
+	}
+}
+
+func TestDurationMarshalJSON(t *testing.T) {
+	tests := []struct {
+		d    Duration
+		want string
+	}{
+		{1 * Second, `"1s"`},
+		{30 * Minute, `"30m0s"`},
+		{24 * Hour, `"24h0m0s"`},
+		{1500 * Millisecond, `"1.5s"`},
+		{0, `"0s"`},
+	}
+	for _, tt := range tests {
+		data, err := tt.d.MarshalJSON()
+		if err != nil {
+			t.Errorf("MarshalJSON(%v): %v", tt.d, err)
+			continue
+		}
+		if string(data) != tt.want {
+			t.Errorf("MarshalJSON(%v) = %s, want %s", tt.d, string(data), tt.want)
+		}
+	}
+}
+
+func TestDurationUnmarshalJSON_String(t *testing.T) {
+	tests := []struct {
+		input string
+		want  Duration
+	}{
+		{`"1s"`, 1 * Second},
+		{`"30m0s"`, 30 * Minute},
+		{`"30m"`, 30 * Minute},
+		{`"2h"`, 2 * Hour},
+		{`"0s"`, 0},
+	}
+	for _, tt := range tests {
+		var d Duration
+		if err := d.UnmarshalJSON([]byte(tt.input)); err != nil {
+			t.Errorf("UnmarshalJSON(%s): %v", tt.input, err)
+			continue
+		}
+		if d != tt.want {
+			t.Errorf("UnmarshalJSON(%s) = %v, want %v", tt.input, time.Duration(d), time.Duration(tt.want))
+		}
+	}
+}
+
+func TestDurationUnmarshalJSON_Number(t *testing.T) {
+	// Old config files store durations as nanoseconds (backward compat)
+	tests := []struct {
+		input string
+		want  Duration
+	}{
+		{"0", 0},
+		{`1000000000`, 1 * Second},
+		{`1800000000000`, 30 * Minute},
+	}
+	for _, tt := range tests {
+		var d Duration
+		if err := d.UnmarshalJSON([]byte(tt.input)); err != nil {
+			t.Errorf("UnmarshalJSON(%s): %v", tt.input, err)
+			continue
+		}
+		if d != tt.want {
+			t.Errorf("UnmarshalJSON(%s) = %v, want %v", tt.input, time.Duration(d), time.Duration(tt.want))
+		}
+	}
+}
+
+func TestDurationUnmarshalJSON_Invalid(t *testing.T) {
+	var d Duration
+	if err := d.UnmarshalJSON([]byte(`"xyz"`)); err == nil {
+		t.Error("expected error for invalid duration string")
+	}
+	if err := d.UnmarshalJSON([]byte(`true`)); err == nil {
+		t.Error("expected error for boolean")
+	}
+}
+
+func TestConfigDurationRoundtrip(t *testing.T) {
+	// Verify Duration fields serialize as strings and deserialize correctly
+	cfg := &Config{
+		Sandbox: SandboxConfig{
+			Mode:        "docker",
+			IdleTimeout: 30 * Minute,
+		},
+		Agent: AgentConfig{
+			MCPInactivityTimeout: 30 * Minute,
+			MCPCleanupInterval:   5 * Minute,
+			LLMRetryDelay:        1 * Second,
+		},
+		Server: ServerConfig{
+			ReadTimeout:  30 * Second,
+			WriteTimeout: 120 * Second,
+		},
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	content := string(data)
+
+	// Verify human-readable strings in JSON output
+	for _, want := range []string{
+		`"idle_timeout": "30m0s"`,
+		`"mcp_inactivity_timeout": "30m0s"`,
+		`"mcp_cleanup_interval": "5m0s"`,
+		`"llm_retry_delay": "1s"`,
+		`"read_timeout": "30s"`,
+		`"write_timeout": "2m0s"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("JSON output missing %s:\n%s", want, content)
+		}
+	}
+
+	// Verify round-trip deserialization
+	var cfg2 Config
+	if err := json.Unmarshal(data, &cfg2); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if cfg2.Sandbox.IdleTimeout != 30*Minute {
+		t.Errorf("IdleTimeout roundtrip: got %v, want 30m", time.Duration(cfg2.Sandbox.IdleTimeout))
+	}
+	if cfg2.Agent.LLMRetryDelay != 1*Second {
+		t.Errorf("LLMRetryDelay roundtrip: got %v, want 1s", time.Duration(cfg2.Agent.LLMRetryDelay))
+	}
+	if cfg2.Server.ReadTimeout != 30*Second {
+		t.Errorf("ReadTimeout roundtrip: got %v, want 30s", time.Duration(cfg2.Server.ReadTimeout))
+	}
+}
+
+func TestConfigDurationBackwardCompat(t *testing.T) {
+	// Old config files with nanosecond numbers must still parse
+	oldJSON := `{
+  "sandbox": {
+    "idle_timeout": 1800000000000
+  },
+  "agent": {
+    "mcp_inactivity_timeout": 1800000000000,
+    "llm_retry_delay": 1000000000
+  },
+  "server": {
+    "read_timeout": 30000000000,
+    "write_timeout": 120000000000
+  }
+}`
+	var cfg Config
+	if err := json.Unmarshal([]byte(oldJSON), &cfg); err != nil {
+		t.Fatalf("Unmarshal old format: %v", err)
+	}
+	if cfg.Sandbox.IdleTimeout != 30*Minute {
+		t.Errorf("IdleTimeout: got %v, want 30m", time.Duration(cfg.Sandbox.IdleTimeout))
+	}
+	if cfg.Agent.LLMRetryDelay != 1*Second {
+		t.Errorf("LLMRetryDelay: got %v, want 1s", time.Duration(cfg.Agent.LLMRetryDelay))
 	}
 }

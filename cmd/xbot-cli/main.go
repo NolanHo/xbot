@@ -545,6 +545,94 @@ func isLocalServer(serverURL string) bool {
 // newCLIApp 执行公共初始化：加载配置、创建 Backend。
 // If serverURL is non-empty, creates a RemoteBackend (agent runs on server).
 // Otherwise creates a LocalBackend (agent runs in-process).
+// buildPaletteExternalCommands collects commands from skills, plugins, and user
+// custom commands (~/.xbot/commands/*.md). Called each time the palette opens.
+func (a *cliApp) buildPaletteExternalCommands() []channel.PaletteExternalCommand {
+	var cmds []channel.PaletteExternalCommand
+	home, _ := os.UserHomeDir()
+	xbotDir := home + "/.xbot"
+
+	// 1. Skills from ~/.xbot/skills/
+	if entries, err := os.ReadDir(xbotDir + "/skills"); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if strings.HasPrefix(name, ".") || name == "skill-creator" {
+				continue
+			}
+			cmds = append(cmds, channel.PaletteExternalCommand{
+				Title:       "Skill: " + name,
+				Description: "activate /" + name + " skill",
+				Category:    channel.PaletteCategorySkills,
+				Content:     "/" + name + " ",
+			})
+		}
+	}
+
+	// 2. Plugin commands from loaded plugins
+	if a.backend != nil {
+		if pm := a.backend.PluginManager(); pm != nil {
+			for _, p := range pm.ListPlugins() {
+				if p.Manifest == nil || p.Manifest.Contributes == nil {
+					continue
+				}
+				for _, cmd := range p.Manifest.Contributes.Commands {
+					cmds = append(cmds, channel.PaletteExternalCommand{
+						Title:       p.Manifest.Name + ": " + cmd.Name,
+						Description: cmd.Description,
+						Category:    channel.PaletteCategoryPlugins,
+						Content:     cmd.Name + " ",
+					})
+				}
+			}
+		}
+	}
+
+	// 3. User custom commands from ~/.xbot/commands/*.md (crush-style)
+	if entries, err := os.ReadDir(xbotDir + "/commands"); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
+			content, err := os.ReadFile(xbotDir + "/commands/" + e.Name())
+			if err != nil {
+				continue
+			}
+			cmds = append(cmds, channel.PaletteExternalCommand{
+				Title:       name,
+				Description: "custom command",
+				Category:    channel.PaletteCategoryUser,
+				Content:     string(content),
+				Send:        true,
+			})
+		}
+	}
+
+	// 4. SubAgent roles from ~/.xbot/agents/
+	if entries, err := os.ReadDir(xbotDir + "/agents"); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			cmds = append(cmds, channel.PaletteExternalCommand{
+				Title:       "Agent: " + name,
+				Description: "spawn " + name + " SubAgent",
+				Category:    channel.PaletteCategoryAgents,
+				Content:     "/agent " + name + " ",
+			})
+		}
+	}
+
+	return cmds
+}
+
 func newCLIApp(serverURL, token string, forceLocal bool) *cliApp {
 	cfg := config.Load()
 
@@ -1312,6 +1400,9 @@ func main() {
 		},
 		IsAdminFn: func() bool {
 			return true // standalone mode: CLI user is always admin
+		},
+		PaletteContributor: func() []channel.PaletteExternalCommand {
+			return app.buildPaletteExternalCommands()
 		},
 	}
 

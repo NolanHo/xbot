@@ -19,6 +19,49 @@ func init() {
 	}
 }
 
+// Duration is like time.Duration but serializes to human-readable strings in JSON
+// (e.g. "30m0s" instead of 1800000000000). It accepts both string and number
+// formats when deserializing for backward compatibility with old config files.
+type Duration time.Duration
+
+// Duration constants for use in config defaults and comparisons.
+const (
+	Nanosecond  Duration = 1
+	Microsecond          = 1000 * Nanosecond
+	Millisecond          = 1000 * Microsecond
+	Second               = 1000 * Millisecond
+	Minute               = 60 * Second
+	Hour                 = 60 * Minute
+)
+
+// MarshalJSON implements json.Marshaler.
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
+}
+
+// UnmarshalJSON implements json.Unmarshaler. Accepts both human-readable strings
+// ("30m", "1h30m") and legacy nanosecond numbers (1800000000000).
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		dur, err := time.ParseDuration(s)
+		if err != nil {
+			return fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		*d = Duration(dur)
+		return nil
+	}
+	var ns int64
+	if err := json.Unmarshal(b, &ns); err != nil {
+		return fmt.Errorf("duration must be a string like \"30m\" or a number (nanoseconds)")
+	}
+	*d = Duration(ns)
+	return nil
+}
+
 // OAuthConfig OAuth 配置
 type OAuthConfig struct {
 	Enable  bool   `json:"enable"`
@@ -29,14 +72,14 @@ type OAuthConfig struct {
 
 // SandboxConfig 沙箱配置
 type SandboxConfig struct {
-	Mode        string        `json:"mode"`
-	RemoteMode  string        `json:"remote_mode"`
-	DockerImage string        `json:"docker_image"`
-	HostWorkDir string        `json:"host_work_dir"`
-	IdleTimeout time.Duration `json:"idle_timeout"`
-	WSPort      int           `json:"ws_port"`
-	AuthToken   string        `json:"auth_token"`
-	PublicURL   string        `json:"public_url"`
+	Mode        string   `json:"mode"`
+	RemoteMode  string   `json:"remote_mode"`
+	DockerImage string   `json:"docker_image"`
+	HostWorkDir string   `json:"host_work_dir"`
+	IdleTimeout Duration `json:"idle_timeout"`
+	WSPort      int      `json:"ws_port"`
+	AuthToken   string   `json:"auth_token"`
+	PublicURL   string   `json:"public_url"`
 }
 
 // QQConfig QQ 机器人渠道配置
@@ -160,9 +203,9 @@ type AgentConfig struct {
 	PromptFile     string `json:"prompt_file"`
 	SingleUser     bool   `json:"single_user"` // Deprecated: no longer used, kept for config file compatibility
 
-	MCPInactivityTimeout time.Duration `json:"mcp_inactivity_timeout"`
-	MCPCleanupInterval   time.Duration `json:"mcp_cleanup_interval"`
-	SessionCacheTimeout  time.Duration `json:"session_cache_timeout"`
+	MCPInactivityTimeout Duration `json:"mcp_inactivity_timeout"`
+	MCPCleanupInterval   Duration `json:"mcp_cleanup_interval"`
+	SessionCacheTimeout  Duration `json:"session_cache_timeout"`
 
 	ContextMode string `json:"context_mode"`
 	// EnableAutoCompress 为 nil 表示 JSON 未写该字段，Load 后与未设置 AGENT_ENABLE_AUTO_COMPRESS 一致，默认启用压缩。
@@ -175,18 +218,18 @@ type AgentConfig struct {
 
 	MaxSubAgentDepth int `json:"max_sub_agent_depth"`
 
-	LLMRetryAttempts int           `json:"llm_retry_attempts"`
-	LLMRetryDelay    time.Duration `json:"llm_retry_delay"`
-	LLMRetryMaxDelay time.Duration `json:"llm_retry_max_delay"`
-	LLMRetryTimeout  time.Duration `json:"llm_retry_timeout"`
+	LLMRetryAttempts int      `json:"llm_retry_attempts"`
+	LLMRetryDelay    Duration `json:"llm_retry_delay"`
+	LLMRetryMaxDelay Duration `json:"llm_retry_max_delay"`
+	LLMRetryTimeout  Duration `json:"llm_retry_timeout"`
 }
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
-	Host         string        `json:"host"`
-	Port         int           `json:"port"`
-	ReadTimeout  time.Duration `json:"read_timeout"`
-	WriteTimeout time.Duration `json:"write_timeout"`
+	Host         string   `json:"host"`
+	Port         int      `json:"port"`
+	ReadTimeout  Duration `json:"read_timeout"`
+	WriteTimeout Duration `json:"write_timeout"`
 }
 
 // LLMConfig LLM 配置
@@ -376,18 +419,18 @@ func splitCommaTrim(s string) []string {
 	return out
 }
 
-func setDurationEnv(key string, dst *time.Duration) {
+func setDurationEnv(key string, dst *Duration) {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
-			*dst = d
+			*dst = Duration(d)
 		}
 	}
 }
 
-func setSecondsEnv(key string, dst *time.Duration) {
+func setSecondsEnv(key string, dst *Duration) {
 	if v := os.Getenv(key); v != "" {
 		if sec, err := strconv.Atoi(v); err == nil {
-			*dst = time.Duration(sec) * time.Second
+			*dst = Duration(sec) * Second
 		}
 	}
 }
@@ -522,7 +565,7 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("SANDBOX_IDLE_TIMEOUT_MINUTES"); v != "" {
 		if min, err := strconv.Atoi(v); err == nil {
-			cfg.Sandbox.IdleTimeout = time.Duration(min) * time.Minute
+			cfg.Sandbox.IdleTimeout = Duration(min) * Minute
 		}
 	}
 	if v := os.Getenv("SANDBOX_WS_PORT"); v != "" {
@@ -743,31 +786,31 @@ func Load() *Config {
 		cfg.Agent.MaxConcurrency = 3
 	}
 	if cfg.Agent.MCPInactivityTimeout == 0 {
-		cfg.Agent.MCPInactivityTimeout = 30 * time.Minute
+		cfg.Agent.MCPInactivityTimeout = 30 * Minute
 	}
 	if cfg.Agent.MCPCleanupInterval == 0 {
-		cfg.Agent.MCPCleanupInterval = 5 * time.Minute
+		cfg.Agent.MCPCleanupInterval = 5 * Minute
 	}
 	if cfg.Agent.SessionCacheTimeout == 0 {
-		cfg.Agent.SessionCacheTimeout = 24 * time.Hour
+		cfg.Agent.SessionCacheTimeout = 24 * Hour
 	}
 	if cfg.Agent.LLMRetryAttempts == 0 {
 		cfg.Agent.LLMRetryAttempts = 5
 	}
 	if cfg.Agent.LLMRetryDelay == 0 {
-		cfg.Agent.LLMRetryDelay = 1 * time.Second
+		cfg.Agent.LLMRetryDelay = 1 * Second
 	}
 	if cfg.Agent.LLMRetryMaxDelay == 0 {
-		cfg.Agent.LLMRetryMaxDelay = 30 * time.Second
+		cfg.Agent.LLMRetryMaxDelay = 30 * Second
 	}
 	if cfg.Agent.LLMRetryTimeout == 0 {
-		cfg.Agent.LLMRetryTimeout = 120 * time.Second
+		cfg.Agent.LLMRetryTimeout = 120 * Second
 	}
 	if cfg.Sandbox.Mode == "" {
 		cfg.Sandbox.Mode = "none"
 	}
 	if cfg.Sandbox.IdleTimeout == 0 {
-		cfg.Sandbox.IdleTimeout = 30 * time.Minute
+		cfg.Sandbox.IdleTimeout = 30 * Minute
 	}
 	if cfg.Sandbox.DockerImage == "" {
 		cfg.Sandbox.DockerImage = "ubuntu:22.04"
@@ -833,10 +876,10 @@ func Load() *Config {
 		cfg.Server.Port = cfg.Web.Port // 8082
 	}
 	if cfg.Server.ReadTimeout == 0 {
-		cfg.Server.ReadTimeout = 30 * time.Second
+		cfg.Server.ReadTimeout = 30 * Second
 	}
 	if cfg.Server.WriteTimeout == 0 {
-		cfg.Server.WriteTimeout = 120 * time.Second
+		cfg.Server.WriteTimeout = 120 * Second
 	}
 	if cfg.Admin.ChatID == "" {
 		cfg.Admin.ChatID = getAdminChatID()

@@ -98,12 +98,6 @@ func SanitizeMessages(messages []ChatMessage) []ChatMessage {
 	return messages
 }
 
-// FixupTrailingToolCalls is an alias for SanitizeMessages kept for backward compatibility.
-// Deprecated: use SanitizeMessages instead.
-func FixupTrailingToolCalls(messages []ChatMessage) []ChatMessage {
-	return SanitizeMessages(messages)
-}
-
 // NewUserMessage 创建用户消息
 func NewUserMessage(content string) ChatMessage {
 	return ChatMessage{Role: "user", Content: content, Timestamp: time.Now()}

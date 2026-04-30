@@ -90,16 +90,3 @@ func TestSanitizeMessages_EmptyAssistant(t *testing.T) {
 		})
 	}
 }
-
-// Test that the deprecated alias still works
-func TestFixupTrailingToolCalls_Alias(t *testing.T) {
-	input := []ChatMessage{
-		NewUserMessage("hello"),
-		NewAssistantMessage(""),
-		NewAssistantMessage("reply"),
-	}
-	got := FixupTrailingToolCalls(input)
-	if len(got) != 2 {
-		t.Errorf("FixupTrailingToolCalls() (alias) len = %d, want 2", len(got))
-	}
-}

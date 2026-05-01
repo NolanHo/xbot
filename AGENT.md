@@ -76,6 +76,11 @@
 
 ### Reasoning Contamination
 - **`snapshotIterationChange` and `handleProgressDone` must NOT use `prev.ReasoningStreamContent` as reasoning fallback.** Stream-only messages (`StreamReasoningFunc`) update `m.progress.ReasoningStreamContent` directly between structured progress updates. Since `prev` is captured at the START of `handleProgressMsg` (pointer to `m.progress`), `prev.ReasoningStreamContent` can contain the NEXT iteration's reasoning when the iteration changes. Use `prev.Reasoning` (server's `ReasoningContent`, set at LLM completion) or `m.lastReasoning` instead.
+- **Reasoning stream without iteration advance contaminates previous snapshot.** `isStreamOnly` reasoning updates bypass `snapshotIterationChange`. When the next structured progress arrives with a new iteration, the old progress (with accumulated reasoning) gets snapshotted under the OLD iteration. Fix: `advanceIterationForReasoning()` detects when reasoning arrives for a completed iteration and advances `m.progress.Iteration`. Must also call after `restoreIterationHistory` + `carryForwardProgressState` for the TUI restart case.
+
+### CLI Rendering Panics
+- **`renderGlobBody` must use `ansi.Truncate` like `renderGrepBody`, not manual `runes[:maxW-5]`.** On narrow viewports (e.g. after TUI restart with small terminal), `maxW-5` goes negative causing `slice bounds out of range [:-1]` panic. `ansi.Truncate` handles this safely.
+- **`DeleteTenant`/other `TenantService` methods must nil-guard `s.db`.** Interactive session cleanup races with DB initialization — `destroyInteractiveSession` can fire before the DB is connected, causing nil pointer dereference.
 
 ### Hooks System
 - **Old `ToolHook`/`HookChain` is gone.** Replaced by `agent/hooks/Manager`. Any code referencing `HookChain`, `ToolHook`, `executeWithHooks` is stale.

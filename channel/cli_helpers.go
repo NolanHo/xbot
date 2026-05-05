@@ -1582,3 +1582,80 @@ func (m *cliModel) handlePluginWidgets() tea.Cmd {
 	m.showSystemMsg(sb.String(), feedbackInfo)
 	return nil
 }
+
+// renderScrollbar generates a vertical scrollbar string for a panel.
+// contentWidth is the available width for the content (excluding scrollbar).
+// visibleH is the number of visible lines.
+// totalLines is the total content lines.
+// scrollY is the current scroll offset.
+// The scrollbar is 1 character wide (█ for thumb, ░ for track, ▒ for gutter).
+func (m *cliModel) renderScrollbar(contentWidth, visibleH, totalLines, scrollY int) string {
+	if totalLines <= visibleH || visibleH <= 0 || totalLines <= 0 {
+		return ""
+	}
+
+	// Thumb size proportional to visible/total ratio
+	thumbH := max(1, visibleH*visibleH/totalLines)
+	if thumbH > visibleH {
+		thumbH = visibleH
+	}
+
+	// Thumb position
+	trackH := visibleH - thumbH
+	maxScroll := totalLines - visibleH
+	var thumbStart int
+	if maxScroll > 0 {
+		thumbStart = scrollY * trackH / maxScroll
+	} else {
+		thumbStart = 0
+	}
+
+	// Build scrollbar characters
+	sb := m.styles.PanelHint // use subtle color
+	thumbStyle := m.styles.PanelDesc
+
+	var lines []string
+	for i := 0; i < visibleH; i++ {
+		if i >= thumbStart && i < thumbStart+thumbH {
+			lines = append(lines, thumbStyle.Render("▐"))
+		} else {
+			lines = append(lines, sb.Render("│"))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// applyScrollbar appends a scrollbar to each line of the panel content.
+// Returns the modified content string.
+func (m *cliModel) applyScrollbar(content string, contentWidth, totalLines, scrollY int) string {
+	if totalLines <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	visibleH := len(lines)
+
+	sbStr := m.renderScrollbar(contentWidth, visibleH, totalLines, scrollY)
+	if sbStr == "" {
+		return content
+	}
+	sbLines := strings.Split(sbStr, "\n")
+
+	var b strings.Builder
+	for i, line := range lines {
+		// Pad line to contentWidth, then append scrollbar
+		visW := lipgloss.Width(line)
+		padding := contentWidth - visW
+		if padding < 1 {
+			padding = 1
+		}
+		b.WriteString(line)
+		b.WriteString(strings.Repeat(" ", padding))
+		if i < len(sbLines) {
+			b.WriteString(sbLines[i])
+		}
+		if i < len(lines)-1 {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}

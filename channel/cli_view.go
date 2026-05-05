@@ -171,7 +171,7 @@ func (m *cliModel) layoutSearch(titleBar, input string) string {
 }
 
 // layoutAskUser renders the askuser panel layout: title bar, viewport,
-// scrollable ask panel with progress indicator.
+// scrollable ask panel with progress indicator and optional scrollbar.
 func (m *cliModel) layoutAskUser(titleBar string) string {
 	askRaw := m.viewAskUserPanel()
 	m.clampAskUserPanelScroll(askRaw)
@@ -183,19 +183,27 @@ func (m *cliModel) layoutAskUser(titleBar string) string {
 	if askVisibleH < 3 {
 		askVisibleH = 3
 	}
-	if m.askPanelScrollY+askVisibleH > len(askLines) {
-		m.askPanelScrollY = max(0, len(askLines)-askVisibleH)
+	totalAskLines := len(askLines)
+	if m.askPanelScrollY+askVisibleH > totalAskLines {
+		m.askPanelScrollY = max(0, totalAskLines-askVisibleH)
 	}
 	end := m.askPanelScrollY + askVisibleH
-	if end > len(askLines) {
-		end = len(askLines)
+	if end > totalAskLines {
+		end = totalAskLines
 	}
 	visibleAsk := askLines[m.askPanelScrollY:end]
 	askContent := strings.Join(visibleAsk, "\n")
+	// Append scrollbar when content overflows
+	if totalAskLines > askVisibleH && askVisibleH > 0 {
+		contentWidth := m.width - 4 - 2 // PanelBox border(2) + padding(2) - scrollbar(2)
+		if contentWidth < 10 {
+			contentWidth = 10
+		}
+		askContent = m.applyScrollbar(askContent, contentWidth, totalAskLines, m.askPanelScrollY)
+	}
 	boxedAsk := m.styles.PanelBox.Render(askContent)
 	// Scroll indicator
 	scrollHint := ""
-	totalAskLines := len(askLines)
 	if totalAskLines > askVisibleH {
 		pct := (m.askPanelScrollY + askVisibleH) * 100 / totalAskLines
 		scrollHint = m.styles.PanelDesc.Render(fmt.Sprintf(" [%d%%] Ctrl+↑↓/PgUp/PgDn", pct))
@@ -205,22 +213,32 @@ func (m *cliModel) layoutAskUser(titleBar string) string {
 }
 
 // layoutPanel renders the generic panel-mode layout: title bar, scrollable
-// panel content in a bordered box, and panel footer.
+// panel content in a bordered box with optional scrollbar, and panel footer.
 func (m *cliModel) layoutPanel(titleBar string) string {
 	panelFooter := m.renderFooter()
 	rawContent := m.viewPanel()
 	m.clampPanelScroll(rawContent)
 	rawLines := strings.Split(rawContent, "\n")
 	visibleH := m.panelVisibleHeight()
-	if m.panelScrollY+visibleH > len(rawLines) {
-		m.panelScrollY = max(0, len(rawLines)-visibleH)
+	totalLines := len(rawLines)
+	if m.panelScrollY+visibleH > totalLines {
+		m.panelScrollY = max(0, totalLines-visibleH)
 	}
 	end := m.panelScrollY + visibleH
-	if end > len(rawLines) {
-		end = len(rawLines)
+	if end > totalLines {
+		end = totalLines
 	}
 	visible := rawLines[m.panelScrollY:end]
 	panelContent := strings.Join(visible, "\n")
+	// Append scrollbar when content overflows
+	if totalLines > visibleH && visibleH > 0 {
+		// contentWidth: PanelBox inner width minus border(2) minus padding(2)
+		contentWidth := m.width - 4 - 2 // -2 for scrollbar + spacing
+		if contentWidth < 10 {
+			contentWidth = 10
+		}
+		panelContent = m.applyScrollbar(panelContent, contentWidth, totalLines, m.panelScrollY)
+	}
 	boxedContent := m.styles.PanelBox.Render(panelContent)
 	return fmt.Sprintf("%s\n%s%s",
 		titleBar, boxedContent, panelFooter)

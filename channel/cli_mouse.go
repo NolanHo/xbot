@@ -128,20 +128,29 @@ func (m *cliModel) handleMouseClick(msg tea.MouseClickMsg) (bool, tea.Model, tea
 func (m *cliModel) handleMouseWheel(msg tea.MouseWheelMsg) (bool, tea.Model, tea.Cmd) {
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		// Check if wheel is in panel area
+		// AskUser split layout: route wheel based on mouse position
+		if m.panelMode == "askuser" {
+			zone := m.mouseZones.findZone(msg.Y)
+			if zone != nil && zone.ID == "askViewport" {
+				// Scroll the main viewport
+				return false, m, nil // unhandled → viewport.Update will process it
+			}
+			// Panel area (any zone inside the ask panel)
+			if zone != nil {
+				m.askPanelScrollY = max(0, m.askPanelScrollY-3)
+				return true, m, nil
+			}
+		}
+		// Check if wheel is in panel area (non-askuser panels)
 		if m.panelMode != "" {
 			zone := m.mouseZones.findZone(msg.Y)
 			if zone != nil && (zone.ID == "panelItem" || zone.ID == "panelToggle" ||
-				zone.ID == "panelCombo" || zone.ID == "panelTextarea" ||
+				zone.ID == "panelCombo" || zone.ID == "panelComboItem" ||
+				zone.ID == "panelTextarea" ||
 				zone.ID == "sessionsItem" || zone.ID == "bgtasksItem" ||
 				zone.ID == "dangerItem" || zone.ID == "channelItem" ||
-				zone.ID == "runnerField" || zone.ID == "askUserOption" ||
-				zone.ID == "askUserTab" || zone.ID == "askUserSubmit") {
-				if m.panelMode == "askuser" {
-					m.askPanelScrollY = max(0, m.askPanelScrollY-3)
-				} else {
-					m.panelScrollY = max(0, m.panelScrollY-3)
-				}
+				zone.ID == "runnerField") {
+				m.panelScrollY = max(0, m.panelScrollY-3)
 				return true, m, nil
 			}
 		}
@@ -166,19 +175,29 @@ func (m *cliModel) handleMouseWheel(msg tea.MouseWheelMsg) (bool, tea.Model, tea
 		return false, m, nil
 
 	case tea.MouseWheelDown:
+		// AskUser split layout: route wheel based on mouse position
+		if m.panelMode == "askuser" {
+			zone := m.mouseZones.findZone(msg.Y)
+			if zone != nil && zone.ID == "askViewport" {
+				// Scroll the main viewport
+				return false, m, nil // unhandled → viewport.Update will process it
+			}
+			// Panel area
+			if zone != nil {
+				m.askPanelScrollY += 3
+				return true, m, nil
+			}
+		}
+		// Check if wheel is in panel area (non-askuser panels)
 		if m.panelMode != "" {
 			zone := m.mouseZones.findZone(msg.Y)
 			if zone != nil && (zone.ID == "panelItem" || zone.ID == "panelToggle" ||
-				zone.ID == "panelCombo" || zone.ID == "panelTextarea" ||
+				zone.ID == "panelCombo" || zone.ID == "panelComboItem" ||
+				zone.ID == "panelTextarea" ||
 				zone.ID == "sessionsItem" || zone.ID == "bgtasksItem" ||
 				zone.ID == "dangerItem" || zone.ID == "channelItem" ||
-				zone.ID == "runnerField" || zone.ID == "askUserOption" ||
-				zone.ID == "askUserTab" || zone.ID == "askUserSubmit") {
-				if m.panelMode == "askuser" {
-					m.askPanelScrollY += 3
-				} else {
-					m.panelScrollY += 3
-				}
+				zone.ID == "runnerField") {
+				m.panelScrollY += 3
 				return true, m, nil
 			}
 		}
@@ -965,9 +984,9 @@ func (m *cliModel) trackAskUserZones(zb *mouseZoneBuilder) {
 	// titleBar: 1 line
 	zb.skip(1)
 
-	// viewport: full height minus panel
+	// viewport: full height minus panel — mark as askViewport for wheel routing
 	viewportH := m.layoutViewportHeight()
-	zb.skip(viewportH)
+	zb.add(viewportH, "askViewport", 0)
 
 	// AskUser panel in PanelBox
 	zb.skip(1) // PanelBox top border

@@ -626,6 +626,9 @@ type cliModel struct {
 	searchEditing bool            // true = 编辑搜索词, false = 导航结果
 	searchTI      textinput.Model // 搜索输入框
 
+	// --- Mouse support ---
+	mouseZones mouseZoneBuilder // zone tracker for mouse hit testing (rebuilt each View())
+
 	// toolDisplayInfo
 
 	// --- 🥚 Easter Eggs 彩蛋 ---

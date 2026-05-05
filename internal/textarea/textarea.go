@@ -866,6 +866,78 @@ func (m *Model) Reset() {
 	m.recalculateHeight()
 }
 
+// Click positions the cursor based on a mouse click at terminal column x.
+// x is the terminal column (0-based), relative to the textarea content area.
+// This is a simplified version that positions the cursor on the current line.
+// For full (x, y) click support, use ClickAt instead.
+func (m *Model) Click(x int) {
+	if len(m.value) == 0 {
+		return
+	}
+
+	// Map x to rune offset in the current line
+	line := m.value[m.row]
+
+	// Accumulate visual width to find which rune corresponds to x
+	col := 0
+	visualW := 0
+	for _, r := range line {
+		rw := uniseg.StringWidth(string(r))
+		if visualW+rw > x {
+			break
+		}
+		visualW += rw
+		col++
+	}
+	m.col = clamp(col, 0, len(line))
+	m.lastCharOffset = 0
+	m.repositionView()
+}
+
+// ClickAt positions the cursor based on a mouse click at the given
+// terminal coordinates. x is the column, y is the visual line index
+// (both 0-based, relative to the textarea content area).
+func (m *Model) ClickAt(x, y int) {
+	if len(m.value) == 0 {
+		return
+	}
+
+	// Map visual line y to (logical row, rune offset)
+	visualLine := 0
+	for row, line := range m.value {
+		wrappedLines := m.memoizedWrap(line, m.width)
+		for wl, wrappedRunes := range wrappedLines {
+			if visualLine == y {
+				// Found the visual line — position cursor here
+				m.row = row
+
+				// Calculate base offset (runes before this wrapped segment)
+				baseOffset := 0
+				for i := 0; i < wl; i++ {
+					baseOffset += len(wrappedLines[i])
+				}
+
+				// Map x to rune offset within this wrapped segment
+				col := baseOffset
+				visualW := 0
+				for _, r := range wrappedRunes {
+					rw := uniseg.StringWidth(string(r))
+					if visualW+rw > x {
+						break
+					}
+					visualW += rw
+					col++
+				}
+				m.col = clamp(col, 0, len(line))
+				m.lastCharOffset = 0
+				m.repositionView()
+				return
+			}
+			visualLine++
+		}
+	}
+}
+
 // cjkWordBounds returns the segmented CJK word boundaries for the current
 // line, recomputing the cache when the line text changes. Returns nil if
 // the segmenter is unavailable.

@@ -196,6 +196,17 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		handled, newModel, cmd := m.handleMouseMsg(msg)
+		if handled {
+			if _, ok := newModel.(*cliModel); ok {
+				m.autoExpandInput()
+			}
+			return newModel, cmd
+		}
+		// Unhandled mouse events (e.g., wheel in viewport area)
+		// will be forwarded to viewport/textarea at the end of Update().
+
 	case tea.KeyPressMsg:
 		model, keyCmds, handled := m.handleKeyPress(msg, wasTyping)
 		if handled {

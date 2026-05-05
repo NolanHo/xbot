@@ -362,6 +362,9 @@ func (m *cliModel) resolveWidgetZone(zone string) string {
 
 // View renders the CLI interface.
 func (m *cliModel) View() tea.View {
+	// Reset mouse zones for this frame
+	m.mouseZones.reset()
+
 	// Splash screen
 	if !m.splashDone {
 		v := tea.NewView(m.renderSplash())
@@ -393,27 +396,35 @@ func (m *cliModel) View() tea.View {
 	borderColor, completionsHint := m.renderCompletionsHint(m.textarea.Value())
 	input := m.renderInputArea(borderColor)
 
-	// Layout selection
+	// Layout selection + zone tracking
 	var content string
 	switch {
 	case m.searchMode:
 		content = m.layoutSearch(titleBar, input)
+		m.trackMainLayoutZones(&m.mouseZones)
 	case m.panelMode == "askuser":
 		content = m.layoutAskUser(titleBar)
+		m.trackAskUserZones(&m.mouseZones)
 	case m.panelMode != "":
 		content = m.layoutPanel(titleBar)
+		m.trackPanelZones(&m.mouseZones)
 	default:
 		content = m.layoutMain(titleBar, input, completionsHint)
+		m.trackMainLayoutZones(&m.mouseZones)
 	}
 
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 
 	// Command palette overlay (highest priority — hides everything)
 	if m.paletteOpen {
 		if overlay := m.viewCommandPalette(m.width, m.height); overlay != "" {
 			v.Content = overlay
 		}
+		// Re-track zones for overlay
+		m.mouseZones.reset()
+		m.trackOverlayZones(&m.mouseZones)
 		return v
 	}
 
@@ -422,6 +433,8 @@ func (m *cliModel) View() tea.View {
 		if overlay := m.viewQuickSwitch(m.width, m.height); overlay != "" {
 			v.Content = overlay
 		}
+		m.mouseZones.reset()
+		m.trackOverlayZones(&m.mouseZones)
 	}
 
 	// Rewind overlay
@@ -429,6 +442,8 @@ func (m *cliModel) View() tea.View {
 		if overlay := m.viewRewindPanel(m.width, m.height); overlay != "" {
 			v.Content = overlay
 		}
+		m.mouseZones.reset()
+		m.trackOverlayZones(&m.mouseZones)
 	}
 
 	return v

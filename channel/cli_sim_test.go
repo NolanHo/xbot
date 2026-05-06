@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,38 +13,22 @@ import (
 	"xbot/bus"
 )
 
-//
-// Compiles into a standalone binary:
-//
-//	go test -c -o /tmp/xbot-tui-sim ./channel/
-//
-// Run:
-//
-//	XBOT_SIM_SCENARIO=scenario.json /tmp/xbot-tui-sim -test.run TestSimMain
-//
-// Output is written to stdout as JSON.
-
 // ─── Scenario types ────────────────────────────────────────────────
 
 // SimScenario defines a complete simulation scenario.
 type SimScenario struct {
-	// Config controls the TUI model initialization.
-	Config SimConfig `json:"config"`
-	// History pre-loads messages (like ConvertMessagesToHistory output).
+	Config  SimConfig       `json:"config"`
 	History []SimHistoryMsg `json:"history,omitempty"`
-	// Steps are the events to replay in order.
-	Steps []SimStep `json:"steps"`
+	Steps   []SimStep       `json:"steps"`
 }
 
-// SimConfig controls model dimensions and mode.
 type SimConfig struct {
-	Width  int    `json:"width"`             // Terminal width (default 120)
-	Height int    `json:"height"`            // Terminal height (default 40)
-	Mode   string `json:"mode,omitempty"`    // "local" (default) or "remote"
-	ChatID string `json:"chat_id,omitempty"` // default "/test"
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Mode   string `json:"mode,omitempty"`
+	ChatID string `json:"chat_id,omitempty"`
 }
 
-// SimHistoryMsg pre-loads a message into the model.
 type SimHistoryMsg struct {
 	Role       string `json:"role"`
 	Content    string `json:"content,omitempty"`
@@ -56,7 +41,6 @@ type SimHistoryMsg struct {
 	} `json:"iterations,omitempty"`
 }
 
-// SimToolRecord describes a tool in an iteration.
 type SimToolRecord struct {
 	Name    string `json:"name"`
 	Label   string `json:"label,omitempty"`
@@ -65,98 +49,144 @@ type SimToolRecord struct {
 }
 
 // SimStep is a single event in the simulation.
-// The Action field determines which fields are used.
 type SimStep struct {
-	// Action is the event type. Required. One of:
-	//   "user_msg"    — simulate user typing and sending a message
-	//   "agent_msg"   — inject agent response (triggers tool_summary + assistant msg)
-	//   "progress"    — send a progress event (tools, thinking, iteration)
-	//   "phase_done"  — send a PhaseDone event
-	//   "key"         — inject a key press
-	//   "resize"      — change terminal dimensions
-	//   "cancel"      — trigger turn cancellation (sets turnCancelled)
-	//   "rewind"      — open rewind panel and select an item (by index from end)
-	//   "snapshot"    — capture current view (output includes rendered text)
-	//   "assert"      — verify current view matches expectation
-	//   "wait_ms"     — simulated delay (no-op, but useful for documentation)
-	//   "set_var"     — set a model variable for testing
-	//   "tick"        — process a tick event (spinner, progress updates)
 	Action string `json:"action"`
 
-	// ─── user_msg fields ───
+	// ─── shared content field ───
 	Content string `json:"content,omitempty"`
 
-	// ─── progress fields ───
-	Phase     string          `json:"phase,omitempty"`
-	Iteration int             `json:"iteration,omitempty"`
+	// ─── progress / phase_done fields ───
+	Phase          string          `json:"phase,omitempty"`
+	Iteration      int             `json:"iteration,omitempty"`
+	Thinking       string          `json:"thinking,omitempty"`
+	Reasoning      string          `json:"reasoning,omitempty"`
+	Tools          []SimToolRecord `json:"tools,omitempty"`
+	ActiveTools    []SimToolRecord `json:"active_tools,omitempty"`
+	CompletedTools []SimToolRecord `json:"completed_tools,omitempty"`
+
+	// ─── key / resize / rewind fields ───
+	Key         string `json:"key,omitempty"`
+	NewWidth    int    `json:"new_width,omitempty"`
+	NewHeight   int    `json:"new_height,omitempty"`
+	RewindIndex int    `json:"rewind_index,omitempty"`
+
+	// ─── snapshot / label ───
+	Label string `json:"label,omitempty"`
+
+	// ─── assert fields (view-level) ───
+	Contains    string `json:"contains,omitempty"`
+	NotContains string `json:"not_contains,omitempty"`
+	Matches     string `json:"matches,omitempty"`
+	Count       int    `json:"count,omitempty"`
+	ExactCount  bool   `json:"exact_count,omitempty"`
+
+	// ─── assert fields (message-level) ───
+	AssertRole    string   `json:"assert_role,omitempty"`
+	AssertCount   int      `json:"assert_count,omitempty"`
+	AssertContent string   `json:"assert_content,omitempty"`
+	AssertTools   []string `json:"assert_tools,omitempty"`
+
+	// ─── set_var fields ───
+	Var   string `json:"var,omitempty"`
+	Value bool   `json:"value,omitempty"`
+
+	// ─── agent_msg fields ───
+	IsPartial bool   `json:"is_partial,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+
+	// ─── inspect fields ───
+	InspectMessages bool     `json:"inspect_messages,omitempty"`
+	InspectVars     []string `json:"inspect_vars,omitempty"`
+	InspectAll      bool     `json:"inspect_all,omitempty"`
+
+	// ─── subagent fields ───
+	SubAgents []SimSubAgent `json:"sub_agents,omitempty"`
+
+	// ─── queue fields ───
+	QueueMessages []string `json:"queue_messages,omitempty"`
+}
+
+// SimSubAgent describes a SubAgent in the tree for simulation.
+type SimSubAgent struct {
+	Role     string        `json:"role"`
+	Instance string        `json:"instance"`
+	Status   string        `json:"status"`
+	Task     string        `json:"task,omitempty"`
+	Children []SimSubAgent `json:"children,omitempty"`
+}
+
+// ─── Output types ──────────────────────────────────────────────────
+
+type SimResult struct {
+	OK          bool            `json:"ok"`
+	Error       string          `json:"error,omitempty"`
+	Snapshots   []SimSnapshot   `json:"snapshots,omitempty"`
+	Assertions  []SimAssertion  `json:"assertions,omitempty"`
+	Inspections []SimInspection `json:"inspections,omitempty"`
+	StepsTotal  int             `json:"steps_total"`
+	StepsOK     int             `json:"steps_ok"`
+}
+
+type SimSnapshot struct {
+	Step   int    `json:"step"`
+	Label  string `json:"label,omitempty"`
+	View   string `json:"view"`
+	Lines  int    `json:"lines"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+type SimAssertion struct {
+	Step    int    `json:"step"`
+	Type    string `json:"type"`
+	Pattern string `json:"pattern,omitempty"`
+	Passed  bool   `json:"passed"`
+	Actual  string `json:"actual,omitempty"`
+	Context string `json:"context,omitempty"`
+}
+
+type SimInspection struct {
+	Step     int               `json:"step"`
+	Label    string            `json:"label,omitempty"`
+	Messages []SimMessageDump  `json:"messages,omitempty"`
+	Vars     map[string]any    `json:"vars,omitempty"`
+	State    *SimModelSnapshot `json:"state,omitempty"`
+}
+
+type SimMessageDump struct {
+	Index      int           `json:"index"`
+	Role       string        `json:"role"`
+	TurnID     uint64        `json:"turn_id"`
+	Content    string        `json:"content"`
+	ContentLen int           `json:"content_len"`
+	Iterations []SimIterDump `json:"iterations,omitempty"`
+	Dirty      bool          `json:"dirty"`
+}
+
+type SimIterDump struct {
+	Iteration int             `json:"iteration"`
 	Thinking  string          `json:"thinking,omitempty"`
 	Reasoning string          `json:"reasoning,omitempty"`
 	Tools     []SimToolRecord `json:"tools,omitempty"`
-
-	// ─── key fields ───
-	Key string `json:"key,omitempty"` // e.g. "ctrl+c", "enter", "esc", "up"
-
-	// ─── resize fields ───
-	NewWidth  int `json:"new_width,omitempty"`
-	NewHeight int `json:"new_height,omitempty"`
-
-	// ─── rewind fields ───
-	RewindIndex int `json:"rewind_index,omitempty"` // 0 = most recent, 1 = second most recent, etc.
-
-	// ─── snapshot fields ───
-	Label string `json:"label,omitempty"` // optional label for the snapshot
-
-	// ─── assert fields ───
-	Contains    string `json:"contains,omitempty"`     // view must contain this text
-	NotContains string `json:"not_contains,omitempty"` // view must NOT contain this text
-	Matches     string `json:"matches,omitempty"`      // view must match this regex
-	Count       int    `json:"count,omitempty"`        // expected count of Contains (default: >= 1)
-	ExactCount  bool   `json:"exact_count,omitempty"`  // if true, count must match exactly
-
-	// ─── set_var fields ───
-	Var   string `json:"var,omitempty"`   // variable name (e.g. "turnCancelled", "inputReady")
-	Value bool   `json:"value,omitempty"` // variable value
-
-	// ─── agent_msg fields ───
-	StreamContent string `json:"stream_content,omitempty"` // streaming content before final
-	IsPartial     bool   `json:"is_partial,omitempty"`     // true = streaming, false = final
-	Detail        string `json:"detail,omitempty"`         // JSON iteration detail string
-
-	// ─── progress tool fields (for active/completed tools) ───
-	ActiveTools    []SimToolRecord `json:"active_tools,omitempty"`
-	CompletedTools []SimToolRecord `json:"completed_tools,omitempty"`
 }
 
-// SimResult is the output of running a scenario.
-type SimResult struct {
-	OK         bool           `json:"ok"`
-	Error      string         `json:"error,omitempty"`
-	Snapshots  []SimSnapshot  `json:"snapshots,omitempty"`
-	Assertions []SimAssertion `json:"assertions,omitempty"`
-	StepsTotal int            `json:"steps_total"`
-	StepsOK    int            `json:"steps_ok"`
-}
-
-// SimSnapshot captures the rendered view at a specific step.
-type SimSnapshot struct {
-	Step  int    `json:"step"`
-	Label string `json:"label,omitempty"`
-	View  string `json:"view"`  // ANSI-stripped rendered output
-	Lines int    `json:"lines"` // number of lines in the view
-}
-
-// SimAssertion records the result of an assert step.
-type SimAssertion struct {
-	Step    int    `json:"step"`
-	Type    string `json:"type"` // "contains", "not_contains", "matches"
-	Pattern string `json:"pattern"`
-	Passed  bool   `json:"passed"`
-	Actual  string `json:"actual,omitempty"` // hint text on failure
+type SimModelSnapshot struct {
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	Typing        bool   `json:"typing"`
+	TurnCancelled bool   `json:"turn_cancelled"`
+	InputReady    bool   `json:"input_ready"`
+	AgentTurnID   uint64 `json:"agent_turn_id"`
+	MessageCount  int    `json:"message_count"`
+	IterHistCount int    `json:"iteration_history_count"`
+	ProgressPhase string `json:"progress_phase,omitempty"`
+	LastSeenIter  int    `json:"last_seen_iteration"`
+	RemoteMode    bool   `json:"remote_mode"`
+	QueueLen      int    `json:"queue_len"`
 }
 
 // ─── Simulator ─────────────────────────────────────────────────────
 
-// simRunner processes a scenario and produces results.
 type simRunner struct {
 	model    *cliModel
 	scenario SimScenario
@@ -178,12 +208,9 @@ func newSimRunner(scenario SimScenario) *simRunner {
 	model := newCLIModel()
 	model.channelName = "cli"
 	model.chatID = cfg.ChatID
-
 	if cfg.Mode == "remote" {
 		model.remoteMode = true
 	}
-
-	// Initialize model dimensions (sets ready=true)
 	model.handleResize(cfg.Width, cfg.Height)
 	model.splashDone = true
 
@@ -191,14 +218,14 @@ func newSimRunner(scenario SimScenario) *simRunner {
 		model:    model,
 		scenario: scenario,
 		result: SimResult{
-			OK:         true,
-			Snapshots:  []SimSnapshot{},
-			Assertions: []SimAssertion{},
+			OK:          true,
+			Snapshots:   []SimSnapshot{},
+			Assertions:  []SimAssertion{},
+			Inspections: []SimInspection{},
 		},
 	}
 }
 
-// loadHistory pre-loads messages from the scenario's history section.
 func (r *simRunner) loadHistory() {
 	for _, hm := range r.scenario.History {
 		msg := cliMessage{
@@ -214,8 +241,6 @@ func (r *simRunner) loadHistory() {
 		if msg.timestamp.IsZero() {
 			msg.timestamp = time.Now()
 		}
-
-		// Convert iterations for tool_summary messages
 		if hm.Role == "tool_summary" && len(hm.Iterations) > 0 {
 			iters := make([]cliIterationSnapshot, len(hm.Iterations))
 			for i, it := range hm.Iterations {
@@ -242,35 +267,36 @@ func (r *simRunner) loadHistory() {
 			}
 			msg.iterations = iters
 		}
-
 		r.model.messages = append(r.model.messages, msg)
 	}
 	r.model.renderCacheValid = false
 	r.model.updateViewportContent()
 }
 
-// run processes all steps and returns the result.
 func (r *simRunner) run() SimResult {
 	r.loadHistory()
-
 	for i, step := range r.scenario.Steps {
 		if err := r.processStep(i, step); err != nil {
 			r.result.OK = false
 			r.result.Error = fmt.Sprintf("step %d (%s): %s", i, step.Action, err)
 			r.result.StepsTotal = len(r.scenario.Steps)
 			r.result.StepsOK = i
+			// On failure, auto-capture inspection for debugging
+			r.result.Inspections = append(r.result.Inspections, SimInspection{
+				Step:     i,
+				Label:    "auto_on_failure",
+				Messages: r.dumpMessages(),
+				State:    r.dumpState(),
+			})
 			return r.result
 		}
 	}
-
 	r.result.StepsTotal = len(r.scenario.Steps)
 	r.result.StepsOK = len(r.scenario.Steps)
 	return r.result
 }
 
 func (r *simRunner) processStep(idx int, step SimStep) error {
-	m := r.model
-
 	switch step.Action {
 	case "user_msg":
 		return r.doUserMsg(idx, step)
@@ -285,42 +311,40 @@ func (r *simRunner) processStep(idx int, step SimStep) error {
 	case "resize":
 		return r.doResize(idx, step)
 	case "cancel":
-		m.turnCancelled = true
+		r.model.turnCancelled = true
 	case "rewind":
 		return r.doRewind(idx, step)
 	case "snapshot":
-		view := r.captureView()
-		r.result.Snapshots = append(r.result.Snapshots, SimSnapshot{
-			Step:  idx,
-			Label: step.Label,
-			View:  view,
-			Lines: len(strings.Split(view, "\n")),
-		})
+		r.doSnapshot(idx, step)
 	case "assert":
 		return r.doAssert(idx, step)
 	case "wait_ms":
-		// No-op in simulation; real time doesn't matter
 	case "set_var":
 		return r.doSetVar(idx, step)
 	case "tick":
-		// Process a tick to update spinner animation
-		m.Update(cliTickMsg{})
+		r.model.Update(cliTickMsg{})
+	case "inspect":
+		return r.doInspect(idx, step)
+	case "queue_add":
+		return r.doQueueAdd(idx, step)
+	case "subagent":
+		return r.doSubAgent(idx, step)
 	default:
 		return fmt.Errorf("unknown action: %q", step.Action)
 	}
 	return nil
 }
 
+// ─── Action implementations ────────────────────────────────────────
+
 func (r *simRunner) doUserMsg(idx int, step SimStep) error {
 	m := r.model
-	// Add user message
 	m.messages = append(m.messages, cliMessage{
 		role:      "user",
 		content:   step.Content,
 		timestamp: time.Now(),
 		dirty:     true,
 	})
-	// Start agent turn
 	m.startAgentTurn()
 	m.resetProgressState()
 	m.renderCacheValid = false
@@ -330,21 +354,11 @@ func (r *simRunner) doUserMsg(idx int, step SimStep) error {
 
 func (r *simRunner) doAgentMsg(idx int, step SimStep) error {
 	m := r.model
-	_ = idx
-
-	// Build the outbound message
 	outMsg := bus.OutboundMessage{
 		Content:   step.Content,
 		IsPartial: step.IsPartial,
 	}
-
-	// If this is a final message (not partial), typing will be set to false
-	_ = m.typing
-
-	m.Update(cliOutboundMsg{
-		msg: outMsg,
-	})
-
+	m.Update(cliOutboundMsg{msg: outMsg})
 	m.renderCacheValid = false
 	m.updateViewportContent()
 	return nil
@@ -352,46 +366,15 @@ func (r *simRunner) doAgentMsg(idx int, step SimStep) error {
 
 func (r *simRunner) doProgress(idx int, step SimStep) error {
 	m := r.model
-
-	// Build tool progress records
-	activeTools := make([]CLIToolProgress, len(step.ActiveTools))
-	for i, t := range step.ActiveTools {
-		label := t.Label
-		if label == "" {
-			label = t.Name
-		}
-		activeTools[i] = CLIToolProgress{
-			Name:      t.Name,
-			Label:     label,
-			Status:    t.Status,
-			Iteration: step.Iteration,
-		}
-	}
-	completedTools := make([]CLIToolProgress, len(step.CompletedTools))
-	for i, t := range step.CompletedTools {
-		label := t.Label
-		if label == "" {
-			label = t.Name
-		}
-		completedTools[i] = CLIToolProgress{
-			Name:      t.Name,
-			Label:     label,
-			Status:    t.Status,
-			Elapsed:   int64(t.Elapsed),
-			Iteration: step.Iteration,
-		}
-	}
-
 	payload := &CLIProgressPayload{
 		Phase:          step.Phase,
 		Iteration:      step.Iteration,
 		Thinking:       step.Thinking,
 		Reasoning:      step.Reasoning,
-		ActiveTools:    activeTools,
-		CompletedTools: completedTools,
+		ActiveTools:    convertSimTools(step.ActiveTools, step.Iteration),
+		CompletedTools: convertSimTools(step.CompletedTools, step.Iteration),
 		ChatID:         m.channelName + ":" + m.chatID,
 	}
-
 	m.Update(cliProgressMsg{payload: payload})
 	m.renderCacheValid = false
 	m.updateViewportContent()
@@ -400,37 +383,18 @@ func (r *simRunner) doProgress(idx int, step SimStep) error {
 
 func (r *simRunner) doPhaseDone(idx int, step SimStep) error {
 	m := r.model
-
-	payload := &CLIProgressPayload{
-		Phase:     "done",
-		Thinking:  step.Thinking,
-		Reasoning: step.Reasoning,
-		ChatID:    m.channelName + ":" + m.chatID,
-	}
-
-	// Prefer CompletedTools field, fall back to Tools field
 	tools := step.CompletedTools
 	if len(tools) == 0 {
 		tools = step.Tools
 	}
-	completedTools := make([]CLIToolProgress, len(tools))
-	for i, t := range tools {
-		label := t.Label
-		if label == "" {
-			label = t.Name
-		}
-		completedTools[i] = CLIToolProgress{
-			Name:      t.Name,
-			Label:     label,
-			Status:    t.Status,
-			Elapsed:   int64(t.Elapsed),
-			Iteration: step.Iteration,
-		}
+	payload := &CLIProgressPayload{
+		Phase:          "done",
+		Thinking:       step.Thinking,
+		Reasoning:      step.Reasoning,
+		CompletedTools: convertSimTools(tools, step.Iteration),
+		ChatID:         m.channelName + ":" + m.chatID,
 	}
-	payload.CompletedTools = completedTools
-
 	m.Update(cliProgressMsg{payload: payload})
-
 	m.renderCacheValid = false
 	m.updateViewportContent()
 	return nil
@@ -446,23 +410,19 @@ func (r *simRunner) doKey(idx int, step SimStep) error {
 }
 
 func (r *simRunner) doResize(idx int, step SimStep) error {
-	m := r.model
-	w := step.NewWidth
-	h := step.NewHeight
+	w, h := step.NewWidth, step.NewHeight
 	if w <= 0 {
-		w = m.width
+		w = r.model.width
 	}
 	if h <= 0 {
-		h = m.height
+		h = r.model.height
 	}
-	m.handleResize(w, h)
+	r.model.handleResize(w, h)
 	return nil
 }
 
 func (r *simRunner) doRewind(idx int, step SimStep) error {
 	m := r.model
-
-	// Build rewind items from user messages
 	var items []rewindItem
 	for i, msg := range m.messages {
 		if msg.role == "user" {
@@ -476,27 +436,34 @@ func (r *simRunner) doRewind(idx int, step SimStep) error {
 	if len(items) == 0 {
 		return fmt.Errorf("no user messages to rewind to")
 	}
-
-	// Select item by RewindIndex (0 = most recent)
 	ri := len(items) - 1 - step.RewindIndex
 	if ri < 0 || ri >= len(items) {
 		return fmt.Errorf("rewind_index %d out of range (have %d user messages)", step.RewindIndex, len(items))
 	}
-
-	// Apply rewind
-	selectedItem := items[ri]
-	cutIdx := selectedItem.MsgIndex
+	cutIdx := items[ri].MsgIndex
 	m.messages = m.messages[:cutIdx]
-
 	m.renderCacheValid = false
 	m.cachedHistory = ""
 	m.updateViewportContent()
 	return nil
 }
 
+func (r *simRunner) doSnapshot(idx int, step SimStep) {
+	view := r.captureView()
+	r.result.Snapshots = append(r.result.Snapshots, SimSnapshot{
+		Step:   idx,
+		Label:  step.Label,
+		View:   view,
+		Lines:  len(strings.Split(view, "\n")),
+		Width:  r.model.width,
+		Height: r.model.height,
+	})
+}
+
 func (r *simRunner) doAssert(idx int, step SimStep) error {
 	view := r.captureView()
 
+	// ─── View-level assertions ───
 	if step.Contains != "" {
 		count := strings.Count(view, step.Contains)
 		expected := step.Count
@@ -507,12 +474,13 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 		if step.ExactCount {
 			passed = count == expected
 		}
+		ctx := ""
+		if !passed {
+			ctx = extractContext(view, step.Contains, 120)
+		}
 		r.result.Assertions = append(r.result.Assertions, SimAssertion{
-			Step:    idx,
-			Type:    "contains",
-			Pattern: step.Contains,
-			Passed:  passed,
-			Actual:  fmt.Sprintf("found %d occurrences", count),
+			Step: idx, Type: "contains", Pattern: step.Contains,
+			Passed: passed, Actual: fmt.Sprintf("found %d occurrences", count), Context: ctx,
 		})
 		if !passed {
 			r.result.OK = false
@@ -523,12 +491,13 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 	if step.NotContains != "" {
 		count := strings.Count(view, step.NotContains)
 		passed := count == 0
+		ctx := ""
+		if !passed {
+			ctx = extractContext(view, step.NotContains, 120)
+		}
 		r.result.Assertions = append(r.result.Assertions, SimAssertion{
-			Step:    idx,
-			Type:    "not_contains",
-			Pattern: step.NotContains,
-			Passed:  passed,
-			Actual:  fmt.Sprintf("found %d occurrences", count),
+			Step: idx, Type: "not_contains", Pattern: step.NotContains,
+			Passed: passed, Actual: fmt.Sprintf("found %d occurrences", count), Context: ctx,
 		})
 		if !passed {
 			r.result.OK = false
@@ -543,14 +512,88 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 		}
 		passed := re.MatchString(view)
 		r.result.Assertions = append(r.result.Assertions, SimAssertion{
-			Step:    idx,
-			Type:    "matches",
-			Pattern: step.Matches,
-			Passed:  passed,
+			Step: idx, Type: "matches", Pattern: step.Matches, Passed: passed,
 		})
 		if !passed {
 			r.result.OK = false
 			return fmt.Errorf("assert matches: pattern %q not found in view", step.Matches)
+		}
+	}
+
+	// ─── Message-level assertions ───
+	if step.AssertRole != "" {
+		msgs := r.model.messages
+		roleCount := 0
+		for _, msg := range msgs {
+			if msg.role == step.AssertRole {
+				roleCount++
+			}
+		}
+
+		if step.AssertCount > 0 {
+			passed := roleCount == step.AssertCount
+			r.result.Assertions = append(r.result.Assertions, SimAssertion{
+				Step: idx, Type: "assert_role_count",
+				Pattern: fmt.Sprintf("role=%s count==%d", step.AssertRole, step.AssertCount),
+				Passed:  passed,
+				Actual:  fmt.Sprintf("found %d messages with role %q", roleCount, step.AssertRole),
+			})
+			if !passed {
+				r.result.OK = false
+				return fmt.Errorf("assert_role_count: expected %d messages with role %q, found %d",
+					step.AssertCount, step.AssertRole, roleCount)
+			}
+		}
+
+		if step.AssertContent != "" {
+			found := false
+			for _, msg := range msgs {
+				if msg.role == step.AssertRole && strings.Contains(msg.content, step.AssertContent) {
+					found = true
+					break
+				}
+			}
+			r.result.Assertions = append(r.result.Assertions, SimAssertion{
+				Step: idx, Type: "assert_role_content",
+				Pattern: fmt.Sprintf("role=%s contains %q", step.AssertRole, step.AssertContent),
+				Passed:  found,
+				Actual:  fmt.Sprintf("role %q messages: %d", step.AssertRole, roleCount),
+			})
+			if !found {
+				r.result.OK = false
+				return fmt.Errorf("assert_role_content: no message with role %q contains %q",
+					step.AssertRole, step.AssertContent)
+			}
+		}
+
+		if len(step.AssertTools) > 0 && step.AssertRole == "tool_summary" {
+			allToolNames := map[string]bool{}
+			for _, msg := range msgs {
+				if msg.role == "tool_summary" {
+					for _, it := range msg.iterations {
+						for _, t := range it.Tools {
+							allToolNames[t.Name] = true
+						}
+					}
+				}
+			}
+			var missing []string
+			for _, name := range step.AssertTools {
+				if !allToolNames[name] {
+					missing = append(missing, name)
+				}
+			}
+			passed := len(missing) == 0
+			r.result.Assertions = append(r.result.Assertions, SimAssertion{
+				Step: idx, Type: "assert_tools",
+				Pattern: fmt.Sprintf("tools: %v", step.AssertTools),
+				Passed:  passed,
+				Actual:  fmt.Sprintf("available: %v", sortedKeys(allToolNames)),
+			})
+			if !passed {
+				r.result.OK = false
+				return fmt.Errorf("assert_tools: missing tool names: %v", missing)
+			}
 		}
 	}
 
@@ -572,54 +615,245 @@ func (r *simRunner) doSetVar(idx int, step SimStep) error {
 	return nil
 }
 
-// captureView returns the current TUI view with ANSI codes stripped.
-func (r *simRunner) captureView() string {
-	view := r.model.View().Content
-	return stripAnsi(view)
+func (r *simRunner) doInspect(idx int, step SimStep) error {
+	insp := SimInspection{Step: idx, Label: step.Label}
+
+	if step.InspectAll {
+		insp.Messages = r.dumpMessages()
+		insp.Vars = r.dumpVars()
+		insp.State = r.dumpState()
+	} else {
+		if step.InspectMessages {
+			insp.Messages = r.dumpMessages()
+		}
+		if len(step.InspectVars) > 0 {
+			insp.Vars = r.dumpSpecificVars(step.InspectVars)
+		}
+		// Default: dump messages + state
+		if !step.InspectMessages && len(step.InspectVars) == 0 {
+			insp.Messages = r.dumpMessages()
+			insp.State = r.dumpState()
+		}
+	}
+
+	r.result.Inspections = append(r.result.Inspections, insp)
+	return nil
 }
 
-// stripAnsi is already defined in cli_helpers_test.go
+func (r *simRunner) doQueueAdd(idx int, step SimStep) error {
+	r.model.messageQueue = append(r.model.messageQueue, step.QueueMessages...)
+	return nil
+}
+
+func (r *simRunner) doSubAgent(idx int, step SimStep) error {
+	m := r.model
+	var agents []CLISubAgent
+	for _, sa := range step.SubAgents {
+		agents = append(agents, convertSimSubAgent(sa))
+	}
+	if len(agents) > 0 {
+		payload := &CLIProgressPayload{
+			Phase:     "thinking",
+			SubAgents: agents,
+			ChatID:    m.channelName + ":" + m.chatID,
+		}
+		m.Update(cliProgressMsg{payload: payload})
+		m.renderCacheValid = false
+		m.updateViewportContent()
+	}
+	return nil
+}
+
+// ─── Dump helpers ──────────────────────────────────────────────────
+
+func (r *simRunner) dumpMessages() []SimMessageDump {
+	m := r.model
+	dumps := make([]SimMessageDump, len(m.messages))
+	for i, msg := range m.messages {
+		dump := SimMessageDump{
+			Index:      i,
+			Role:       msg.role,
+			TurnID:     msg.turnID,
+			Content:    msg.content,
+			ContentLen: len(msg.content),
+			Dirty:      msg.dirty,
+		}
+		if len(msg.iterations) > 0 {
+			dump.Iterations = make([]SimIterDump, len(msg.iterations))
+			for j, it := range msg.iterations {
+				dump.Iterations[j] = SimIterDump{
+					Iteration: it.Iteration,
+					Thinking:  it.Thinking,
+					Reasoning: it.Reasoning,
+				}
+				if len(it.Tools) > 0 {
+					dump.Iterations[j].Tools = make([]SimToolRecord, len(it.Tools))
+					for k, t := range it.Tools {
+						dump.Iterations[j].Tools[k] = SimToolRecord{
+							Name:    t.Name,
+							Label:   t.Label,
+							Status:  t.Status,
+							Elapsed: int(t.Elapsed),
+						}
+					}
+				}
+			}
+		}
+		dumps[i] = dump
+	}
+	return dumps
+}
+
+func (r *simRunner) dumpState() *SimModelSnapshot {
+	m := r.model
+	snap := &SimModelSnapshot{
+		Width:         m.width,
+		Height:        m.height,
+		Typing:        m.typing,
+		TurnCancelled: m.turnCancelled,
+		InputReady:    m.inputReady,
+		AgentTurnID:   m.agentTurnID,
+		MessageCount:  len(m.messages),
+		IterHistCount: len(m.iterationHistory),
+		LastSeenIter:  m.lastSeenIteration,
+		RemoteMode:    m.remoteMode,
+		QueueLen:      len(m.messageQueue),
+	}
+	if m.progress != nil {
+		snap.ProgressPhase = m.progress.Phase
+	}
+	return snap
+}
+
+func (r *simRunner) dumpVars() map[string]any {
+	m := r.model
+	return map[string]any{
+		"width":             m.width,
+		"height":            m.height,
+		"typing":            m.typing,
+		"turnCancelled":     m.turnCancelled,
+		"inputReady":        m.inputReady,
+		"agentTurnID":       m.agentTurnID,
+		"lastSeenIteration": m.lastSeenIteration,
+		"messageCount":      len(m.messages),
+		"iterHistCount":     len(m.iterationHistory),
+		"remoteMode":        m.remoteMode,
+		"queueLen":          len(m.messageQueue),
+		"splashDone":        m.splashDone,
+		"ready":             m.ready,
+	}
+}
+
+func (r *simRunner) dumpSpecificVars(names []string) map[string]any {
+	all := r.dumpVars()
+	result := make(map[string]any, len(names))
+	for _, name := range names {
+		if v, ok := all[name]; ok {
+			result[name] = v
+		} else {
+			result[name] = "<unknown>"
+		}
+	}
+	return result
+}
+
+// ─── Utility helpers ───────────────────────────────────────────────
+
+func (r *simRunner) captureView() string {
+	return stripAnsi(r.model.View().Content)
+}
+
+func convertSimTools(tools []SimToolRecord, iteration int) []CLIToolProgress {
+	result := make([]CLIToolProgress, len(tools))
+	for i, t := range tools {
+		label := t.Label
+		if label == "" {
+			label = t.Name
+		}
+		result[i] = CLIToolProgress{
+			Name:      t.Name,
+			Label:     label,
+			Status:    t.Status,
+			Elapsed:   int64(t.Elapsed),
+			Iteration: iteration,
+		}
+	}
+	return result
+}
+
+func convertSimSubAgent(sa SimSubAgent) CLISubAgent {
+	agent := CLISubAgent{
+		Role:     sa.Role,
+		Instance: sa.Instance,
+		Status:   sa.Status,
+		Desc:     sa.Task,
+	}
+	for _, child := range sa.Children {
+		agent.Children = append(agent.Children, convertSimSubAgent(child))
+	}
+	return agent
+}
+
+// extractContext returns text around the first occurrence of needle.
+func extractContext(haystack, needle string, radius int) string {
+	idx := strings.Index(haystack, needle)
+	if idx < 0 {
+		return ""
+	}
+	start := idx - radius
+	if start < 0 {
+		start = 0
+	}
+	end := idx + len(needle) + radius
+	if end > len(haystack) {
+		end = len(haystack)
+	}
+	return "..." + haystack[start:end] + "..."
+}
+
+func sortedKeys[M ~map[K]V, K comparable, V any](m M) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, fmt.Sprint(k))
+	}
+	slices.Sort(keys)
+	return keys
+}
 
 // ─── Test entry point ──────────────────────────────────────────────
 
-// TestSimMain is the entry point for the standalone simulator binary.
-// It reads a scenario from XBOT_SIM_SCENARIO and outputs JSON results.
 func TestSimMain(t *testing.T) {
 	scenarioPath := os.Getenv("XBOT_SIM_SCENARIO")
 	if scenarioPath == "" {
 		t.Skip("XBOT_SIM_SCENARIO not set; simulator mode inactive")
 	}
-
 	data, err := os.ReadFile(scenarioPath)
 	if err != nil {
 		t.Fatalf("Failed to read scenario: %v", err)
 	}
-
 	var scenario SimScenario
 	if err := json.Unmarshal(data, &scenario); err != nil {
 		t.Fatalf("Failed to parse scenario: %v", err)
 	}
-
 	runner := newSimRunner(scenario)
 	result := runner.run()
 
+	out, _ := json.MarshalIndent(result, "", "  ")
 	outputPath := os.Getenv("XBOT_SIM_OUTPUT")
 	if outputPath != "" {
-		out, _ := json.MarshalIndent(result, "", "  ")
 		if err := os.WriteFile(outputPath, out, 0644); err != nil {
 			t.Fatalf("Failed to write output: %v", err)
 		}
 	} else {
-		out, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Println(string(out))
 	}
-
 	if !result.OK {
 		t.Errorf("Simulation failed: %s", result.Error)
 	}
 }
 
-// TestSimBasic validates the simulator with a simple scenario.
+// ─── Built-in tests ────────────────────────────────────────────────
+
 func TestSimBasic(t *testing.T) {
 	scenario := SimScenario{
 		Config: SimConfig{Width: 120, Height: 40},
@@ -631,10 +865,8 @@ func TestSimBasic(t *testing.T) {
 			{Action: "assert", Contains: "Hi there!"},
 		},
 	}
-
 	runner := newSimRunner(scenario)
 	result := runner.run()
-
 	if !result.OK {
 		t.Fatalf("Simulation failed: %s", result.Error)
 	}
@@ -646,139 +878,200 @@ func TestSimBasic(t *testing.T) {
 	}
 }
 
-// TestSimProgressWithTools validates progress event handling.
 func TestSimProgressWithTools(t *testing.T) {
 	scenario := SimScenario{
 		Config: SimConfig{Width: 120, Height: 40},
 		Steps: []SimStep{
 			{Action: "user_msg", Content: "read the file"},
 			{Action: "progress", Phase: "thinking", Iteration: 0,
-				ActiveTools: []SimToolRecord{
-					{Name: "Read", Label: "Read main.go", Status: "active"},
-				},
-			},
-			{Action: "snapshot", Label: "tool_active"},
+				ActiveTools: []SimToolRecord{{Name: "Read", Label: "Read main.go", Status: "active"}}},
 			{Action: "assert", Contains: "Read"},
 			{Action: "progress", Phase: "done", Iteration: 0,
-				CompletedTools: []SimToolRecord{
-					{Name: "Read", Label: "Read main.go", Status: "done", Elapsed: 150},
-				},
-			},
+				CompletedTools: []SimToolRecord{{Name: "Read", Label: "Read main.go", Status: "done", Elapsed: 150}}},
 			{Action: "agent_msg", Content: "Here is main.go content..."},
-			{Action: "snapshot", Label: "after_response"},
 		},
 	}
-
 	runner := newSimRunner(scenario)
 	result := runner.run()
-
 	if !result.OK {
 		t.Fatalf("Simulation failed: %s", result.Error)
 	}
 }
 
-// TestSimCancelAndRewind validates the cancelled-turn rewind fix.
-// The key assertion: after rewind, the tool_summary message exists in m.messages.
 func TestSimCancelAndRewind(t *testing.T) {
 	scenario := SimScenario{
 		Config: SimConfig{Width: 120, Height: 40},
 		Steps: []SimStep{
-			// Turn 1: normal turn with tools
-			{Action: "user_msg", Content: "first message"},
+			{Action: "user_msg", Content: "first"},
 			{Action: "progress", Phase: "thinking", Iteration: 0,
-				ActiveTools: []SimToolRecord{
-					{Name: "Read", Label: "Read file1.go", Status: "active"},
-				},
-			},
+				ActiveTools: []SimToolRecord{{Name: "Read", Label: "Read f1", Status: "active"}}},
 			{Action: "progress", Phase: "done", Iteration: 0,
-				CompletedTools: []SimToolRecord{
-					{Name: "Read", Label: "Read file1.go", Status: "done", Elapsed: 100},
-				},
-			},
+				CompletedTools: []SimToolRecord{{Name: "Read", Label: "Read f1", Status: "done", Elapsed: 100}}},
 			{Action: "agent_msg", Content: "First response"},
 
-			// Turn 2: cancelled turn with tools
-			{Action: "user_msg", Content: "second message"},
+			{Action: "user_msg", Content: "second"},
 			{Action: "progress", Phase: "thinking", Iteration: 0,
-				ActiveTools: []SimToolRecord{
-					{Name: "Shell", Label: "Shell ls", Status: "active"},
-				},
-			},
-			{Action: "cancel"}, // user cancels
+				ActiveTools: []SimToolRecord{{Name: "Shell", Label: "Shell ls", Status: "active"}}},
+			{Action: "cancel"},
 			{Action: "phase_done", Iteration: 0,
-				CompletedTools: []SimToolRecord{
-					{Name: "Shell", Label: "Shell ls", Status: "done", Elapsed: 50},
-				},
-			},
+				CompletedTools: []SimToolRecord{{Name: "Shell", Label: "Shell ls", Status: "done", Elapsed: 50}}},
 
-			// Turn 3: another normal message
-			{Action: "user_msg", Content: "third message"},
+			{Action: "user_msg", Content: "third"},
 			{Action: "phase_done", Iteration: 0},
 			{Action: "agent_msg", Content: "Third response"},
 
-			// Rewind to before turn 3
 			{Action: "rewind", RewindIndex: 0},
-
-			// Verify: first response should still be visible
-			{Action: "assert", Contains: "First response"},
-			// Verify: third message (rewound) should NOT be visible
+			{Action: "assert", AssertRole: "tool_summary", AssertCount: 2},
+			{Action: "assert", AssertRole: "tool_summary", AssertTools: []string{"Shell"}},
 			{Action: "assert", NotContains: "Third response"},
 		},
 	}
-
 	runner := newSimRunner(scenario)
 	result := runner.run()
-
 	if !result.OK {
 		t.Fatalf("Simulation failed: %s", result.Error)
 	}
-
-	// Verify tool_summary exists in messages for the cancelled turn
-	foundToolSummary := false
-	for _, msg := range runner.model.messages {
-		if msg.role == "tool_summary" {
-			for _, it := range msg.iterations {
-				for _, tool := range it.Tools {
-					if tool.Name == "Shell" {
-						foundToolSummary = true
-					}
-				}
-			}
-		}
-	}
-	if !foundToolSummary {
-		t.Error("Expected tool_summary with Shell tool in model.messages after cancelled turn")
-	}
 }
 
-// TestSimResize validates that resize changes the view dimensions.
 func TestSimResize(t *testing.T) {
 	scenario := SimScenario{
 		Config: SimConfig{Width: 120, Height: 40},
 		Steps: []SimStep{
 			{Action: "user_msg", Content: "hello"},
-			{Action: "snapshot", Label: "wide"},
 			{Action: "resize", NewWidth: 60, NewHeight: 20},
-			{Action: "snapshot", Label: "narrow"},
-			// Verify resize changed something (narrow view has different line widths)
-			{Action: "assert", Matches: `hello`},
+			{Action: "assert", Matches: "hello"},
 		},
 	}
-
 	runner := newSimRunner(scenario)
 	result := runner.run()
-
 	if !result.OK {
 		t.Fatalf("Simulation failed: %s", result.Error)
 	}
-	if len(result.Snapshots) != 2 {
-		t.Errorf("Expected 2 snapshots, got %d", len(result.Snapshots))
+	if runner.model.width != 60 || runner.model.height != 20 {
+		t.Errorf("Expected 60x20, got %dx%d", runner.model.width, runner.model.height)
 	}
-	// Verify the model actually resized
-	if runner.model.width != 60 {
-		t.Errorf("Expected model width 60, got %d", runner.model.width)
+}
+
+func TestSimInspect(t *testing.T) {
+	scenario := SimScenario{
+		Config: SimConfig{Width: 120, Height: 40},
+		Steps: []SimStep{
+			{Action: "user_msg", Content: "hello"},
+			{Action: "agent_msg", Content: "world"},
+			{Action: "inspect", Label: "after_turn", InspectMessages: true,
+				InspectVars: []string{"typing", "messageCount"}},
+		},
 	}
-	if runner.model.height != 20 {
-		t.Errorf("Expected model height 20, got %d", runner.model.height)
+	runner := newSimRunner(scenario)
+	result := runner.run()
+	if !result.OK {
+		t.Fatalf("Simulation failed: %s", result.Error)
+	}
+	if len(result.Inspections) != 1 {
+		t.Fatalf("Expected 1 inspection, got %d", len(result.Inspections))
+	}
+	insp := result.Inspections[0]
+	if len(insp.Messages) != 2 {
+		t.Errorf("Expected 2 messages in dump, got %d", len(insp.Messages))
+	}
+	if insp.Messages[0].Role != "user" || insp.Messages[1].Role != "assistant" {
+		t.Errorf("Unexpected roles: %s, %s", insp.Messages[0].Role, insp.Messages[1].Role)
+	}
+	if insp.Vars["messageCount"] != 2 {
+		t.Errorf("Expected messageCount=2, got %v", insp.Vars["messageCount"])
+	}
+}
+
+func TestSimAssertRoleCount(t *testing.T) {
+	scenario := SimScenario{
+		Config: SimConfig{Width: 120, Height: 40},
+		Steps: []SimStep{
+			{Action: "user_msg", Content: "msg1"},
+			{Action: "progress", Phase: "done", Iteration: 0},
+			{Action: "agent_msg", Content: "resp1"},
+			{Action: "user_msg", Content: "msg2"},
+			{Action: "progress", Phase: "done", Iteration: 0},
+			{Action: "agent_msg", Content: "resp2"},
+			{Action: "assert", AssertRole: "user", AssertCount: 2},
+			{Action: "assert", AssertRole: "assistant", AssertCount: 2},
+		},
+	}
+	runner := newSimRunner(scenario)
+	result := runner.run()
+	if !result.OK {
+		t.Fatalf("Simulation failed: %s", result.Error)
+	}
+}
+
+func TestSimQueueMessages(t *testing.T) {
+	scenario := SimScenario{
+		Config: SimConfig{Width: 120, Height: 40},
+		Steps: []SimStep{
+			{Action: "user_msg", Content: "first"},
+			{Action: "queue_add", QueueMessages: []string{"queued msg 1", "queued msg 2"}},
+			{Action: "inspect", Label: "with_queue", InspectVars: []string{"queueLen"}},
+		},
+	}
+	runner := newSimRunner(scenario)
+	result := runner.run()
+	if !result.OK {
+		t.Fatalf("Simulation failed: %s", result.Error)
+	}
+	insp := result.Inspections[0]
+	if insp.Vars["queueLen"] != 2 {
+		t.Errorf("Expected queueLen=2, got %v", insp.Vars["queueLen"])
+	}
+}
+
+func TestSimAutoInspectionOnFailure(t *testing.T) {
+	scenario := SimScenario{
+		Config: SimConfig{Width: 120, Height: 40},
+		Steps: []SimStep{
+			{Action: "user_msg", Content: "hello"},
+			{Action: "assert", Contains: "this_text_does_not_exist"},
+		},
+	}
+	runner := newSimRunner(scenario)
+	result := runner.run()
+	if result.OK {
+		t.Fatal("Expected simulation to fail")
+	}
+	// Check auto-inspection was captured
+	autoInspCount := 0
+	for _, insp := range result.Inspections {
+		if insp.Label == "auto_on_failure" {
+			autoInspCount++
+			if len(insp.Messages) == 0 {
+				t.Error("Auto-inspection should have messages")
+			}
+			if insp.State == nil {
+				t.Error("Auto-inspection should have state")
+			}
+		}
+	}
+	if autoInspCount != 1 {
+		t.Errorf("Expected 1 auto-inspection, got %d", autoInspCount)
+	}
+}
+
+func TestSimSubAgent(t *testing.T) {
+	scenario := SimScenario{
+		Config: SimConfig{Width: 120, Height: 40},
+		Steps: []SimStep{
+			{Action: "user_msg", Content: "explore the codebase"},
+			{Action: "subagent", SubAgents: []SimSubAgent{
+				{Role: "explore", Instance: "exp1", Status: "running", Task: "Explore code"},
+				{Role: "explore", Instance: "exp2", Status: "pending", Task: "Read files"},
+			}},
+			{Action: "snapshot", Label: "with_subagents"},
+		},
+	}
+	runner := newSimRunner(scenario)
+	result := runner.run()
+	if !result.OK {
+		t.Fatalf("Simulation failed: %s", result.Error)
+	}
+	if len(result.Snapshots) != 1 {
+		t.Errorf("Expected 1 snapshot, got %d", len(result.Snapshots))
 	}
 }

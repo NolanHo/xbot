@@ -126,6 +126,10 @@ type SimStep struct {
 	Response string `json:"response,omitempty"` // agent response text (for "turn" action)
 	// Multi-iteration support for "turn": each entry = one iteration with its own tools
 	TurnIterations []SimTurnIter `json:"turn_iterations,omitempty"`
+
+	// ─── export fields ───
+	// "export" saves current messages as a history JSON file
+	ExportPath string `json:"export_path,omitempty"`
 }
 
 // SimSubAgent describes a SubAgent in the tree for simulation.
@@ -362,6 +366,8 @@ func (r *simRunner) processStep(idx int, step SimStep) error {
 		return r.doClear(idx, step)
 	case "summary":
 		return r.doSummary(idx, step)
+	case "export":
+		return r.doExport(idx, step)
 	case "system_msg":
 		return r.doSystemMsg(idx, step)
 	case "turn":
@@ -848,6 +854,63 @@ func (r *simRunner) doSummary(idx int, step SimStep) error {
 		Summary: sb.String(),
 	}
 	r.result.Inspections = append(r.result.Inspections, insp)
+	return nil
+}
+
+func (r *simRunner) doExport(idx int, step SimStep) error {
+	if step.ExportPath == "" {
+		return fmt.Errorf("export_path is required for export action")
+	}
+
+	// Convert current messages to SimHistoryMsg format
+	history := make([]SimHistoryMsg, len(r.model.messages))
+	for i, msg := range r.model.messages {
+		hm := SimHistoryMsg{
+			Role:    msg.role,
+			Content: msg.content,
+		}
+		if len(msg.iterations) > 0 {
+			hm.Iterations = make([]struct {
+				Iteration int             `json:"iteration"`
+				Thinking  string          `json:"thinking,omitempty"`
+				Reasoning string          `json:"reasoning,omitempty"`
+				Tools     []SimToolRecord `json:"tools,omitempty"`
+			}, len(msg.iterations))
+			for j, it := range msg.iterations {
+				hm.Iterations[j].Iteration = it.Iteration
+				hm.Iterations[j].Thinking = it.Thinking
+				hm.Iterations[j].Reasoning = it.Reasoning
+				if len(it.Tools) > 0 {
+					hm.Iterations[j].Tools = make([]SimToolRecord, len(it.Tools))
+					for k, t := range it.Tools {
+						hm.Iterations[j].Tools[k] = SimToolRecord{
+							Name:    t.Name,
+							Label:   t.Label,
+							Status:  t.Status,
+							Elapsed: int(t.Elapsed),
+						}
+					}
+				}
+			}
+		}
+		history[i] = hm
+	}
+
+	// Write as a scenario history file (just the history array)
+	data, err := json.MarshalIndent(history, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal history: %v", err)
+	}
+	if err := os.WriteFile(step.ExportPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write export file: %v", err)
+	}
+
+	// Record the export in an inspection
+	r.result.Inspections = append(r.result.Inspections, SimInspection{
+		Step:    idx,
+		Label:   step.Label,
+		Summary: fmt.Sprintf("Exported %d messages to %s", len(history), step.ExportPath),
+	})
 	return nil
 }
 

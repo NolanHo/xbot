@@ -72,6 +72,13 @@ type SimToolRecord struct {
 	Elapsed int    `json:"elapsed_ms,omitempty"`
 }
 
+// SimTodoItem describes a TODO item for progress bar simulation.
+type SimTodoItem struct {
+	ID   int    `json:"id"`
+	Text string `json:"text"`
+	Done bool   `json:"done"`
+}
+
 // SimStep is a single event in the simulation.
 // Each step has an Action field and optional fields depending on the action type.
 //
@@ -96,6 +103,8 @@ type SimStep struct {
 	Tools                  []SimToolRecord `json:"tools,omitempty"`
 	ActiveTools            []SimToolRecord `json:"active_tools,omitempty"`
 	CompletedTools         []SimToolRecord `json:"completed_tools,omitempty"`
+	// TODO items for progress bar simulation
+	Todos []SimTodoItem `json:"todos,omitempty"`
 
 	// ─── key / resize / rewind fields ───
 	Key         string `json:"key,omitempty"`
@@ -578,6 +587,7 @@ func (r *simRunner) doProgress(idx int, step SimStep) error {
 		ReasoningStreamContent: step.ReasoningStreamContent,
 		ActiveTools:            convertSimTools(step.ActiveTools, step.Iteration),
 		CompletedTools:         convertSimTools(step.CompletedTools, step.Iteration),
+		Todos:                  convertSimTodos(step.Todos),
 		ChatID:                 m.channelName + ":" + m.chatID,
 	}
 	m.Update(cliProgressMsg{payload: payload})
@@ -1854,6 +1864,14 @@ func convertSimTools(tools []SimToolRecord, iteration int) []CLIToolProgress {
 			Elapsed:   int64(t.Elapsed),
 			Iteration: iteration,
 		}
+	}
+	return result
+}
+
+func convertSimTodos(todos []SimTodoItem) []CLITodoItem {
+	result := make([]CLITodoItem, len(todos))
+	for i, t := range todos {
+		result[i] = CLITodoItem(t)
 	}
 	return result
 }

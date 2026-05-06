@@ -139,6 +139,10 @@ type SimStep struct {
 	// "loop" repeats a set of sub-steps N times
 	LoopCount int       `json:"loop_count,omitempty"` // number of repetitions
 	LoopSteps []SimStep `json:"loop_steps,omitempty"` // steps to repeat
+
+	// ─── include fields ───
+	// "include" loads steps from an external JSON file
+	IncludePath string `json:"include_path,omitempty"` // path to steps JSON file
 }
 
 // SimSubAgent describes a SubAgent in the tree for simulation.
@@ -393,6 +397,8 @@ func (r *simRunner) processStep(idx int, step SimStep) error {
 		return r.doDiff(idx, step)
 	case "loop":
 		return r.doLoop(idx, step)
+	case "include":
+		return r.doInclude(idx, step)
 	case "system_msg":
 		return r.doSystemMsg(idx, step)
 	case "turn":
@@ -1019,6 +1025,26 @@ func (r *simRunner) doLoop(idx int, step SimStep) error {
 			if err := r.processStep(idx, subStep); err != nil {
 				return fmt.Errorf("loop[%d].step[%d]: %w", i, j, err)
 			}
+		}
+	}
+	return nil
+}
+
+func (r *simRunner) doInclude(idx int, step SimStep) error {
+	if step.IncludePath == "" {
+		return fmt.Errorf("include_path is required")
+	}
+	data, err := os.ReadFile(step.IncludePath)
+	if err != nil {
+		return fmt.Errorf("failed to read include file: %v", err)
+	}
+	var steps []SimStep
+	if err := json.Unmarshal(data, &steps); err != nil {
+		return fmt.Errorf("failed to parse include file: %v", err)
+	}
+	for i, s := range steps {
+		if err := r.processStep(idx, s); err != nil {
+			return fmt.Errorf("include[%d]: %w", i, err)
 		}
 	}
 	return nil

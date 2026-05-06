@@ -467,6 +467,9 @@ func (r *simRunner) processStep(idx int, step SimStep) error {
 	case "comment":
 		// No-op: just a label/annotation in the scenario
 		return nil
+	case "validate":
+		// Validate the scenario structure without executing
+		return r.doValidate(idx, step)
 	case "system_msg":
 		return r.doSystemMsg(idx, step)
 	case "turn":
@@ -1353,6 +1356,56 @@ func (r *simRunner) doInclude(idx int, step SimStep) error {
 			return fmt.Errorf("include[%d]: %w", i, err)
 		}
 	}
+	return nil
+}
+
+func (r *simRunner) doValidate(idx int, step SimStep) error {
+	validActions := map[string]bool{
+		"user_msg": true, "agent_msg": true, "progress": true, "phase_done": true,
+		"key": true, "resize": true, "cancel": true, "rewind": true,
+		"snapshot": true, "assert": true, "wait_ms": true, "set_var": true,
+		"tick": true, "inspect": true, "queue_add": true, "subagent": true,
+		"system_msg": true, "turn": true, "summary": true, "export": true,
+		"diff": true, "loop": true, "include": true, "comment": true,
+		"clear": true, "validate": true,
+	}
+	var errors []string
+	for i, s := range r.scenario.Steps {
+		if !validActions[s.Action] {
+			errors = append(errors, fmt.Sprintf("step %d: unknown action %q", i, s.Action))
+		}
+		if s.Action == "rewind" && s.RewindIndex < 0 {
+			errors = append(errors, fmt.Sprintf("step %d: rewind_index must be >= 0", i))
+		}
+		if s.Action == "resize" && s.NewWidth <= 0 && s.NewHeight <= 0 {
+			errors = append(errors, fmt.Sprintf("step %d: resize requires new_width or new_height", i))
+		}
+		if s.Action == "assert" && s.Contains == "" && s.NotContains == "" && s.Matches == "" &&
+			s.AssertRole == "" && s.AssertTotal == 0 && !s.AssertViewportAtBottom && !s.AssertViewportAtTop &&
+			!s.AssertNoToolErrors && len(s.AssertMessageOrder) == 0 && len(s.AssertState) == 0 &&
+			s.AssertViewLines == 0 && s.AssertViewLinesMax == 0 {
+			errors = append(errors, fmt.Sprintf("step %d: assert has no condition", i))
+		}
+		if s.Action == "loop" && (s.LoopCount <= 0 || len(s.LoopSteps) == 0) {
+			errors = append(errors, fmt.Sprintf("step %d: loop requires loop_count>0 and loop_steps", i))
+		}
+		if s.Action == "include" && s.IncludePath == "" {
+			errors = append(errors, fmt.Sprintf("step %d: include requires include_path", i))
+		}
+	}
+	if len(errors) > 0 {
+		r.result.Inspections = append(r.result.Inspections, SimInspection{
+			Step:    idx,
+			Label:   "validation_errors",
+			Summary: fmt.Sprintf("Found %d validation errors:\n%s", len(errors), strings.Join(errors, "\n")),
+		})
+		return fmt.Errorf("scenario validation failed: %d errors", len(errors))
+	}
+	r.result.Inspections = append(r.result.Inspections, SimInspection{
+		Step:    idx,
+		Label:   "validation_ok",
+		Summary: fmt.Sprintf("Scenario valid: %d steps, all actions recognized", len(r.scenario.Steps)),
+	})
 	return nil
 }
 

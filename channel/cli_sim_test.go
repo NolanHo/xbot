@@ -540,6 +540,8 @@ func (r *simRunner) processStep(idx int, step SimStep) error {
 		return r.doInputText(idx, step)
 	case "capture_history":
 		return r.doCaptureHistory(idx, step)
+	case "count_messages":
+		return r.doCountMessages(idx, step)
 	case "help":
 		return r.doHelp(idx, step)
 	case "system_msg":
@@ -1524,6 +1526,7 @@ func (r *simRunner) doValidate(idx int, step SimStep) error {
 		"scroll": true, "input_text": true,
 		"capture_history": true,
 		"help":            true,
+		"count_messages":  true,
 	}
 	var errors []string
 	for i, s := range r.scenario.Steps {
@@ -1623,6 +1626,27 @@ func (r *simRunner) doInputText(idx int, step SimStep) error {
 		Step:    idx,
 		Label:   "input_text",
 		Summary: fmt.Sprintf("Simulated input: %q", step.InputText),
+	})
+	return nil
+}
+
+func (r *simRunner) doCountMessages(idx int, step SimStep) error {
+	m := r.model
+	roleCounts := make(map[string]int)
+	for _, msg := range m.messages {
+		roleCounts[msg.role]++
+	}
+	// Build summary
+	parts := make([]string, 0, len(roleCounts))
+	for role, count := range roleCounts {
+		parts = append(parts, fmt.Sprintf("%s=%d", role, count))
+	}
+	slices.Sort(parts)
+	summary := fmt.Sprintf("**%d messages**: %s", len(m.messages), strings.Join(parts, ", "))
+	r.result.Inspections = append(r.result.Inspections, SimInspection{
+		Step:    idx,
+		Label:   step.Label,
+		Summary: summary,
 	})
 	return nil
 }

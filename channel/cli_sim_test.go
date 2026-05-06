@@ -526,6 +526,8 @@ func (r *simRunner) processStep(idx int, step SimStep) error {
 		return r.doScroll(idx, step)
 	case "input_text":
 		return r.doInputText(idx, step)
+	case "capture_history":
+		return r.doCaptureHistory(idx, step)
 	case "system_msg":
 		return r.doSystemMsg(idx, step)
 	case "turn":
@@ -1465,6 +1467,7 @@ func (r *simRunner) doValidate(idx int, step SimStep) error {
 		"diff": true, "loop": true, "include": true, "comment": true,
 		"clear": true, "validate": true, "if": true,
 		"scroll": true, "input_text": true,
+		"capture_history": true,
 	}
 	var errors []string
 	for i, s := range r.scenario.Steps {
@@ -1564,6 +1567,37 @@ func (r *simRunner) doInputText(idx int, step SimStep) error {
 		Step:    idx,
 		Label:   "input_text",
 		Summary: fmt.Sprintf("Simulated input: %q", step.InputText),
+	})
+	return nil
+}
+
+func (r *simRunner) doCaptureHistory(idx int, step SimStep) error {
+	m := r.model
+	var sb strings.Builder
+	maxLen := 200
+	if step.Count > 0 {
+		maxLen = step.Count // reuse Count field for max_content_len
+	}
+	fmt.Fprintf(&sb, "## History (%d messages)\n\n", len(m.messages))
+	for i, msg := range m.messages {
+		content := msg.content
+		if len(content) > maxLen {
+			content = content[:maxLen] + "..."
+		}
+		fmt.Fprintf(&sb, "**[%d] %s** (turn=%d)\n%s\n\n", i, msg.role, msg.turnID, content)
+		if len(msg.iterations) > 0 {
+			for _, it := range msg.iterations {
+				for _, t := range it.Tools {
+					fmt.Fprintf(&sb, "  - %s (%s, %dms)\n", t.Name, t.Status, t.Elapsed)
+				}
+			}
+			sb.WriteString("\n")
+		}
+	}
+	r.result.Inspections = append(r.result.Inspections, SimInspection{
+		Step:    idx,
+		Label:   step.Label,
+		Summary: sb.String(),
 	})
 	return nil
 }

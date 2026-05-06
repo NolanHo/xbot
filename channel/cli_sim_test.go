@@ -537,6 +537,8 @@ func (r *simRunner) processStep(idx int, step SimStep) error {
 		return r.doInputText(idx, step)
 	case "capture_history":
 		return r.doCaptureHistory(idx, step)
+	case "help":
+		return r.doHelp(idx, step)
 	case "system_msg":
 		return r.doSystemMsg(idx, step)
 	case "turn":
@@ -1478,6 +1480,7 @@ func (r *simRunner) doValidate(idx int, step SimStep) error {
 		"clear": true, "validate": true, "if": true,
 		"scroll": true, "input_text": true,
 		"capture_history": true,
+		"help":            true,
 	}
 	var errors []string
 	for i, s := range r.scenario.Steps {
@@ -1586,7 +1589,7 @@ func (r *simRunner) doCaptureHistory(idx int, step SimStep) error {
 	var sb strings.Builder
 	maxLen := 200
 	if step.Count > 0 {
-		maxLen = step.Count // reuse Count field for max_content_len
+		maxLen = step.Count
 	}
 	fmt.Fprintf(&sb, "## History (%d messages)\n\n", len(m.messages))
 	for i, msg := range m.messages {
@@ -1608,6 +1611,73 @@ func (r *simRunner) doCaptureHistory(idx int, step SimStep) error {
 		Step:    idx,
 		Label:   step.Label,
 		Summary: sb.String(),
+	})
+	return nil
+}
+
+func (r *simRunner) doHelp(idx int, step SimStep) error {
+	help := `## TUI Simulator Actions
+
+### Messages
+- user_msg: content
+- agent_msg: content, is_partial
+- system_msg: content, level (info/error/warn)
+- turn: content, response, active_tools, completed_tools, turn_iterations
+
+### Progress
+- progress: phase, iteration, active_tools, completed_tools, thinking, reasoning, stream_content, reasoning_stream_content, todos
+- phase_done: iteration, completed_tools
+- subagent: sub_agents (role, instance, status, task, children)
+- cancel
+
+### Control
+- key: key (ctrl+c, enter, esc, up, down)
+- resize: new_width, new_height
+- rewind: rewind_index (0=most recent)
+- clear: wipe all messages
+- tick: update spinner
+- set_var: var, value
+- queue_add: queue_messages
+- scroll: scroll_to (top/bottom), scroll_lines (+/-)
+- input_text: input_text
+
+### Observation
+- snapshot: label
+- inspect: inspect_messages, inspect_vars, inspect_all
+- summary: label (markdown report)
+- capture_history: count (max content length)
+- diff: diff_from, diff_to (snapshot labels)
+- export: export_path (save history JSON)
+- loop: loop_count, loop_steps
+- include: include_path
+- comment: label (no-op annotation)
+- validate: check scenario structure
+- help: this message
+
+### Assertions
+- contains, not_contains, matches: view-level text
+- visible_contains, visible_not_contains: viewport visible area only
+- count, exact_count: occurrence counting
+- assert_view_lines, assert_view_lines_max: line count
+- assert_viewport_at_bottom/top: scroll position
+- assert_role + assert_count/content/content_regex/tools
+- assert_index + assert_index_role/content
+- assert_message_order: role sequence
+- assert_total: total message count
+- assert_no_tool_errors: no tool errors
+- assert_tool_name + assert_tool_call_count/min_ms/max_ms
+- assert_state: {"key": value, ...}
+
+### Environment Variables
+- XBOT_SIM_SCENARIO: scenario JSON path (required)
+- XBOT_SIM_OUTPUT: result JSON path (optional, also generates .md)
+- XBOT_SIM_TRACE: trace logging (set to "1")
+- XBOT_SIM_HUMAN: override human report path
+`
+	r.result.Inspections = append(r.result.Inspections, SimInspection{
+		Step:    idx,
+		Label:   "help",
+		Summary: help,
 	})
 	return nil
 }

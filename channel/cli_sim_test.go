@@ -81,6 +81,9 @@ type SimStep struct {
 	Matches     string `json:"matches,omitempty"`
 	Count       int    `json:"count,omitempty"`
 	ExactCount  bool   `json:"exact_count,omitempty"`
+	// View height assertion
+	AssertViewLines    int `json:"assert_view_lines,omitempty"`     // expected view line count (exact)
+	AssertViewLinesMax int `json:"assert_view_lines_max,omitempty"` // expected max view line count
 
 	// ─── assert fields (message-level) ───
 	AssertRole    string   `json:"assert_role,omitempty"`
@@ -626,6 +629,37 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 			if !passed {
 				r.result.OK = false
 				return fmt.Errorf("assert_tools: missing tool names: %v", missing)
+			}
+		}
+	}
+
+	// ─── View height assertions ───
+	if step.AssertViewLines > 0 || step.AssertViewLinesMax > 0 {
+		viewLines := len(strings.Split(view, "\n"))
+		if step.AssertViewLines > 0 {
+			passed := viewLines == step.AssertViewLines
+			r.result.Assertions = append(r.result.Assertions, SimAssertion{
+				Step: idx, Type: "assert_view_lines",
+				Pattern: fmt.Sprintf("view_lines == %d", step.AssertViewLines),
+				Passed:  passed,
+				Actual:  fmt.Sprintf("view has %d lines", viewLines),
+			})
+			if !passed {
+				r.result.OK = false
+				return fmt.Errorf("assert_view_lines: expected %d lines, got %d", step.AssertViewLines, viewLines)
+			}
+		}
+		if step.AssertViewLinesMax > 0 {
+			passed := viewLines <= step.AssertViewLinesMax
+			r.result.Assertions = append(r.result.Assertions, SimAssertion{
+				Step: idx, Type: "assert_view_lines_max",
+				Pattern: fmt.Sprintf("view_lines <= %d", step.AssertViewLinesMax),
+				Passed:  passed,
+				Actual:  fmt.Sprintf("view has %d lines", viewLines),
+			})
+			if !passed {
+				r.result.OK = false
+				return fmt.Errorf("assert_view_lines_max: expected <= %d lines, got %d", step.AssertViewLinesMax, viewLines)
 			}
 		}
 	}

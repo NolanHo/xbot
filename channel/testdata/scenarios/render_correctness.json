@@ -1,0 +1,45 @@
+{
+  "description": "Regression: verify TUI renders messages, tools, and SubAgent correctly",
+  "config": {"width": 120, "height": 20},
+  "steps": [
+    {"action": "user_msg", "content": "hello world"},
+    {"action": "snapshot", "label": "user_msg"},
+    {"action": "assert", "contains": "hello world"},
+    
+    {"action": "progress", "phase": "thinking", "iteration": 0,
+      "active_tools": [
+        {"name": "Read", "label": "Read main.go", "status": "active"},
+        {"name": "Grep", "label": "Grep pattern", "status": "active"}
+      ]},
+    {"action": "snapshot", "label": "tools_active"},
+    {"action": "assert", "contains": "Read"},
+    {"action": "assert", "contains": "Grep"},
+    
+    {"action": "progress", "phase": "done", "iteration": 0,
+      "completed_tools": [
+        {"name": "Read", "label": "Read main.go", "status": "done", "elapsed_ms": 100},
+        {"name": "Grep", "label": "Grep pattern", "status": "error", "elapsed_ms": 50}
+      ]},
+    
+    {"action": "subagent", "sub_agents": [
+      {"role": "explore", "instance": "e1", "status": "running", "task": "Find bugs"},
+      {"role": "ministry-works", "instance": "w1", "status": "pending", "task": "Fix code",
+        "children": [
+          {"role": "explore", "instance": "e2", "status": "running", "task": "Read files"}
+        ]}
+    ]},
+    {"action": "snapshot", "label": "with_subagents"},
+    {"action": "assert", "contains": "explore"},
+    {"action": "assert", "contains": "ministry-works"},
+    
+    {"action": "agent_msg", "content": "Analysis complete with code blocks:\n```go\nfunc main() {\n    fmt.Println(\"hi\")\n}\n```"},
+    {"action": "assert", "contains": "func main"},
+    {"action": "assert", "contains": "fmt.Println"},
+    {"action": "assert", "visible_contains": "Analysis complete"},
+    
+    {"action": "system_msg", "content": "Saved session", "level": "info"},
+    {"action": "assert", "assert_last_role": "system"},
+    
+    {"action": "count_messages", "label": "final_count"}
+  ]
+}

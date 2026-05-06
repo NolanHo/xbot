@@ -97,6 +97,8 @@ type SimStep struct {
 	AssertTotal int `json:"assert_total,omitempty"` // expected total messages
 	// Assert message role order
 	AssertMessageOrder []string `json:"assert_message_order,omitempty"` // expected sequence of roles
+	// Assert role content matches regex
+	AssertContentRegex string `json:"assert_content_regex,omitempty"` // regex to match against role's content
 
 	// ─── set_var fields ───
 	Var   string `json:"var,omitempty"`
@@ -406,6 +408,9 @@ func (r *simRunner) processStep(idx int, step SimStep) error {
 		return r.doLoop(idx, step)
 	case "include":
 		return r.doInclude(idx, step)
+	case "comment":
+		// No-op: just a label/annotation in the scenario
+		return nil
 	case "system_msg":
 		return r.doSystemMsg(idx, step)
 	case "turn":
@@ -646,6 +651,32 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 				r.result.OK = false
 				return fmt.Errorf("assert_role_content: no message with role %q contains %q",
 					step.AssertRole, step.AssertContent)
+			}
+		}
+
+		// Assert role content matches regex
+		if step.AssertContentRegex != "" {
+			re, err := regexp.Compile(step.AssertContentRegex)
+			if err != nil {
+				return fmt.Errorf("invalid assert_content_regex: %v", err)
+			}
+			found := false
+			for _, msg := range msgs {
+				if msg.role == step.AssertRole && re.MatchString(msg.content) {
+					found = true
+					break
+				}
+			}
+			r.result.Assertions = append(r.result.Assertions, SimAssertion{
+				Step: idx, Type: "assert_role_content_regex",
+				Pattern: fmt.Sprintf("role=%s matches %q", step.AssertRole, step.AssertContentRegex),
+				Passed:  found,
+				Actual:  fmt.Sprintf("role %q messages: %d", step.AssertRole, roleCount),
+			})
+			if !found {
+				r.result.OK = false
+				return fmt.Errorf("assert_role_content_regex: no message with role %q matches %q",
+					step.AssertRole, step.AssertContentRegex)
 			}
 		}
 

@@ -95,6 +95,8 @@ type SimStep struct {
 	AssertIndexRole string `json:"assert_index_role,omitempty"` // expected role at that index
 	// Assert total message count
 	AssertTotal int `json:"assert_total,omitempty"` // expected total messages
+	// Assert message role order
+	AssertMessageOrder []string `json:"assert_message_order,omitempty"` // expected sequence of roles
 
 	// ─── set_var fields ───
 	Var   string `json:"var,omitempty"`
@@ -768,6 +770,40 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 				return fmt.Errorf("assert_index_content: messages[%d] does not contain %q",
 					idx, step.AssertContent)
 			}
+		}
+	}
+
+	// ─── Message order assertion ───
+	if len(step.AssertMessageOrder) > 0 {
+		msgs := r.model.messages
+		actualRoles := make([]string, len(msgs))
+		for i, msg := range msgs {
+			actualRoles[i] = msg.role
+		}
+		passed := len(actualRoles) >= len(step.AssertMessageOrder)
+		mismatch := ""
+		if passed {
+			for i, expected := range step.AssertMessageOrder {
+				if actualRoles[i] != expected {
+					passed = false
+					mismatch = fmt.Sprintf("at index %d: expected %q, got %q", i, expected, actualRoles[i])
+					break
+				}
+			}
+		} else {
+			mismatch = fmt.Sprintf("expected %d messages, have %d", len(step.AssertMessageOrder), len(actualRoles))
+		}
+		r.result.Assertions = append(r.result.Assertions, SimAssertion{
+			Step:    idx,
+			Type:    "assert_message_order",
+			Pattern: fmt.Sprintf("%v", step.AssertMessageOrder),
+			Passed:  passed,
+			Actual:  fmt.Sprintf("%v", actualRoles),
+			Context: mismatch,
+		})
+		if !passed {
+			r.result.OK = false
+			return fmt.Errorf("assert_message_order: %s\nexpected: %v\nactual:   %v", mismatch, step.AssertMessageOrder, actualRoles)
 		}
 	}
 

@@ -84,6 +84,9 @@ type SimStep struct {
 	// View height assertion
 	AssertViewLines    int `json:"assert_view_lines,omitempty"`     // expected view line count (exact)
 	AssertViewLinesMax int `json:"assert_view_lines_max,omitempty"` // expected max view line count
+	// Viewport scroll position
+	AssertViewportAtBottom bool `json:"assert_viewport_at_bottom,omitempty"`
+	AssertViewportAtTop    bool `json:"assert_viewport_at_top,omitempty"`
 
 	// ─── assert fields (message-level) ───
 	AssertRole    string   `json:"assert_role,omitempty"`
@@ -742,6 +745,36 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 				r.result.OK = false
 				return fmt.Errorf("assert_view_lines_max: expected <= %d lines, got %d", step.AssertViewLinesMax, viewLines)
 			}
+		}
+	}
+
+	// ─── Viewport position assertions ───
+	if step.AssertViewportAtBottom {
+		atBottom := r.model.viewport.AtBottom()
+		r.result.Assertions = append(r.result.Assertions, SimAssertion{
+			Step:    idx,
+			Type:    "assert_viewport_at_bottom",
+			Pattern: "viewport at bottom",
+			Passed:  atBottom,
+			Actual:  fmt.Sprintf("at_bottom=%v total_lines=%d", atBottom, r.model.viewport.TotalLineCount()),
+		})
+		if !atBottom {
+			r.result.OK = false
+			return fmt.Errorf("assert_viewport_at_bottom: viewport not at bottom")
+		}
+	}
+	if step.AssertViewportAtTop {
+		atTop := r.model.viewport.AtTop()
+		r.result.Assertions = append(r.result.Assertions, SimAssertion{
+			Step:    idx,
+			Type:    "assert_viewport_at_top",
+			Pattern: "viewport at top",
+			Passed:  atTop,
+			Actual:  fmt.Sprintf("at_top=%v", atTop),
+		})
+		if !atTop {
+			r.result.OK = false
+			return fmt.Errorf("assert_viewport_at_top: viewport not at top")
 		}
 	}
 

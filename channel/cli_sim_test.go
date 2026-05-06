@@ -90,6 +90,8 @@ type SimStep struct {
 	// Tool call assertions
 	AssertNoToolErrors  bool `json:"assert_no_tool_errors,omitempty"`  // no tool has "error" status
 	AssertToolCallCount int  `json:"assert_tool_call_count,omitempty"` // exact count for assert_tool_name
+	// State assertions — directly verify model variable values
+	AssertState map[string]any `json:"assert_state,omitempty"` // e.g. {"typing": false}
 
 	// ─── assert fields (message-level) ───
 	AssertRole    string   `json:"assert_role,omitempty"`
@@ -839,6 +841,37 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 				r.result.OK = false
 				return fmt.Errorf("assert_index_content: messages[%d] does not contain %q",
 					idx, step.AssertContent)
+			}
+		}
+	}
+
+	// ─── State assertions ───
+	if len(step.AssertState) > 0 {
+		allVars := r.dumpVars()
+		for key, expected := range step.AssertState {
+			actual, ok := allVars[key]
+			if !ok {
+				r.result.Assertions = append(r.result.Assertions, SimAssertion{
+					Step:    idx,
+					Type:    "assert_state",
+					Pattern: fmt.Sprintf("%s == %v", key, expected),
+					Passed:  false,
+					Actual:  "unknown variable",
+				})
+				r.result.OK = false
+				return fmt.Errorf("assert_state: unknown variable %q", key)
+			}
+			passed := fmt.Sprintf("%v", actual) == fmt.Sprintf("%v", expected)
+			r.result.Assertions = append(r.result.Assertions, SimAssertion{
+				Step:    idx,
+				Type:    "assert_state",
+				Pattern: fmt.Sprintf("%s == %v", key, expected),
+				Passed:  passed,
+				Actual:  fmt.Sprintf("%v", actual),
+			})
+			if !passed {
+				r.result.OK = false
+				return fmt.Errorf("assert_state: %s = %v, expected %v", key, actual, expected)
 			}
 		}
 	}

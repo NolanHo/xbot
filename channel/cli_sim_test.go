@@ -1790,6 +1790,21 @@ func generateHumanReport(r SimResult) string {
 		fmt.Fprintf(&sb, "## Diff: %s → %s\n%s\n\n", d.From, d.To, d.Summary)
 	}
 
+	// Trace summary (if available)
+	if len(r.TraceLog) > 0 {
+		sb.WriteString("## Trace\n\n")
+		sb.WriteString("| Step | Action | Msgs | Detail |\n")
+		sb.WriteString("|------|--------|------|--------|\n")
+		for _, e := range r.TraceLog {
+			detail := e.Detail
+			if detail == "" {
+				detail = "-"
+			}
+			fmt.Fprintf(&sb, "| %d | %s | %d | %s |\n", e.Step, e.Action, e.MsgCount, detail)
+		}
+		sb.WriteString("\n")
+	}
+
 	// Summaries from inspections
 	for _, i := range r.Inspections {
 		if i.Summary != "" {

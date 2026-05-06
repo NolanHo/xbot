@@ -185,8 +185,17 @@ type SimResult struct {
 	Assertions  []SimAssertion  `json:"assertions,omitempty"`
 	Inspections []SimInspection `json:"inspections,omitempty"`
 	Diffs       []SimDiff       `json:"diffs,omitempty"`
+	TraceLog    []SimTraceEntry `json:"trace_log,omitempty"`
 	StepsTotal  int             `json:"steps_total"`
 	StepsOK     int             `json:"steps_ok"`
+}
+
+type SimTraceEntry struct {
+	Step     int    `json:"step"`
+	Action   string `json:"action"`
+	Label    string `json:"label,omitempty"`
+	MsgCount int    `json:"msg_count"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 type SimDiff struct {
@@ -375,6 +384,42 @@ func (r *simRunner) run() SimResult {
 }
 
 func (r *simRunner) processStep(idx int, step SimStep) error {
+	// Record trace entry before processing
+	traceEnabled := os.Getenv("XBOT_SIM_TRACE") != ""
+	if traceEnabled {
+		entry := SimTraceEntry{
+			Step:     idx,
+			Action:   step.Action,
+			Label:    step.Label,
+			MsgCount: len(r.model.messages),
+		}
+		// Add detail based on action type
+		switch step.Action {
+		case "user_msg", "agent_msg", "system_msg":
+			entry.Detail = truncateStr(step.Content, 50)
+		case "turn":
+			entry.Detail = truncateStr(step.Content, 30) + " → " + truncateStr(step.Response, 30)
+		case "rewind":
+			entry.Detail = fmt.Sprintf("rewind_index=%d", step.RewindIndex)
+		case "assert":
+			parts := []string{}
+			if step.Contains != "" {
+				parts = append(parts, fmt.Sprintf("contains=%q", truncateStr(step.Contains, 20)))
+			}
+			if step.AssertRole != "" {
+				parts = append(parts, fmt.Sprintf("role=%s", step.AssertRole))
+			}
+			if step.AssertTotal > 0 {
+				parts = append(parts, fmt.Sprintf("total=%d", step.AssertTotal))
+			}
+			if len(step.AssertState) > 0 {
+				parts = append(parts, fmt.Sprintf("state=%v", step.AssertState))
+			}
+			entry.Detail = strings.Join(parts, ", ")
+		}
+		r.result.TraceLog = append(r.result.TraceLog, entry)
+	}
+
 	switch step.Action {
 	case "user_msg":
 		return r.doUserMsg(idx, step)

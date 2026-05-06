@@ -93,7 +93,6 @@ type SimStep struct {
 	// Assert at a specific message index
 	AssertIndex     int    `json:"assert_index,omitempty"`      // 0-based index
 	AssertIndexRole string `json:"assert_index_role,omitempty"` // expected role at that index
-
 	// Assert total message count
 	AssertTotal int `json:"assert_total,omitempty"` // expected total messages
 
@@ -709,10 +708,11 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 			Pattern: fmt.Sprintf("total == %d", step.AssertTotal),
 			Passed:  passed,
 			Actual:  fmt.Sprintf("have %d messages", msgCount),
+			Context: r.messageRoleSummary(),
 		})
 		if !passed {
 			r.result.OK = false
-			return fmt.Errorf("assert_total: expected %d messages, have %d", step.AssertTotal, msgCount)
+			return fmt.Errorf("assert_total: expected %d messages, have %d\n%s", step.AssertTotal, msgCount, r.messageRoleSummary())
 		}
 	}
 
@@ -1235,6 +1235,20 @@ func (r *simRunner) dumpSpecificVars(names []string) map[string]any {
 }
 
 // ─── Utility helpers ───────────────────────────────────────────────
+
+// messageRoleSummary returns a one-line summary of all messages by role.
+func (r *simRunner) messageRoleSummary() string {
+	roleCounts := make(map[string]int)
+	for _, msg := range r.model.messages {
+		roleCounts[msg.role]++
+	}
+	parts := make([]string, 0, len(roleCounts))
+	for role, count := range roleCounts {
+		parts = append(parts, fmt.Sprintf("%s=%d", role, count))
+	}
+	slices.Sort(parts)
+	return fmt.Sprintf("messages: %s (total=%d)", strings.Join(parts, ", "), len(r.model.messages))
+}
 
 func (r *simRunner) captureView() string {
 	return stripAnsi(r.model.View().Content)

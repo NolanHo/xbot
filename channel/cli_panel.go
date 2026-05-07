@@ -3275,11 +3275,6 @@ func (m *cliModel) showSessionCreateDialog() tea.Cmd {
 			m.showTempStatus(fmt.Sprintf("Failed: %v", err))
 			return
 		}
-		// Cancel any in-progress request for the current session
-		if m.typing {
-			m.sendCancel()
-			m.turnCancelled = true
-		}
 		m.saveCurrentSession()
 		m.chatID = chatID
 		m.sessionName = name
@@ -3331,11 +3326,6 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 	switch entry.Type {
 	case "main":
 		if entry.ID != m.chatID {
-			// Cancel any in-progress request for the current session
-			if m.typing {
-				m.sendCancel()
-				m.turnCancelled = true
-			}
 			m.saveCurrentSession()
 			m.chatID = entry.ID
 			m.channelName = entry.Channel
@@ -3363,10 +3353,6 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			agentChatID += ":" + entry.Instance
 		}
 		if agentChatID != m.chatID {
-			if m.typing {
-				m.sendCancel()
-				m.turnCancelled = true
-			}
 			m.saveCurrentSession()
 			m.chatID = agentChatID
 			m.channelName = "agent"

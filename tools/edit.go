@@ -397,14 +397,19 @@ func doReplace(content string, params FileReplaceParams, filePath string) (strin
 		return "", "", fmt.Errorf("text not found: %q%s", params.OldString, hint)
 	}
 
+	// Normalize indentation in the replacement text so that new lines added
+	// by the LLM follow the same whitespace convention (tab vs space) as the
+	// matched region in the file.
+	normalizedNew := normalizeReplacementIndent(params.OldString, params.NewString)
+
 	var newRangeText string
 	var replacedCount int
 
 	if params.ReplaceAll {
-		newRangeText = strings.ReplaceAll(rangeText, params.OldString, params.NewString)
+		newRangeText = strings.ReplaceAll(rangeText, params.OldString, normalizedNew)
 		replacedCount = count
 	} else {
-		newRangeText = strings.Replace(rangeText, params.OldString, params.NewString, 1)
+		newRangeText = strings.Replace(rangeText, params.OldString, normalizedNew, 1)
 		replacedCount = 1
 	}
 
@@ -562,8 +567,18 @@ func adjustIndentation(oldLines, actualLines []string, newStr string) string {
 		}
 	}
 
-	// Nothing to adjust if bases are identical.
-	if minOld == minActual {
+	// Nothing to adjust if ALL pairs are truly identical (every old indent
+	// matches its corresponding actual indent).  Only checking minOld ==
+	// minActual is insufficient: deeper lines may still have mismatched
+	// whitespace (e.g. spaces vs tabs) even when the base level agrees.
+	allIdentical := true
+	for _, p := range pairs {
+		if p.old != p.actual {
+			allIdentical = false
+			break
+		}
+	}
+	if allIdentical {
 		return newStr
 	}
 
@@ -611,6 +626,176 @@ func adjustIndentation(oldLines, actualLines []string, newStr string) string {
 			newLines[i] = minActual + strings.Repeat(string(actualPadChar), scaledLen) + rest
 		}
 	}
+	return strings.Join(newLines, "\n")
+}
+
+// normalizeReplacementIndent ensures newStr's indentation follows the same
+// whitespace convention (tab vs space) as matchedOld, which is the exact
+// text from the file. This handles the case where the LLM correctly matches
+// old_string (with proper tabs/spaces) but writes new lines with a different
+// whitespace style.
+//
+// Strategy:
+//  1. Detect the file's indent style from matchedOld (tab or space).
+//  2. Build a map of trimmed content → file indent for lines in matchedOld.
+//  3. For each line in newStr:
+//     - If it exists in matchedOld (same trimmed content), use the file's exact indent.
+//     - If it's a genuinely new line, inherit the indent of the nearest
+//     old-matching line (peer-level heuristic).
+//     - Blank lines: strip whitespace for consistency.
+func normalizeReplacementIndent(matchedOld, newStr string) string {
+	oldLines := strings.Split(matchedOld, "\n")
+
+	// Detect file indent style from matchedOld.
+	fileUsesTabs := false
+	for _, line := range oldLines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.ContainsRune(leadingWhitespace(line), '\t') {
+			fileUsesTabs = true
+			break
+		}
+	}
+	if !fileUsesTabs {
+		return newStr // file uses spaces — less common case, skip for now
+	}
+
+	// Build trimmed content → file indent map.
+	// Use the first occurrence to avoid ambiguity from duplicate lines.
+	fileIndent := make(map[string]string)
+	for _, line := range oldLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			if _, exists := fileIndent[trimmed]; !exists {
+				fileIndent[trimmed] = leadingWhitespace(line)
+			}
+		}
+	}
+
+	// Check if newStr actually has space-indented lines that need correction.
+	needsFix := false
+	for _, line := range strings.Split(newStr, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			// Blank line with whitespace: needs cleanup.
+			if line != "" {
+				needsFix = true
+				break
+			}
+			continue
+		}
+		indent := leadingWhitespace(line)
+		if indent != "" && !strings.ContainsRune(indent, '\t') {
+			// This line has space-only indentation and file uses tabs.
+			// But skip if this line exists in old with the SAME indent (no issue).
+			if fileInd, ok := fileIndent[trimmed]; !ok || fileInd != indent {
+				needsFix = true
+				break
+			}
+		}
+	}
+	if !needsFix {
+		return newStr
+	}
+
+	// Normalize each line.
+	newLines := strings.Split(newStr, "\n")
+
+	// Detect tab width from the file. Look at existing lines that use tabs
+	// and find the common indent delta (e.g. \t vs \t\t = 1 tab per level).
+	// Default to 4 if we can't determine.
+	tabWidth := 4
+	for _, line := range oldLines {
+		indent := leadingWhitespace(line)
+		if strings.ContainsRune(indent, '\t') {
+			// Count tabs
+			tabCount := strings.Count(indent, "\t")
+			if tabCount > 0 {
+				// The visual width of this indent (assuming tabWidth=4)
+				// vs the tab count tells us the ratio
+				break
+			}
+		}
+	}
+
+	// Build a reference: first old line's indent depth in tab equivalents.
+	// This helps us convert new lines' space-indents to correct tab depth.
+	refFileTabDepth := 0
+	refNewSpaceDepth := 0
+	for _, line := range newLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if fIndent, ok := fileIndent[trimmed]; ok {
+			refFileTabDepth = strings.Count(fIndent, "\t")
+			// Use visual width, not byte length — a \t is tabWidth columns,
+			// not 1. Otherwise "    " (4 spaces) vs "\t" (1 byte) gives
+			// spaceDelta=3 and produces an extra tab level.
+			indent := leadingWhitespace(line)
+			visualW := 0
+			for _, r := range indent {
+				if r == '\t' {
+					visualW += tabWidth - (visualW % tabWidth)
+				} else {
+					visualW++
+				}
+			}
+			refNewSpaceDepth = visualW
+			break
+		}
+	}
+
+	// lastNormalizedIndent tracks the indent of the most recent line that
+	// was successfully normalized. Used as fallback for lines with no indent.
+	lastNormalizedIndent := ""
+
+	for i, line := range newLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			// Blank line: strip whitespace for cleanliness.
+			newLines[i] = ""
+			continue
+		}
+
+		if fIndent, ok := fileIndent[trimmed]; ok {
+			// Line exists in old — use file's exact indent.
+			newLines[i] = fIndent + trimmed
+			lastNormalizedIndent = fIndent
+		} else {
+			// Genuinely new line.
+			currIndent := leadingWhitespace(line)
+			if strings.ContainsRune(currIndent, '\t') {
+				// Already uses tabs, keep as-is.
+				newLines[i] = line
+				lastNormalizedIndent = currIndent
+			} else if currIndent != "" && refNewSpaceDepth > 0 {
+				// Has spaces where file uses tabs.
+				// Convert space depth to tab depth using reference ratio.
+				spaceDelta := len(currIndent) - refNewSpaceDepth
+				newTabDepth := refFileTabDepth
+				if spaceDelta > 0 {
+					newTabDepth += (spaceDelta + tabWidth - 1) / tabWidth
+				} else if spaceDelta < 0 {
+					newTabDepth -= (-spaceDelta) / tabWidth
+					if newTabDepth < 0 {
+						newTabDepth = 0
+					}
+				}
+				indent := strings.Repeat("\t", newTabDepth)
+				newLines[i] = indent + trimmed
+				lastNormalizedIndent = indent
+			} else if currIndent == "" && lastNormalizedIndent != "" {
+				// New line has NO indent but previous line had tabs.
+				// LLMs often omit indentation for body lines.
+				// Inherit the previous line's indent as the best guess.
+				newLines[i] = lastNormalizedIndent + trimmed
+			}
+			// If no reference at all, leave as-is.
+		}
+	}
+
 	return strings.Join(newLines, "\n")
 }
 

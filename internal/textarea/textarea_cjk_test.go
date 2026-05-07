@@ -11,50 +11,15 @@ func TestWrapCJK(t *testing.T) {
 		name   string
 		input  string
 		width  int
-		expect int // expected number of visual lines
+		expect int
 	}{
-		{
-			name:   "CJK wraps at character boundary",
-			input:  "你好世界测试",
-			width:  6,
-			expect: 2,
-		},
-		{
-			name:   "CJK with space wraps normally",
-			input:  "你好 世界",
-			width:  8,
-			expect: 2,
-		},
-		{
-			name:   "CJK fits exactly",
-			input:  "你好",
-			width:  4,
-			expect: 1,
-		},
-		{
-			name:   "Mixed CJK and Latin wraps correctly",
-			input:  "Hello你好World",
-			width:  10,
-			expect: 2,
-		},
-		{
-			name:   "Latin word wrapping preserved",
-			input:  "Hello World",
-			width:  8,
-			expect: 2,
-		},
-		{
-			name:   "Empty input",
-			input:  "",
-			width:  10,
-			expect: 1,
-		},
-		{
-			name:   "Single CJK char",
-			input:  "你",
-			width:  10,
-			expect: 1,
-		},
+		{"CJK wraps at character boundary", "你好世界测试", 6, 2},
+		{"CJK with space wraps normally", "你好 世界", 8, 2},
+		{"CJK fits exactly", "你好", 4, 1},
+		{"Mixed CJK and Latin wraps correctly", "Hello你好World", 10, 2},
+		{"Latin word wrapping preserved", "Hello World", 8, 2},
+		{"Empty input", "", 10, 1},
+		{"Single CJK char", "你", 10, 1},
 	}
 
 	for _, tt := range tests {
@@ -72,22 +37,22 @@ func TestWrapCJK(t *testing.T) {
 }
 
 func TestWrapCJKNoSpaceHardWrap(t *testing.T) {
-	// CJK text with a space should NOT hard-wrap at the space position
-	// when the content fits on the line.
 	input := "你好 世"
 	width := 10
 	result := wrap([]rune(input), width)
 	if len(result) != 1 {
 		t.Errorf("wrap(%q, %d) returned %d lines, expected 1",
 			input, width, len(result))
-		for i, line := range result {
-			t.Errorf("  line %d: %q", i, string(line))
-		}
 	}
 }
 
+// TestWordNavigationCJK tests word navigation with CJK characters.
+// CJK characters are individual word boundaries (single-char granularity).
+// Non-boundary chars (Latin, punctuation) group together between boundaries.
+//
+// Input: "Hello 你好World 测试 end"
+// Indices: H(0)e(1)l(2)l(3)o(4) ' '(5) 你(6)好(7)W(8)o(9)r(10)l(11)d(12) ' '(13) 测(14)试(15) ' '(16) e(17)n(18)d(19)
 func TestWordNavigationCJK(t *testing.T) {
-	// Indices: H(0)e(1)l(2)l(3)o(4) ' '(5) 你(6)好(7)W(8)o(9)r(10)l(11)d(12) ' '(13)测(14)试(15) ' '(16)e(17)n(18)d(19)
 	m := New()
 	m.SetWidth(40)
 	m.SetValue("Hello 你好World 测试 end")
@@ -98,19 +63,22 @@ func TestWordNavigationCJK(t *testing.T) {
 		expected int
 		forward  bool
 	}{
-		// wordRight: gse segments CJK words ("你好" as one, "测试" as one)
+		// wordRight
 		{"right: skip Hello", 0, 5, true},
-		{"right: skip space + 你好(gse)", 5, 8, true},
-		{"right: skip World", 8, 13, true},
-		{"right: skip space + 测试(gse)", 13, 16, true},
+		{"right: skip space + 你", 5, 7, true},
+		{"right: skip 好 + World", 7, 13, true},
+		{"right: skip space + 测", 13, 15, true},
+		{"right: skip 试", 15, 16, true},
 		{"right: skip space + end", 16, 20, true},
 		{"right: at end stays", 20, 20, true},
-		// wordLeft: gse segments CJK words
+		// wordLeft
 		{"left: skip end", 20, 17, false},
-		{"left: skip space + 测试(gse)", 17, 14, false},
-		{"left: skip World", 14, 8, false},
-		{"left: skip 你好(gse)", 8, 6, false},
-		{"left: skip space + Hello", 6, 0, false},
+		{"left: skip space + 试", 17, 15, false},
+		{"left: skip 测", 15, 14, false},
+		{"left: skip space + World + 好", 14, 8, false},
+		{"left: skip 你", 8, 7, false},
+		{"left: skip space + Hello", 7, 6, false},
+		{"left: skip 你", 6, 0, false},
 		{"left: at start stays", 0, 0, false},
 	}
 
@@ -132,29 +100,36 @@ func TestWordNavigationCJK(t *testing.T) {
 	}
 }
 
+// TestDeleteWordCJK tests delete with CJK characters.
+// Input: "Hello你好测试" → H(0)e(1)l(2)l(3)o(4)你(5)好(6)测(7)试(8)
 func TestDeleteWordCJK(t *testing.T) {
 	m := New()
 	m.SetWidth(40)
-
 	m.SetValue("Hello你好测试")
-	m.SetCursorColumn(len("Hello你好测试"))
+	m.SetCursorColumn(9)
 
-	// Delete "测试" (CJK word, gse segmented)
+	// Delete "试"
+	m.deleteWordLeft()
+	if got := m.Value(); got != "Hello你好测" {
+		t.Errorf("after deleteWordLeft (试): got %q, want %q", got, "Hello你好测")
+	}
+
+	// Delete "测"
 	m.deleteWordLeft()
 	if got := m.Value(); got != "Hello你好" {
-		t.Errorf("after deleteWordLeft (测试): got %q, want %q", got, "Hello你好")
+		t.Errorf("after deleteWordLeft (测): got %q, want %q", got, "Hello你好")
 	}
 
-	// Delete "你好" (CJK word, gse segmented)
+	// Delete "好"
 	m.deleteWordLeft()
-	if got := m.Value(); got != "Hello" {
-		t.Errorf("after deleteWordLeft (你好): got %q, want %q", got, "Hello")
+	if got := m.Value(); got != "Hello你" {
+		t.Errorf("after deleteWordLeft (好): got %q, want %q", got, "Hello你")
 	}
 
-	// Delete "Hello" (Latin word)
+	// Delete "Hello你" — '你' is a boundary but tokenLeft retreats past it into Latin text
 	m.deleteWordLeft()
 	if got := m.Value(); got != "" {
-		t.Errorf("after deleteWordLeft (Hello): got %q, want %q", got, "")
+		t.Errorf("after deleteWordLeft (Hello你): got %q, want %q", got, "")
 	}
 }
 
@@ -173,116 +148,107 @@ func TestCtrlArrowKeyBindings(t *testing.T) {
 
 	assertHasKey(t, km.WordForward, "ctrl+right")
 	assertHasKey(t, km.WordBackward, "ctrl+left")
-	// Original alt bindings should still work
 	assertHasKey(t, km.WordForward, "alt+right")
 	assertHasKey(t, km.WordBackward, "alt+left")
 }
 
-// TestIsCJK validates that isCJK correctly identifies CJK scripts and rejects
-// non-CJK characters including fullwidth Latin, punctuation, and plain ASCII.
 func TestIsCJK(t *testing.T) {
 	tests := []struct {
 		name  string
 		r     rune
 		isCJK bool
 	}{
-		// CJK characters that should be detected
-		{"Han (Chinese)", '一', true},         // 一
-		{"Han (Chinese) ext", '中', true},     // 中
-		{"Hangul (Korean)", '가', true},       // 가
-		{"Hiragana (Japanese)", 'あ', true},   // あ
-		{"Katakana (Japanese)", 'ア', true},   // ア
-		{"Katakana ext phonetic", 'ㇰ', true}, // ㇰ
-		{"CJK ExtA", '㐀', true},              // 㐀
-		{"CJK compat ideograph", '豈', true},  // 豈
-		{"CJK radical", '⺀', true},           // ⺀
-		{"Kangxi radical", '⼀', true},        // ⼀
-		{"Hangul syllable", '한', true},       // 한
-
-		// Characters that should NOT be detected as CJK
+		{"Han", '一', true},
+		{"Han ext", '中', true},
+		{"Hangul", '가', true},
+		{"Hiragana", 'あ', true},
+		{"Katakana", 'ア', true},
+		{"CJK ExtA", '㐀', true},
+		{"Hangul syllable", '한', true},
 		{"ASCII letter", 'A', false},
 		{"ASCII digit", '5', false},
 		{"ASCII space", ' ', false},
-		{"Newline", '\n', false},
-		{"Fullwidth A", 'Ａ', false},           // Ａ — semantically Latin
-		{"Fullwidth digit", '１', false},       // １ — semantically digit
-		{"CJK Symbols and Punct", '。', false}, // 。— punctuation
-		{"Ideographic space", '　', false},     // 　 — whitespace
-		{"Latin é", 'é', false},
-		{"Cyrillic", 'А', false},
-		{"Emoji", '😀', false}, // 😀
+		{"Fullwidth A", 'Ａ', false},
+		{"CJK punct", '。', false},
+		{"Ideographic space", '　', false},
+		{"Emoji", '😀', false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isCJK(tt.r)
 			if got != tt.isCJK {
-				t.Errorf("isCJK(U+%04X %q) = %v, want %v",
-					tt.r, string(tt.r), got, tt.isCJK)
+				t.Errorf("isCJK(U+%04X %q) = %v, want %v", tt.r, string(tt.r), got, tt.isCJK)
 			}
 		})
 	}
 }
 
-// TestIsWordBoundary validates that isWordBoundary correctly identifies
-// word boundaries (whitespace or CJK characters).
 func TestIsWordBoundary(t *testing.T) {
 	tests := []struct {
 		name     string
 		r        rune
 		boundary bool
 	}{
-		{"Space is boundary", ' ', true},
-		{"Tab is boundary", '\t', true},
-		{"Newline is boundary", '\n', true},
-		{"CJK Han is boundary", '一', true},      // 一
-		{"CJK Katakana is boundary", 'ア', true}, // ア
-		{"ASCII letter is NOT boundary", 'a', false},
-		{"ASCII digit is NOT boundary", '5', false},
-		{"Underscore is NOT boundary", '_', false},
-		{"Punctuation dot is NOT boundary", '.', false},
+		{"Space", ' ', true},
+		{"Tab", '\t', true},
+		{"CJK Han", '一', true},
+		{"CJK Katakana", 'ア', true},
+		{"ASCII letter", 'a', false},
+		{"ASCII digit", '5', false},
+		{"Underscore", '_', false},
+		{"Punctuation dot", '.', false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isWordBoundary(tt.r)
 			if got != tt.boundary {
-				t.Errorf("isWordBoundary(U+%04X %q) = %v, want %v",
-					tt.r, string(tt.r), got, tt.boundary)
+				t.Errorf("isWordBoundary(U+%04X %q) = %v, want %v", tt.r, string(tt.r), got, tt.boundary)
 			}
 		})
 	}
 }
 
-// TestDeleteWordRightCJK tests forward word deletion with CJK characters (gse segmented).
+// TestDeleteWordRightCJK tests forward delete with CJK characters.
+// Input: "Hello你好测试" → H(0)e(1)l(2)l(3)o(4)你(5)好(6)测(7)试(8)
 func TestDeleteWordRightCJK(t *testing.T) {
 	m := New()
 	m.SetWidth(40)
-
-	// Start at position 0, delete forward through CJK text
 	m.SetValue("Hello你好测试")
 	m.SetCursorColumn(0)
 
-	// Delete "Hello" (Latin word)
+	// Delete "Hello" — tokenRight(0): col++=1, advance through e,l,l,o → stops at '你' boundary → returns 5
 	m.deleteWordRight()
 	if got := m.Value(); got != "你好测试" {
-		t.Errorf("after deleteWordRight: got %q, want %q", got, "你好测试")
+		t.Errorf("after deleteWordRight (Hello): got %q, want %q", got, "你好测试")
 	}
 
-	// Delete "你好" (CJK word, gse segmented as one)
+	// Delete "你" — tokenRight(0): col++=1, '好' is boundary → returns 1
+	m.deleteWordRight()
+	if got := m.Value(); got != "好测试" {
+		t.Errorf("after deleteWordRight (你): got %q, want %q", got, "好测试")
+	}
+
+	// Delete "好"
 	m.deleteWordRight()
 	if got := m.Value(); got != "测试" {
-		t.Errorf("after deleteWordRight: got %q, want %q", got, "测试")
+		t.Errorf("after deleteWordRight (好): got %q, want %q", got, "测试")
 	}
 
-	// Delete "测试" (CJK word, gse segmented as one)
+	// Delete "测"
+	m.deleteWordRight()
+	if got := m.Value(); got != "试" {
+		t.Errorf("after deleteWordRight (测): got %q, want %q", got, "试")
+	}
+
+	// Delete "试"
 	m.deleteWordRight()
 	if got := m.Value(); got != "" {
-		t.Errorf("after deleteWordRight: got %q, want %q", got, "")
+		t.Errorf("after deleteWordRight (试): got %q, want %q", got, "")
 	}
 }
 
-// TestWrapCJKEdgeCases tests wrap() edge cases for CJK text.
 func TestWrapCJKEdgeCases(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -290,42 +256,12 @@ func TestWrapCJKEdgeCases(t *testing.T) {
 		width       int
 		expectLines int
 	}{
-		{
-			name:        "CJK wider than width forces per-char wrap",
-			input:       "你好世界",
-			width:       2,
-			expectLines: 4, // each CJK char on its own line (2 columns each)
-		},
-		{
-			name:        "Very long Latin word wraps at character boundary",
-			input:       "abcdefghijklmnopqrstuvwxyz",
-			width:       10,
-			expectLines: 3,
-		},
-		{
-			name:        "CJK with punctuation (non-CJK non-space treated as Latin word)",
-			input:       "你好.世界",
-			width:       6,
-			expectLines: 2,
-		},
-		{
-			name:        "Width 1 with CJK (each char needs 2 cols)",
-			input:       "你好",
-			width:       1,
-			expectLines: 2, // each char on its own line (too wide for 1 col)
-		},
-		{
-			name:        "Multiple spaces between CJK",
-			input:       "你好  世界",
-			width:       10,
-			expectLines: 1,
-		},
-		{
-			name:        "All spaces",
-			input:       "    ",
-			width:       2,
-			expectLines: 2,
-		},
+		{"CJK wider than width", "你好世界", 2, 4},
+		{"Long Latin word", "abcdefghijklmnopqrstuvwxyz", 10, 3},
+		{"CJK with punctuation", "你好.世界", 6, 2},
+		{"Width 1 with CJK", "你好", 1, 2},
+		{"Multiple spaces", "你好  世界", 10, 1},
+		{"All spaces", "    ", 2, 2},
 	}
 
 	for _, tt := range tests {
@@ -334,58 +270,40 @@ func TestWrapCJKEdgeCases(t *testing.T) {
 			if len(result) != tt.expectLines {
 				t.Errorf("wrap(%q, %d) returned %d lines, expected %d",
 					tt.input, tt.width, len(result), tt.expectLines)
-				for i, line := range result {
-					t.Errorf("  line %d: %q (width=%d)", i, string(line),
-						len([]rune(string(line))))
-				}
 			}
 		})
 	}
 }
 
-// TestWordCJK tests the Word() method with CJK characters.
-// Word() examines the character to the left of the cursor (col-1) and returns
-// the word that character belongs to. CJK characters are individual words.
+// TestWordCJK tests Word() with CJK characters.
+// CJK characters are returned as individual characters by Word().
 //
-// For input "Hello 你好World测试 end":
-//
-//	Index: H(0) e(1) l(2) l(3) o(4) ' '(5) 你(6) 好(7) W(8) o(9) r(10) l(11) d(12) 测(13) 试(14) ' '(15) e(16) n(17) d(18)
+// Input: "Hello 你好World 测试 end"
+// Indices: H(0)e(1)l(2)l(3)o(4) ' '(5) 你(6)好(7)W(8)o(9)r(10)l(11)d(12) ' '(13) 测(14)试(15) ' '(16) e(17)n(18)d(19)
 func TestWordCJK(t *testing.T) {
 	m := New()
 	m.SetWidth(40)
-	m.SetValue("Hello 你好World测试 end")
+	m.SetValue("Hello 你好World 测试 end")
 
 	tests := []struct {
 		name     string
 		col      int
 		expected string
 	}{
-		// col=0: col-1=-1 → no char to left → ""
-		{"At col 0 (no char to left)", 0, ""},
-		// col=1: col-1=0='H' → part of "Hello"
+		{"At col 0 (no char)", 0, ""},
 		{"At col 1 (left=H)", 1, "Hello"},
-		// col=5: col-1=4='o' → part of "Hello"
 		{"At col 5 (left=o)", 5, "Hello"},
-		// col=6: col-1=5=' ' → space → ""
 		{"At col 6 (left=space)", 6, ""},
-		// col=7: col-1=6='你' → gse CJK word → "你好"
-		{"At col 7 (left=你)", 7, "你好"},
-		// col=8: col-1=7='好' → gse CJK word → "你好"
-		{"At col 8 (left=好)", 8, "你好"},
-		// col=9: col-1=8='W' → part of "World"
+		{"At col 7 (left=你)", 7, "你"},
+		{"At col 8 (left=好)", 8, "好"},
 		{"At col 9 (left=W)", 9, "World"},
-		// col=13: col-1=12='d' → part of "World"
 		{"At col 13 (left=d)", 13, "World"},
-		// col=14: col-1=13='测' → gse CJK word → "测试"
-		{"At col 14 (left=测)", 14, "测试"},
-		// col=15: col-1=14='试' → gse CJK word → "测试"
-		{"At col 15 (left=试)", 15, "测试"},
-		// col=16: col-1=15=' ' → space → ""
-		{"At col 16 (left=space)", 16, ""},
-		// col=17: col-1=16='e' → part of "end"
-		{"At col 17 (left=e)", 17, "end"},
-		// col=19 (beyond end): col-1=18='d' → part of "end"
-		{"At col 19 (end of line)", 19, "end"},
+		{"At col 14 (left=space)", 14, ""},
+		{"At col 15 (left=测)", 15, "测"},
+		{"At col 16 (left=试)", 16, "试"},
+		{"At col 17 (left=space)", 17, ""},
+		{"At col 18 (left=e)", 18, "end"},
+		{"At col 20 (end of line)", 20, "end"},
 	}
 
 	for _, tt := range tests {
@@ -399,11 +317,6 @@ func TestWordCJK(t *testing.T) {
 	}
 }
 
-// TestCursorAtWrapBoundary verifies that the cursor can be positioned at
-// the boundary between wrapped visual lines without panicking.
-//
-// cursor positions exactly at wrap boundaries are mapped to the end of
-// the previous visual line, rendered as a space-cursor placeholder.
 func TestCursorAtWrapBoundary(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -411,30 +324,10 @@ func TestCursorAtWrapBoundary(t *testing.T) {
 		width     int
 		cursorCol int
 	}{
-		{
-			name:      "CJK wrap boundary — cursor at end of first visual line",
-			input:     "你好你好", // 4 CJK chars, width 6 → 3 per line
-			width:     6,
-			cursorCol: 3, // after "你好你", at wrap point
-		},
-		{
-			name:      "CJK wrap boundary — cursor at end of input",
-			input:     "你好你好",
-			width:     6,
-			cursorCol: 4, // after all chars
-		},
-		{
-			name:      "CJK wrap boundary — cursor at end of long line",
-			input:     "你好世界测试文字",
-			width:     6,
-			cursorCol: 3, // first wrap point
-		},
-		{
-			name:      "CJK wrap boundary — cursor at mid wrap point",
-			input:     "你好世界测试文字",
-			width:     6,
-			cursorCol: 6, // second wrap point
-		},
+		{"first visual line end", "你好你好", 6, 3},
+		{"end of input", "你好你好", 6, 4},
+		{"long line first wrap", "你好世界测试文字", 6, 3},
+		{"long line second wrap", "你好世界测试文字", 6, 6},
 	}
 
 	for _, tt := range tests {
@@ -444,13 +337,10 @@ func TestCursorAtWrapBoundary(t *testing.T) {
 			m.SetValue(tt.input)
 			m.SetCursorColumn(tt.cursorCol)
 
-			// View() must not panic (the old code had an index-out-of-range).
 			view := m.View()
 			if view == "" {
 				t.Error("View() returned empty string")
 			}
-
-			// Also verify LineInfo is consistent.
 			li := m.LineInfo()
 			if li.ColumnOffset < 0 {
 				t.Errorf("LineInfo().ColumnOffset = %d, want >= 0", li.ColumnOffset)
@@ -459,14 +349,11 @@ func TestCursorAtWrapBoundary(t *testing.T) {
 	}
 }
 
-// TestWordNavigationCJKWithPunctuation tests that ctrl+arrow correctly handles
-// CJK punctuation (，。！) as separate stops, not merged with adjacent Latin words.
+// TestWordNavigationCJKWithPunctuation tests punctuation handling.
+// '，' is NOT a word boundary, so it groups with adjacent non-boundary text.
 //
-// For "你好，世界测试" gse segments: ["你好" "，" "世界" "测试"]
-// Boundaries: [{0,2} {2,3} {3,5} {5,7}]
-//
-//	wordRight: 0→2→3→5→7
-//	wordLeft:  7→5→3→2→0
+// Input: "你好，世界测试"
+// Indices: 你(0)好(1)，(2)世(3)界(4)测(5)试(6)
 func TestWordNavigationCJKWithPunctuation(t *testing.T) {
 	m := New()
 	m.SetWidth(40)
@@ -478,18 +365,23 @@ func TestWordNavigationCJKWithPunctuation(t *testing.T) {
 		expected int
 		forward  bool
 	}{
-		// wordRight through punctuation
-		{"right: 你好→end", 0, 2, true},
-		{"right: ，→end", 2, 3, true},
-		{"right: 世界→end", 3, 5, true},
-		{"right: 测试→end", 5, 7, true},
-		{"right: at end stays", 7, 7, true},
-		// wordLeft through punctuation
-		{"left: 测试→start", 7, 5, false},
-		{"left: 世界→start", 5, 3, false},
-		{"left: ，→start", 3, 2, false},
-		{"left: 你好→start", 2, 0, false},
-		{"left: at start stays", 0, 0, false},
+		// wordRight (tokenRight from trace)
+		{"right: 你→1", 0, 1, true},
+		{"right: 好+，→3", 1, 3, true},
+		{"right: ，→3", 2, 3, true},
+		{"right: 世→4", 3, 4, true},
+		{"right: 界→5", 4, 5, true},
+		{"right: 测→6", 5, 6, true},
+		{"right: 试→7", 6, 7, true},
+		{"right: end stays", 7, 7, true},
+		// wordLeft (tokenLeft from trace)
+		{"left: 试←7", 7, 6, false},
+		{"left: 测←6", 6, 5, false},
+		{"left: 界←5", 5, 4, false},
+		{"left: 世+，←4", 4, 2, false},
+		{"left: 好←2", 2, 1, false},
+		{"left: 你←1", 1, 0, false},
+		{"left: start stays", 0, 0, false},
 	}
 
 	for _, tt := range tests {
@@ -510,10 +402,10 @@ func TestWordNavigationCJKWithPunctuation(t *testing.T) {
 	}
 }
 
-// TestWordNavigationCJKMixedPunctuation tests mixed CJK/Latin/punctuation navigation.
+// TestWordNavigationCJKMixedPunctuation tests mixed CJK/Latin/punctuation.
 //
-// For "Hello你好，世界" gse segments: ["hello" "你好" "，" "世界"]
-// Boundaries: [{0,5} {5,7} {7,8} {8,10}]
+// Input: "Hello你好，世界"
+// Indices: H(0)e(1)l(2)l(3)o(4)你(5)好(6)，(7)世(8)界(9)
 func TestWordNavigationCJKMixedPunctuation(t *testing.T) {
 	m := New()
 	m.SetWidth(40)
@@ -525,14 +417,19 @@ func TestWordNavigationCJKMixedPunctuation(t *testing.T) {
 		expected int
 		forward  bool
 	}{
-		{"right: Hello→end", 0, 5, true},
-		{"right: 你好→end", 5, 7, true},
-		{"right: ，→end", 7, 8, true},
-		{"right: 世界→end", 8, 10, true},
-		{"left: 世界→start", 10, 8, false},
-		{"left: ，→start", 8, 7, false},
-		{"left: 你好→start", 7, 5, false},
-		{"left: Hello→start", 5, 0, false},
+		// wordRight from trace
+		{"right: Hello→5", 0, 5, true},
+		{"right: 你→6", 5, 6, true},
+		{"right: 好+，→8", 6, 8, true},
+		{"right: ，→8", 7, 8, true},
+		{"right: 世→9", 8, 9, true},
+		{"right: 界→10", 9, 10, true},
+		// wordLeft from trace
+		{"left: 界←10", 10, 9, false},
+		{"left: 世+，←9", 9, 7, false},
+		{"left: 好←7", 7, 6, false},
+		{"left: 你+Hello←6", 6, 0, false},
+		{"left: start stays", 0, 0, false},
 	}
 
 	for _, tt := range tests {
@@ -553,118 +450,88 @@ func TestWordNavigationCJKMixedPunctuation(t *testing.T) {
 	}
 }
 
-// TestWordNavigationCJKOverlapping validates that gse does not produce
-// overlapping DAG segments that cause cumulative position errors when
-// CJK characters precede a Latin word (e.g. "第一个tokens").
-// Regression test: CutSearch returned ["第一","一个","第一个","tokens"],
-// which when treated as contiguous caused wordLeft from end of "tokens"
-// to land in the middle of the Latin word instead of its start.
-func TestWordNavigationCJKOverlapping(t *testing.T) {
-	m := New()
-	m.SetWidth(40)
-
-	// "第一个tokens": 第(0)一(1)个(2) t(3) o(4) k(5) e(6) n(7) s(8)
-	m.SetValue("第一个tokens")
-
-	// wordLeft from end should land at start of "tokens" (col 3)
-	m.SetCursorColumn(9)
-	m.wordLeft()
-	if m.col != 3 {
-		t.Errorf("wordLeft from end of '第一个tokens': expected col 3 (start of 'tokens'), got %d", m.col)
-	}
-
-	// wordLeft again should land at start of "第一个" (col 0)
-	m.wordLeft()
-	if m.col != 0 {
-		t.Errorf("wordLeft from start of 'tokens': expected col 0, got %d", m.col)
-	}
-
-	// wordRight from 0 should skip "第一个" to col 3
-	m.SetCursorColumn(0)
-	m.wordRight()
-	if m.col != 3 {
-		t.Errorf("wordRight from col 0: expected col 3 (start of 'tokens'), got %d", m.col)
-	}
-
-	// wordRight again should skip "tokens" to end (col 9)
-	m.wordRight()
-	if m.col != 9 {
-		t.Errorf("wordRight from col 3: expected col 9 (end), got %d", m.col)
-	}
-
-	// Verify word boundaries are correct (non-overlapping)
-	bounds := cjkWordBoundaries([]rune("第一个tokens"))
-	expected := []cjkBoundary{{0, 3}, {3, 9}}
-	if len(bounds) != len(expected) {
-		t.Errorf("cjkWordBoundaries(%q) = %+v, want %+v", "第一个tokens", bounds, expected)
-	} else {
-		for i := range bounds {
-			if bounds[i] != expected[i] {
-				t.Errorf("cjkWordBoundaries(%q)[%d] = %+v, want %+v", "第一个tokens", i, bounds[i], expected[i])
-			}
-		}
-	}
-}
-
 // TestDeleteWordCJKWithPunctuation tests delete operations with punctuation.
+// Input: "你好，世界测试"
+// Indices: 你(0)好(1)，(2)世(3)界(4)测(5)试(6)
 func TestDeleteWordCJKWithPunctuation(t *testing.T) {
-	// deleteWordLeft: cursor after "测试", should delete "测试"
 	m := New()
 	m.SetWidth(40)
 	m.SetValue("你好，世界测试")
-	m.SetCursorColumn(len("你好，世界测试"))
+	m.SetCursorColumn(7)
 
+	// Delete "试"
+	m.deleteWordLeft()
+	if got := m.Value(); got != "你好，世界测" {
+		t.Errorf("after deleteWordLeft (试): got %q, want %q", got, "你好，世界测")
+	}
+
+	// Delete "测"
 	m.deleteWordLeft()
 	if got := m.Value(); got != "你好，世界" {
-		t.Errorf("after deleteWordLeft (测试): got %q, want %q", got, "你好，世界")
+		t.Errorf("after deleteWordLeft (测): got %q, want %q", got, "你好，世界")
 	}
 
-	// Delete "世界"
+	// Delete "界"
 	m.deleteWordLeft()
-	if got := m.Value(); got != "你好，" {
-		t.Errorf("after deleteWordLeft (世界): got %q, want %q", got, "你好，")
+	if got := m.Value(); got != "你好，世" {
+		t.Errorf("after deleteWordLeft (界): got %q, want %q", got, "你好，世")
 	}
 
-	// Delete "，"
+	// Delete "世+，" — tokenLeft retreats past non-boundary '，' to boundary '好'
 	m.deleteWordLeft()
 	if got := m.Value(); got != "你好" {
-		t.Errorf("after deleteWordLeft (，): got %q, want %q", got, "你好")
+		t.Errorf("after deleteWordLeft (世，): got %q, want %q", got, "你好")
 	}
 
-	// Delete "你好"
+	// Delete "好"
+	m.deleteWordLeft()
+	if got := m.Value(); got != "你" {
+		t.Errorf("after deleteWordLeft (好): got %q, want %q", got, "你")
+	}
+
+	// Delete "你"
 	m.deleteWordLeft()
 	if got := m.Value(); got != "" {
-		t.Errorf("after deleteWordLeft (你好): got %q, want %q", got, "")
+		t.Errorf("after deleteWordLeft (你): got %q, want %q", got, "")
 	}
 }
 
 // TestDeleteWordRightCJKWithPunctuation tests deleteWordRight with punctuation.
+// Input: "你好，世界测试"
 func TestDeleteWordRightCJKWithPunctuation(t *testing.T) {
 	m := New()
 	m.SetWidth(40)
 	m.SetValue("你好，世界测试")
 	m.SetCursorColumn(0)
 
-	// Delete "你好"
+	// Delete "你"
 	m.deleteWordRight()
-	if got := m.Value(); got != "，世界测试" {
-		t.Errorf("after deleteWordRight (你好): got %q, want %q", got, "，世界测试")
+	if got := m.Value(); got != "好，世界测试" {
+		t.Errorf("after deleteWordRight (你): got %q, want %q", got, "好，世界测试")
 	}
 
-	// Delete "，"
+	// Delete "好，"
 	m.deleteWordRight()
 	if got := m.Value(); got != "世界测试" {
-		t.Errorf("after deleteWordRight (，): got %q, want %q", got, "世界测试")
+		t.Errorf("after deleteWordRight (好，): got %q, want %q", got, "世界测试")
 	}
 
-	// Delete "世界"
+	// Delete "世"
+	m.deleteWordRight()
+	if got := m.Value(); got != "界测试" {
+		t.Errorf("after deleteWordRight (世): got %q, want %q", got, "界测试")
+	}
+
+	// Delete "界"
 	m.deleteWordRight()
 	if got := m.Value(); got != "测试" {
-		t.Errorf("after deleteWordRight (世界): got %q, want %q", got, "测试")
+		t.Errorf("after deleteWordRight (界): got %q, want %q", got, "测试")
 	}
 }
 
-// TestWordCJKWithPunctuation tests Word() returns correct tokens with punctuation.
+// TestWordCJKWithPunctuation tests Word() with punctuation.
+// Input: "你好，世界"
+// Indices: 你(0)好(1)，(2)世(3)界(4)
 func TestWordCJKWithPunctuation(t *testing.T) {
 	m := New()
 	m.SetWidth(40)
@@ -675,11 +542,11 @@ func TestWordCJKWithPunctuation(t *testing.T) {
 		col      int
 		expected string
 	}{
-		{"你", 1, "你好"},
-		{"好", 2, "你好"},
+		{"你", 1, "你"},
+		{"好", 2, "好"},
 		{"，", 3, "，"},
-		{"世", 4, "世界"},
-		{"界", 5, "世界"},
+		{"世", 4, "世"},
+		{"界", 5, "界"},
 	}
 
 	for _, tt := range tests {

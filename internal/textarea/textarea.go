@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -19,64 +18,11 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/go-ego/gse"
 	rw "github.com/mattn/go-runewidth"
 	"github.com/rivo/uniseg"
 	"xbot/internal/textarea/memoization"
 	"xbot/internal/textarea/runeutil"
 )
-
-// cjkSeg holds the shared CJK word segmenter, initialized lazily.
-var (
-	cjkSeg          gse.Segmenter
-	cjkSegAvailable bool
-	cjkSegOnce      sync.Once
-)
-
-func getCJKSegmenter() *gse.Segmenter {
-	cjkSegOnce.Do(func() {
-		var err error
-		cjkSeg, err = gse.NewEmbed()
-		if err == nil {
-			cjkSegAvailable = true
-		}
-	})
-	if !cjkSegAvailable {
-		return nil
-	}
-	return &cjkSeg
-}
-
-// cjkBoundary is a word boundary in a line of text, in rune positions.
-type cjkBoundary struct {
-	start, end int // [start, end) in rune offsets
-}
-
-// cjkWordBoundaries returns the segmented word boundaries for a line
-// using gse's Segment mode (non-overlapping best-effort segmentation).
-// We use Segment instead of CutSearch because CutSearch returns DAG
-// overlapping candidates (e.g. ["第一","一个","第一个"] for "第一个"),
-// which causes cumulative position errors when treated as contiguous.
-// Returns nil if the segmenter is unavailable (fall back to single-char).
-func cjkWordBoundaries(line []rune) []cjkBoundary {
-	seg := getCJKSegmenter()
-	if seg == nil {
-		return nil
-	}
-	text := string(line)
-	segs := seg.Segment([]byte(text))
-	boundaries := make([]cjkBoundary, 0, len(segs))
-	pos := 0
-	for _, s := range segs {
-		wordRunes := []rune(s.Token().Text())
-		wordLen := len(wordRunes)
-		if wordLen > 0 {
-			boundaries = append(boundaries, cjkBoundary{pos, pos + wordLen})
-			pos += wordLen
-		}
-	}
-	return boundaries
-}
 
 const (
 	minHeight        = 1
@@ -430,13 +376,6 @@ type Model struct {
 
 	// rune sanitizer for input.
 	rsan runeutil.Sanitizer
-
-	// cjkWordCache holds segmented word boundaries for the current line.
-	// Nil if not yet segmented or segmenter unavailable.
-	cjkWordCache []cjkBoundary
-	// cjkWordCacheLine is the line text this cache was built for.
-	// When the line changes, the cache is invalidated (set to "").
-	cjkWordCacheLine string
 }
 
 // New creates a new model with default settings.
@@ -470,10 +409,6 @@ func New() Model {
 
 	m.SetHeight(defaultHeight)
 	m.SetWidth(defaultWidth)
-
-	// Pre-warm the CJK segmenter in the background so the first
-	// Ctrl+Arrow keypress doesn't block on dictionary loading.
-	go getCJKSegmenter()
 
 	return m
 }
@@ -866,21 +801,82 @@ func (m *Model) Reset() {
 	m.recalculateHeight()
 }
 
-// cjkWordBounds returns the segmented CJK word boundaries for the current
-// line, recomputing the cache when the line text changes. Returns nil if
-// the segmenter is unavailable.
-func (m *Model) cjkWordBounds() []cjkBoundary {
-	line := string(m.value[m.row])
-	if m.cjkWordCacheLine != line {
-		m.cjkWordCache = cjkWordBoundaries(m.value[m.row])
-		m.cjkWordCacheLine = line
+// Click positions the cursor based on a mouse click at terminal column x.
+// x is the terminal column (0-based), relative to the textarea content area.
+// This is a simplified version that positions the cursor on the current line.
+// For full (x, y) click support, use ClickAt instead.
+func (m *Model) Click(x int) {
+	if len(m.value) == 0 {
+		return
 	}
-	return m.cjkWordCache
+
+	// Map x to rune offset in the current line
+	line := m.value[m.row]
+
+	// Accumulate visual width to find which rune corresponds to x
+	col := 0
+	visualW := 0
+	for _, r := range line {
+		rw := uniseg.StringWidth(string(r))
+		if visualW+rw > x {
+			break
+		}
+		visualW += rw
+		col++
+	}
+	m.col = clamp(col, 0, len(line))
+	m.lastCharOffset = 0
+	m.repositionView()
 }
 
-// tokenRight returns the column after skipping one gse token to the right
-// from the given column. It skips spaces first, then jumps to the end of the
-// current token. Returns col unchanged if gse is unavailable or at end of line.
+// ClickAt positions the cursor based on a mouse click at the given
+// terminal coordinates. x is the column, y is the visual line index
+// (both 0-based, relative to the textarea content area).
+func (m *Model) ClickAt(x, y int) {
+	if len(m.value) == 0 {
+		return
+	}
+
+	// Map visual line y to (logical row, rune offset)
+	visualLine := 0
+	for row, line := range m.value {
+		wrappedLines := m.memoizedWrap(line, m.width)
+		for wl, wrappedRunes := range wrappedLines {
+			if visualLine == y {
+				// Found the visual line — position cursor here
+				m.row = row
+
+				// Calculate base offset (runes before this wrapped segment)
+				baseOffset := 0
+				for i := 0; i < wl; i++ {
+					baseOffset += len(wrappedLines[i])
+				}
+
+				// Map x to rune offset within this wrapped segment
+				col := baseOffset
+				visualW := 0
+				for _, r := range wrappedRunes {
+					rw := uniseg.StringWidth(string(r))
+					if visualW+rw > x {
+						break
+					}
+					visualW += rw
+					col++
+				}
+				m.col = clamp(col, 0, len(line))
+				m.lastCharOffset = 0
+				m.repositionView()
+				return
+			}
+			visualLine++
+		}
+	}
+}
+
+// tokenRight returns the column after skipping one word/token to the right
+// from the given column. It skips spaces first, then advances through
+// non-boundary characters using isWordBoundary (whitespace or CJK chars).
+// Always advances at least one non-space character.
 func (m *Model) tokenRight(col int) int {
 	line := m.value[m.row]
 	// Skip spaces forward
@@ -890,23 +886,8 @@ func (m *Model) tokenRight(col int) int {
 	if col >= len(line) {
 		return col
 	}
-	// Find the token containing col and jump to its end
-	bounds := m.cjkWordBounds()
-	if bounds != nil {
-		for _, b := range bounds {
-			if b.start <= col && col < b.end {
-				return b.end
-			}
-		}
-		// col is at a gap between tokens (shouldn't happen), move to next token start
-		for _, b := range bounds {
-			if b.start > col {
-				return b.start
-			}
-		}
-		return len(line)
-	}
-	// Fallback: no segmenter, use character-by-character with isWordBoundary
+	// Advance at least one character, then stop at word boundary
+	col++
 	for col < len(line) {
 		r := line[col]
 		if isWordBoundary(r) {
@@ -917,9 +898,9 @@ func (m *Model) tokenRight(col int) int {
 	return col
 }
 
-// tokenLeft returns the column after skipping one gse token to the left
-// from the given column. It skips spaces first, then jumps to the start of the
-// previous token. Returns col unchanged if gse is unavailable or at start of line.
+// tokenLeft returns the column after skipping one word/token to the left
+// from the given column. It skips spaces first, then retreats through
+// non-boundary characters using isWordBoundary.
 func (m *Model) tokenLeft(col int) int {
 	line := m.value[m.row]
 	// Skip spaces backward
@@ -929,28 +910,10 @@ func (m *Model) tokenLeft(col int) int {
 	if col <= 0 {
 		return 0
 	}
-	// Find the token containing col-1 and jump to its start
-	bounds := m.cjkWordBounds()
-	if bounds != nil {
-		for _, b := range bounds {
-			if b.start <= col-1 && col-1 < b.end {
-				return b.start
-			}
-		}
-		// col-1 is at a gap (shouldn't happen), find preceding token
-		prev := 0
-		for _, b := range bounds {
-			if b.end <= col-1 {
-				prev = b.start
-			} else {
-				break
-			}
-		}
-		return prev
-	}
-	// Fallback: no segmenter, use character-by-character with isWordBoundary.
+	// Retreat through non-boundary characters.
 	// On the first step, always retreat at least one rune even if it is a word
-	// boundary, so CJK navigation works before the gse segmenter is loaded.
+	// boundary, so CJK navigation works (CJK chars are boundaries but we want
+	// to skip at least one character).
 	origCol := col
 	for col > 0 {
 		prev := line[col-1]
@@ -965,9 +928,8 @@ func (m *Model) tokenLeft(col int) int {
 
 // Word returns the word at the cursor position.
 //
-// Uses gse token boundaries when available for accurate CJK + punctuation
-// identification. Falls back to isWordBoundary (whitespace or CJK characters)
-// when the segmenter is unavailable.
+// Uses isWordBoundary (whitespace or CJK characters) to identify word edges.
+// CJK characters are treated as individual words (single-character granularity).
 // Returns an empty string if the cursor is on whitespace, beyond the line end,
 // or at position 0.
 func (m *Model) Word() string {
@@ -988,15 +950,13 @@ func (m *Model) Word() string {
 		return ""
 	}
 
-	// Try gse token-based lookup
-	bounds := m.cjkWordBounds()
-	for _, b := range bounds {
-		if b.start <= col && col < b.end {
-			return string(line[b.start:b.end])
-		}
+	// If cursor is on a CJK character, return just that character.
+	// CJK characters are word boundaries and each forms its own "word".
+	if isCJK(line[col]) {
+		return string(line[col])
 	}
 
-	// Fallback: no segmenter or col not in any token, use isWordBoundary
+	// Use isWordBoundary to find word edges for non-CJK, non-space text
 	start := col
 	for start > 0 && !isWordBoundary(line[start-1]) {
 		start--
@@ -1053,7 +1013,6 @@ func (m *Model) transposeLeft() {
 }
 
 // deleteWordLeft deletes the word left to the cursor.
-// Uses gse token boundaries when available for accurate CJK+ punctuation navigation.
 func (m *Model) deleteWordLeft() {
 	if m.col == 0 || len(m.value[m.row]) == 0 {
 		return
@@ -1070,7 +1029,6 @@ func (m *Model) deleteWordLeft() {
 }
 
 // deleteWordRight deletes the word right to the cursor.
-// Uses gse token boundaries when available for accurate CJK+ punctuation navigation.
 func (m *Model) deleteWordRight() {
 	if m.col >= len(m.value[m.row]) || len(m.value[m.row]) == 0 {
 		return
@@ -1117,15 +1075,11 @@ func (m *Model) characterLeft(insideLine bool) {
 }
 
 // wordLeft moves the cursor one word to the left.
-// Uses gse token boundaries when available; falls back to isWordBoundary
-// (whitespace or CJK characters) when the segmenter is unavailable.
 func (m *Model) wordLeft() {
 	m.SetCursorColumn(m.tokenLeft(m.col))
 }
 
 // wordRight moves the cursor one word to the right.
-// Uses gse token boundaries when available; falls back to isWordBoundary
-// (whitespace or CJK characters) when the segmenter is unavailable.
 func (m *Model) wordRight() {
 	m.doWordRight(func(int, int) { /* nothing */ })
 }
@@ -1135,8 +1089,10 @@ func (m *Model) wordRight() {
 // word and the absolute column position. This enables word-transform operations
 // (uppercase, lowercase, capitalize) to modify characters as the cursor moves.
 //
-// Uses gse token boundaries when available for accurate CJK + punctuation
-// navigation. Falls back to isWordBoundary when the segmenter is unavailable.
+// Uses isWordBoundary (whitespace or CJK characters) for word-edge detection.
+// On the first character (charIdx==0), always advance at least one rune
+// even if it is a word boundary (e.g. CJK char), so that CJK text
+// navigation works at single-character granularity.
 func (m *Model) doWordRight(fn func(charIdx int, pos int)) {
 	line := m.value[m.row]
 	col := m.col
@@ -1151,35 +1107,7 @@ func (m *Model) doWordRight(fn func(charIdx int, pos int)) {
 		return
 	}
 
-	// Try gse token-based navigation
-	bounds := m.cjkWordBounds()
-	if bounds != nil {
-		for _, b := range bounds {
-			if b.start <= col && col < b.end {
-				// Walk through the token from cursor position, calling fn.
-				// The guard startCol=max(col,b.start) is defensive: col is guaranteed
-				// to be >= b.start by the outer if-condition, but the guard protects
-				// against future refactoring that might change the invariant.
-				startCol := col
-				if startCol < b.start {
-					startCol = b.start
-				}
-				for i := startCol; i < b.end; i++ {
-					fn(i-startCol, i)
-				}
-				m.SetCursorColumn(b.end)
-				return
-			}
-		}
-		// col is at a gap between tokens, just advance
-		m.SetCursorColumn(col + 1)
-		return
-	}
-
-	// Fallback: no segmenter, use character-by-character with isWordBoundary.
-	// On the first character (charIdx==0), always advance at least one rune
-	// even if it is a word boundary (e.g. CJK char), so that CJK text
-	// navigation works before the gse segmenter is loaded.
+	// Advance through non-boundary characters using isWordBoundary.
 	charIdx := 0
 	for m.col < len(line) {
 		r := line[m.col]

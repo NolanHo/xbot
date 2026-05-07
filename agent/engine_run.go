@@ -77,6 +77,7 @@ type runState struct {
 	progressLines      []string
 	progressMu         sync.Mutex
 	structuredProgress *StructuredProgress
+	subAgentNodes      []SubAgentNode // structured SubAgent tree (updated alongside progressLines)
 	iterationSnapshots []IterationSnapshot
 	progressFinalizer  func()
 }
@@ -187,7 +188,11 @@ func (s *runState) initProgress() {
 				return
 			}
 			s.structuredProgress.Phase = PhaseDone
+			if s.cfg.ProgressSeq != nil {
+				s.structuredProgress.Seq = s.cfg.ProgressSeq.Add(1)
+			}
 			if s.autoNotify && s.cfg.ProgressEventHandler != nil {
+				s.structuredProgress.SubAgents = s.subAgentNodes
 				s.cfg.ProgressEventHandler(&ProgressEvent{
 					Lines:      copyLines(s.progressLines),
 					Structured: s.structuredProgress,
@@ -270,6 +275,10 @@ func (s *runState) notifyProgress(extra string) {
 	if !s.autoNotify {
 		return
 	}
+	// Increment seq and assign to structuredProgress (unified entry point).
+	if s.structuredProgress != nil && s.cfg.ProgressSeq != nil {
+		s.structuredProgress.Seq = s.cfg.ProgressSeq.Add(1)
+	}
 	s.progressMu.Lock()
 	lines := make([]string, len(s.progressLines))
 	copy(lines, s.progressLines)
@@ -296,11 +305,18 @@ func (s *runState) notifyProgress(extra string) {
 			buf.WriteByte('\n')
 		}
 	}
-	s.cfg.ProgressNotifier([]string{buf.String()})
+	thinking := ""
+	if s.structuredProgress != nil {
+		thinking = s.structuredProgress.ThinkingContent
+	}
+	s.cfg.ProgressNotifier([]string{buf.String()}, thinking)
 	if s.cfg.ProgressEventHandler != nil && s.structuredProgress != nil {
 		s.progressMu.Lock()
 		snapshot := make([]string, len(s.progressLines))
 		copy(snapshot, s.progressLines)
+		// Attach structured SubAgent tree (if any) directly to the event,
+		// so consumers don't need to parse text lines.
+		s.structuredProgress.SubAgents = s.subAgentNodes
 		s.progressMu.Unlock()
 		s.cfg.ProgressEventHandler(&ProgressEvent{
 			Lines:      snapshot,
@@ -344,11 +360,13 @@ func (s *runState) buildOutput(ob *bus.OutboundMessage) *RunOutput {
 // beginIteration updates state at the start of each loop iteration.
 func (s *runState) beginIteration(i int) {
 	s.localIterCount++
+	s.subAgentNodes = nil
 	if s.structuredProgress != nil {
 		s.structuredProgress.Iteration = i
 		s.structuredProgress.Phase = PhaseThinking
 		s.structuredProgress.ActiveTools = nil
 		s.structuredProgress.CompletedTools = nil
+		s.structuredProgress.SubAgents = nil
 		s.structuredProgress.ThinkingContent = ""
 		s.structuredProgress.ReasoningContent = ""
 	}
@@ -688,8 +706,19 @@ func (s *runState) handleFinalResponse(ctx context.Context, response *llm.LLMRes
 		// recordAssistantMsg is not called for final text responses (handleFinalResponse
 		// returns directly), so ThinkingContent must be set here for SubAgent
 		// session viewers that synthesize assistant messages from PhaseDone payload.
-		if s.structuredProgress != nil && cleanContent != "" {
-			s.structuredProgress.ThinkingContent = cleanContent
+		if s.structuredProgress != nil {
+			if cleanContent != "" {
+				s.structuredProgress.ThinkingContent = cleanContent
+			} else if response.ReasoningContent != "" {
+				// Model returned only tool calls (no text) but has reasoning.
+				// Use reasoning as ThinkingContent so SubAgent progress tree
+				// shows what the model is thinking rather than "💭 思考中...".
+				rc := response.ReasoningContent
+				if r := []rune(rc); len(r) > 200 {
+					rc = string(r[:200]) + "…"
+				}
+				s.structuredProgress.ThinkingContent = rc
+			}
 		}
 
 		out := s.buildOutput(&bus.OutboundMessage{

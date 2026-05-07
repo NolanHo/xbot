@@ -506,7 +506,7 @@ Output the structured working state directly.`
 		}
 
 		// Memory tool calls — execute and append results
-		assistantMsg := llm.ChatMessage{Role: "assistant", ToolCalls: resp.ToolCalls}
+		assistantMsg := llm.ChatMessage{Role: "assistant", Content: resp.Content, ReasoningContent: resp.ReasoningContent, ToolCalls: resp.ToolCalls}
 		compactionMsgs = append(compactionMsgs, assistantMsg)
 		for _, tc := range resp.ToolCalls {
 			var resultContent string
@@ -524,7 +524,7 @@ Output the structured working state directly.`
 	// send one final call WITHOUT tools to force a text summary.
 	if compressed == "" {
 		log.Ctx(ctx).WithField("tool_rounds", maxToolRounds).Warn("Compaction exhausted tool rounds, forcing final summary without tools")
-		forceMsgs := append(compactionMsgs, llm.NewAssistantMessage("Memory operations complete. Now produce the compaction summary."))
+		forceMsgs := append(compactionMsgs, llm.ChatMessage{Role: "assistant", Content: "Memory operations complete. Now produce the compaction summary."})
 		resp, err := client.Generate(ctx, model, forceMsgs, nil, "")
 		if err != nil {
 			return nil, fmt.Errorf("compaction fallback failed: %w", err)

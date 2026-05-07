@@ -257,15 +257,23 @@ type suHistoryLoadMsg struct {
 // sessionState holds per-session state that should be preserved when switching sessions.
 // Messages are NOT stored here — the DB is the source of truth for history.
 type sessionState struct {
-	progress          *CLIProgressPayload
-	typing            bool
-	iterationHistory  []cliIterationSnapshot
-	lastSeenIteration int
-	streamingMsgIdx   int
-	typingStartTime   time.Time
-	lastReasoning     string
-	lastThinking      string
-	turnCancelled     bool // true after explicit Ctrl+C cancel — prevents auto-start
+	progress             *CLIProgressPayload
+	typing               bool
+	agentTurnID          uint64
+	inputReady           bool
+	needFlushQueue       bool
+	lastProgressSeq      uint64
+	twVisible            int
+	rwVisible            int
+	iterationHistory     []cliIterationSnapshot
+	lastSeenIteration    int
+	streamingMsgIdx      int
+	typingStartTime      time.Time
+	lastReasoning        string
+	lastThinking         string
+	turnCancelled        bool
+	typewriterTickActive bool
+	reasoningByIter      map[int]string
 }
 
 // sessionKey returns the map key for the current session.
@@ -281,15 +289,23 @@ func (m *cliModel) saveCurrentSession() {
 		m.turnDoneFlags = make(map[uint64]*turnDoneFlag)
 	}
 	m.savedSessions[key] = &sessionState{
-		progress:          m.progress,
-		typing:            m.typing,
-		iterationHistory:  m.iterationHistory,
-		lastSeenIteration: m.lastSeenIteration,
-		streamingMsgIdx:   m.streamingMsgIdx,
-		typingStartTime:   m.typingStartTime,
-		lastReasoning:     m.lastReasoning,
-		lastThinking:      m.lastThinking,
-		turnCancelled:     m.turnCancelled,
+		progress:             m.progress,
+		typing:               m.typing,
+		agentTurnID:          m.agentTurnID,
+		inputReady:           m.inputReady,
+		needFlushQueue:       m.needFlushQueue,
+		lastProgressSeq:      m.lastProgressSeq,
+		twVisible:            m.twVisible,
+		rwVisible:            m.rwVisible,
+		iterationHistory:     m.iterationHistory,
+		lastSeenIteration:    m.lastSeenIteration,
+		streamingMsgIdx:      m.streamingMsgIdx,
+		typingStartTime:      m.typingStartTime,
+		lastReasoning:        m.lastReasoning,
+		lastThinking:         m.lastThinking,
+		turnCancelled:        m.turnCancelled,
+		typewriterTickActive: m.typewriterTickActive,
+		reasoningByIter:      m.reasoningByIter,
 	}
 }
 
@@ -300,6 +316,12 @@ func (m *cliModel) restoreSession() {
 	if saved, ok := m.savedSessions[key]; ok {
 		m.progress = saved.progress
 		m.typing = saved.typing
+		m.agentTurnID = saved.agentTurnID
+		m.inputReady = saved.inputReady
+		m.needFlushQueue = saved.needFlushQueue
+		m.lastProgressSeq = saved.lastProgressSeq
+		m.twVisible = saved.twVisible
+		m.rwVisible = saved.rwVisible
 		m.iterationHistory = saved.iterationHistory
 		m.lastSeenIteration = saved.lastSeenIteration
 		m.streamingMsgIdx = saved.streamingMsgIdx
@@ -307,6 +329,8 @@ func (m *cliModel) restoreSession() {
 		m.lastReasoning = saved.lastReasoning
 		m.lastThinking = saved.lastThinking
 		m.turnCancelled = saved.turnCancelled
+		m.typewriterTickActive = saved.typewriterTickActive
+		m.reasoningByIter = saved.reasoningByIter
 		delete(m.savedSessions, key) // clean up
 	} else {
 		// No saved state — reset to idle (NOT cancelled)
@@ -318,8 +342,15 @@ func (m *cliModel) restoreSession() {
 		m.lastSeenIteration = 0
 		m.typingStartTime = time.Time{}
 		m.lastReasoning = ""
+		m.reasoningByIter = nil
 		m.lastThinking = ""
 		m.turnCancelled = false
+		m.inputReady = false
+		m.needFlushQueue = false
+		m.lastProgressSeq = 0
+		m.twVisible = 0
+		m.rwVisible = 0
+		m.typewriterTickActive = false
 	}
 }
 
@@ -386,10 +417,10 @@ type cliModel struct {
 	resetTokenStateFn func()                        // /rewind: clear stale prompt/completion token counts
 
 	// --- Message queue (typing 期间排队的消息) ---
-	messageQueue   []string // 排队等待发送的消息
-	queueEditing   bool     // true = 正在编辑/查看最后一条排队消息
-	queueEditBuf   string   // 编辑中的排队消息内容
-	needFlushQueue bool     // true = handleAgentMessage 后需要刷新队列
+	messageQueue   []queuedMsg // 排队等待发送的消息（绑定 chatID 防止跨 session 误投）
+	queueEditing   bool        // true = 正在编辑/查看最后一条排队消息
+	queueEditBuf   string      // 编辑中的排队消息内容
+	needFlushQueue bool        // true = handleAgentMessage 后需要刷新队列
 
 	// --- Background tasks ---
 	bgTaskCount     int                            // running background tasks (0 = no indicator)
@@ -425,6 +456,7 @@ type cliModel struct {
 	progress             *CLIProgressPayload
 	iterationHistory     []cliIterationSnapshot // 已完成迭代快照
 	lastSeenIteration    int                    // 上次进度事件的迭代号
+	lastProgressSeq      uint64                 // 上次进度事件的序列号（单调递增校验）
 	iterationStartTime   time.Time              // current iteration wall-clock start time
 	fastTickActive       bool                   // true when a fast tick chain (100ms) is running
 	typewriterTickActive bool                   // true when typewriter tick chain (50ms) is running
@@ -464,9 +496,17 @@ type cliModel struct {
 	cachedProgressHistoryLen   int    // len(iterationHistory) when cache was built
 	cachedProgressHistoryWidth int    // viewport width when cache was built
 
+	// Current iteration static content cache — avoids re-rendering reasoning,
+	// completed tools, tool content, and SubAgent tree on every 100ms tick.
+	cachedCurrentStatic      string // rendered static parts of current iteration
+	cachedCurrentStaticWidth int    // bubbleWidth when cache was built
+	cachedCurrentIter        int    // progress.Iteration when cache was built
+	cachedCurrentStaticFP    uint64 // fingerprint of static content for dirty detection
+
 	// --- §2 工具可视化 ---
 	lastCompletedTools []CLIToolProgress // 每轮结束时快照，不依赖 m.progress 生命周期
 	lastReasoning      string            // 最后一次迭代的 reasoning_content，在 progress 清除前捕获
+	reasoningByIter    map[int]string    // per-iteration reasoning，snapshot 时用于精确查找
 	lastThinking       string            // 最后一次迭代的 thinking_content，在 progress 清除前捕获
 
 	// --- §8 Tab 补全 ---
@@ -500,12 +540,13 @@ type cliModel struct {
 	// --- §12 Interactive Panel ---
 	// panelMode: ""=normal, "settings"=settings panel, "askuser"=ask user panel
 	panelMode     string
-	panelCursor   int            // settings panel: selected item index
-	panelEdit     bool           // settings panel: editing current item
-	panelScrollY  int            // panel 滚动偏移（手动管理，不依赖 viewport）
-	panelEditTA   textarea.Model // settings panel: inline editor
-	panelCombo    bool           // settings panel: combo dropdown open
-	panelComboIdx int            // settings panel: combo selected option index
+	panelStack    []panelStackEntry // push/pop navigation stack for nested panels
+	panelCursor   int               // settings panel: selected item index
+	panelEdit     bool              // settings panel: editing current item
+	panelScrollY  int               // panel 滚动偏移（手动管理，不依赖 viewport）
+	panelEditTA   textarea.Model    // settings panel: inline editor
+	panelCombo    bool              // settings panel: combo dropdown open
+	panelComboIdx int               // settings panel: combo selected option index
 	// --- Panel state backup (for quick switch round-trip) ---
 	panelValuesBackup   map[string]string              // saved panelValues before quick switch
 	panelCursorBackup   int                            // saved panelCursor before quick switch
@@ -626,6 +667,9 @@ type cliModel struct {
 	searchEditing bool            // true = 编辑搜索词, false = 导航结果
 	searchTI      textinput.Model // 搜索输入框
 
+	// --- Mouse support ---
+	mouseZones mouseZoneBuilder // zone tracker for mouse hit testing (rebuilt each View())
+
 	// toolDisplayInfo
 
 	// --- 🥚 Easter Eggs 彩蛋 ---
@@ -664,6 +708,13 @@ type turnDoneFlag struct {
 }
 
 // cliMessage 单条消息
+// queuedMsg is a user message waiting in the queue, bound to a specific chatID.
+// When flushed, it is only delivered to the session that was active when queued.
+type queuedMsg struct {
+	content string
+	chatID  string
+}
+
 type cliMessage struct {
 	role      string
 	content   string

@@ -48,9 +48,12 @@ func (m *cliModel) mergeCLISettingsValues() map[string]string {
 		return values
 	}
 	// Non-LLM settings from GetCurrentValues (theme, language, tiers, etc.)
+	// Skip empty-string values so DefaultValue in the schema can fill correctly.
 	if m.channel.config.GetCurrentValues != nil {
 		for k, v := range m.channel.config.GetCurrentValues() {
-			values[k] = v
+			if v != "" {
+				values[k] = v
+			}
 		}
 	}
 	// Subscription-scoped settings from active subscription.
@@ -64,12 +67,13 @@ func (m *cliModel) mergeCLISettingsValues() map[string]string {
 			values["thinking_mode"] = sub.ThinkingMode
 		}
 	}
-	// User-scoped settings (theme, language, context_mode, etc.) override GetCurrentValues
+	// User-scoped settings override GetCurrentValues.
+	// Skip empty-string values so DefaultValue in the schema can fill correctly.
 	if m.channel.settingsSvc != nil {
 		vals, err := m.channel.settingsSvc.GetSettings(m.channelName, m.senderID)
 		if err == nil {
 			for k, v := range vals {
-				if isUserScopedSettingKey(k) {
+				if v != "" && isUserScopedSettingKey(k) {
 					values[k] = v
 				}
 			}
@@ -81,7 +85,9 @@ func (m *cliModel) mergeCLISettingsValues() map[string]string {
 func (m *cliModel) persistCLISettingsValues(values map[string]string) {
 	if m.channel != nil && m.channel.settingsSvc != nil {
 		for k, v := range values {
-			if isUserScopedSettingKey(k) {
+			// Skip empty values — don't pollute the DB with meaningless entries
+			// that would block DefaultValue from taking effect.
+			if v != "" && isUserScopedSettingKey(k) {
 				_ = m.channel.settingsSvc.SetSetting(m.channelName, m.senderID, k, v)
 			}
 		}
@@ -194,7 +200,10 @@ func (m *cliModel) openSettingsFromQuickSwitch() {
 func (m *cliModel) startAgentTurn() {
 	m.agentTurnID++
 	m.typing = true
-	m.turnCancelled = false // clear any previous cancel flag
+	// Do NOT clear turnCancelled here — it must persist across turn boundaries
+	// to block stale PhaseDone/tool_summary from a cancelled turn. It is cleared
+	// when the new turn's first non-PhaseDone progress arrives (handleProgressMsg)
+	// or by endAgentTurn for the matching turnID (normal cancel completion path).
 
 	// Initialize turnDoneFlags for the new turn.
 	if m.turnDoneFlags == nil {
@@ -340,6 +349,7 @@ func (m *cliModel) endAgentTurn(turnID uint64) {
 	m.invalidateProgressHistoryCache()
 	m.lastSeenIteration = 0
 	m.lastReasoning = ""
+	m.reasoningByIter = nil
 	m.lastThinking = ""
 	m.typingStartTime = time.Time{}
 	m.progress = nil
@@ -458,12 +468,18 @@ func (m *cliModel) flushMessageQueue() {
 	if len(m.messageQueue) == 0 {
 		return
 	}
+	// Only flush messages queued for the current session.
+	// If user queued a message in main session and switched to a SubAgent session,
+	// skip until we're back in the correct session.
 	msg := m.messageQueue[0]
+	if msg.chatID != m.chatID {
+		return // wrong session, wait for the correct one
+	}
 	m.messageQueue = m.messageQueue[1:]
 	m.queueEditing = false
 	m.queueEditBuf = ""
 	// Put message into textarea and trigger send
-	m.textarea.SetValue(msg)
+	m.textarea.SetValue(msg.content)
 	m.sendMessageFromQueue()
 }
 
@@ -500,49 +516,19 @@ func (m *cliModel) applyThemeAndRebuild(theme string) {
 	}
 }
 
-// ensurePanelCursorVisible 确保 panel cursor 行在可见区域内。
-// 编辑/combo 模式下额外滚到底部，确保 inline editor 可见。
+// ensurePanelCursorVisible ensures the panel cursor line is within the visible area.
+// For settings panel: uses precise line calculation with inline overlay awareness.
 func (m *cliModel) ensurePanelCursorVisible() {
-	if len(m.panelSchema) == 0 || m.panelCursor >= len(m.panelSchema) {
-		return
-	}
-	// 编辑或下拉模式：直接滚到内容底部，因为 overlay 在末尾
-	if m.panelEdit || m.panelCombo {
-		m.panelScrollY = 0 // 先重置
-		raw := m.viewPanel()
-		total := strings.Count(raw, "\n") + 1
-		visible := m.panelVisibleHeight()
-		if total > visible {
-			m.panelScrollY = total - visible
+	if m.panelMode == "settings" {
+		extra := 0
+		if m.panelEdit {
+			extra = 3
+		} else if m.panelCombo && m.panelCursor < len(m.panelSchema) {
+			def := m.panelSchema[m.panelCursor]
+			extra = min(len(def.Options), 8) + 1
 		}
+		m.ensureSettingsCursorVisible(extra)
 		return
-	}
-	// 复刻 viewSettingsPanel 的行号计算逻辑。
-	// header = 2 lines (title + divider), each category = 2 lines (\n + title),
-	// each item = 1 line (label + value rendered inline).
-	cursorLn := 2 // header offset
-	lastCat := ""
-	for i, def := range m.panelSchema {
-		if def.Category != lastCat {
-			lastCat = def.Category
-			cursorLn += 2 // 空行 + 分类标题
-		}
-		cursorLn++ // 所有 item 类型都是单行渲染
-		if i == m.panelCursor {
-			break
-		}
-	}
-	visibleH := m.panelVisibleHeight()
-	totalLines := cursorLn + 5 // +5 保证底部有足够空间
-	if totalLines <= visibleH {
-		m.panelScrollY = 0
-		return
-	}
-	if cursorLn >= m.panelScrollY+visibleH {
-		m.panelScrollY = cursorLn - visibleH + 1
-	}
-	if cursorLn < m.panelScrollY {
-		m.panelScrollY = cursorLn
 	}
 }
 
@@ -630,6 +616,54 @@ func (m *cliModel) clampPanelScroll(rawContent string) {
 	}
 	if m.panelScrollY > total-visible {
 		m.panelScrollY = total - visible
+	}
+}
+
+// settingsCursorLine computes the 0-based line number where the current
+// settings panel cursor item starts rendering. This mirrors the layout in
+// viewSettingsPanel: 2 header lines, then per-category (2 lines header) and
+// per-item (1 line). Inline overlays (edit/combo) after items add extra lines.
+func (m *cliModel) settingsCursorLine() int {
+	const headerLines = 2 // title + divider
+	line := headerLines
+	lastCat := ""
+	for i, def := range m.panelSchema {
+		if def.Category != lastCat {
+			lastCat = def.Category
+			line += 2 // blank line + category header
+		}
+		if i == m.panelCursor {
+			return line
+		}
+		line++
+	}
+	return line
+}
+
+// ensureSettingsCursorVisible adjusts panelScrollY so that the cursor item
+// and its inline edit/combo overlay are visible. Call after opening edit/combo
+// or changing cursor. extraLines is the number of additional lines below the
+// cursor item (e.g. edit overlay = 3, combo = min(options, 8) + 1).
+func (m *cliModel) ensureSettingsCursorVisible(extraLines int) {
+	cursorLine := m.settingsCursorLine()
+	visibleH := m.panelVisibleHeight()
+	if visibleH <= 0 {
+		return
+	}
+	// Ensure cursor + overlay fit within the visible area
+	neededBottom := cursorLine + 1 + extraLines // item line + overlay
+	neededTop := cursorLine
+
+	// If overlay extends below visible area, scroll down
+	if neededBottom > m.panelScrollY+visibleH {
+		m.panelScrollY = neededBottom - visibleH
+	}
+	// If cursor is above visible area, scroll up
+	if neededTop < m.panelScrollY {
+		m.panelScrollY = neededTop
+	}
+	if m.panelScrollY < 0 {
+		m.panelScrollY = 0
 	}
 }
 
@@ -1581,4 +1615,91 @@ func (m *cliModel) handlePluginWidgets() tea.Cmd {
 	}
 	m.showSystemMsg(sb.String(), feedbackInfo)
 	return nil
+}
+
+// renderScrollbar generates a vertical scrollbar string for a panel.
+// contentWidth is the available width for the content (excluding scrollbar).
+// visibleH is the number of visible lines.
+// totalLines is the total content lines.
+// scrollY is the current scroll offset.
+// The scrollbar is 1 character wide (█ for thumb, ░ for track, ▒ for gutter).
+func (m *cliModel) renderScrollbar(contentWidth, visibleH, totalLines, scrollY int) string {
+	if totalLines <= visibleH || visibleH <= 0 || totalLines <= 0 {
+		return ""
+	}
+
+	// Thumb size proportional to visible/total ratio
+	thumbH := max(1, visibleH*visibleH/totalLines)
+	if thumbH > visibleH {
+		thumbH = visibleH
+	}
+
+	// Thumb position
+	trackH := visibleH - thumbH
+	maxScroll := totalLines - visibleH
+	var thumbStart int
+	if maxScroll > 0 {
+		thumbStart = scrollY * trackH / maxScroll
+	} else {
+		thumbStart = 0
+	}
+
+	// Build scrollbar characters
+	sb := m.styles.PanelHint // use subtle color
+	thumbStyle := m.styles.PanelDesc
+
+	var lines []string
+	for i := 0; i < visibleH; i++ {
+		if i >= thumbStart && i < thumbStart+thumbH {
+			lines = append(lines, thumbStyle.Render("▐"))
+		} else {
+			lines = append(lines, sb.Render("│"))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// applyScrollbar appends a scrollbar to each line of the panel content.
+// All lines are padded to exactly contentWidth before the scrollbar character,
+// ensuring the scrollbar is vertically aligned regardless of line content.
+func (m *cliModel) applyScrollbar(content string, contentWidth, totalLines, scrollY int) string {
+	if totalLines <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	visibleH := len(lines)
+
+	sbStr := m.renderScrollbar(contentWidth, visibleH, totalLines, scrollY)
+	if sbStr == "" {
+		return content
+	}
+	sbLines := strings.Split(sbStr, "\n")
+
+	var b strings.Builder
+	for i, line := range lines {
+		// Trim line to contentWidth if wider, then pad to exactly contentWidth.
+		// This ensures the scrollbar always appears at the same column.
+		visW := lipgloss.Width(line)
+		if visW > contentWidth {
+			// Line is too wide — truncate visually.
+			// For simplicity, keep the styled string as-is (it will overflow
+			// the scrollbar column, but this is rare and better than panicking).
+			// Remove trailing whitespace to avoid double-scrollbar.
+			line = strings.TrimRight(line, " ")
+			visW = lipgloss.Width(line)
+		}
+		padding := contentWidth - visW
+		if padding < 1 {
+			padding = 1
+		}
+		b.WriteString(line)
+		b.WriteString(strings.Repeat(" ", padding))
+		if i < len(sbLines) {
+			b.WriteString(sbLines[i])
+		}
+		if i < len(lines)-1 {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }

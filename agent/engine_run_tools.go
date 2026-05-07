@@ -83,6 +83,11 @@ func (s *runState) execOneTool(ctx context.Context, entry toolCallEntry, batch *
 				execCtx = WithSubAgentProgress(execCtx, func(detail SubAgentProgressDetail) {
 					s.progressMu.Lock()
 					s.progressLines[pi] = formatSubAgentProgress(detail)
+					// Merge structured SubAgent node — don't replace.
+					// Multiple SubAgents may be running concurrently; each
+					// callback only has one node but we must preserve others.
+					newNode := extractSubAgentNodesFromDetail(detail)
+					s.subAgentNodes = mergeSubAgentNodeList(s.subAgentNodes, newNode)
 					s.progressMu.Unlock()
 					s.notifyProgress("")
 				})

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"xbot/agent/hooks"
@@ -215,9 +216,9 @@ func (a *Agent) buildMainRunConfig(
 	if channel == "web" || channel == "cli" {
 		// Web: no-op notifier — structured progress goes via ProgressEventHandler
 		// Setting ProgressNotifier to non-nil enables autoNotify in engine.Run()
-		cfg.ProgressNotifier = func(lines []string) {}
+		cfg.ProgressNotifier = func(lines []string, _ string) {}
 	} else if autoNotify {
-		cfg.ProgressNotifier = func(lines []string) {
+		cfg.ProgressNotifier = func(lines []string, _ string) {
 			if len(lines) > 0 {
 				_ = a.sendMessage(channel, chatID, lines[0])
 			}
@@ -284,7 +285,9 @@ func (a *Agent) buildMainRunConfig(
 	if !streamDisabled {
 		cfg.Stream = true
 		if a.channelFinder != nil {
-			cfg.StreamContentFunc, cfg.StreamReasoningFunc = a.buildStreamCallbacks(chatID, channel)
+			var progressSeq atomic.Uint64
+			cfg.ProgressSeq = &progressSeq
+			cfg.StreamContentFunc, cfg.StreamReasoningFunc = a.buildStreamCallbacks(chatID, channel, &progressSeq)
 		}
 	}
 
@@ -470,7 +473,7 @@ func (a *Agent) buildSubAgentRunConfig(
 	// Pre-compute parentExtras once (shared between Phase 4 and buildSubAgentMemory)
 	parentExtras := a.buildToolContextExtras(parentCtx.Channel, parentCtx.ChatID)
 
-	// Phase 4: Inject project context from AGENT.md
+	// Phase 4: Inject project context from AGENTS.md
 	// Check resolved workDir first (includes sandbox path), then a.workDir
 	// (host path, needed in remote mode where sandbox clears workDir).
 	if projectCtx := LoadProjectContextFile(workDir); projectCtx != "" {
@@ -478,7 +481,7 @@ func (a *Agent) buildSubAgentRunConfig(
 	} else if projectCtx := LoadProjectContextFile(a.workDir); projectCtx != "" {
 		sysPrompt += projectCtx
 	} else if projectCtx := LoadProjectContextFile(cwd); projectCtx != "" {
-		// Fallback: check CWD if neither workspace root has AGENT.md
+		// Fallback: check CWD if neither workspace root has AGENTS.md
 		sysPrompt += projectCtx
 	}
 
@@ -1151,13 +1154,14 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus
 	// 设置当前层级的 ProgressNotifier
 	if parentCB != nil {
 		// 非顶层：穿透进度到父 agent（由上面的穿透回调处理）
-		cfg.ProgressNotifier = func(lines []string) {
+		cfg.ProgressNotifier = func(lines []string, thinking string) {
 			if len(lines) > 0 {
 				parentCB(SubAgentProgressDetail{
 					Path:     myPath,
 					Lines:    lines,
 					Depth:    myDepth,
 					Instance: instance,
+					Thinking: thinking,
 				})
 			}
 		}
@@ -1166,7 +1170,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus
 		// CLI 模式下由 wireSubAgentCLIProgress 的 StructuredProgress 处理，
 		// 不需要 sendMessage（否则会把工具行渲染成主 session 的 assistant 消息）。
 		rn := roleName
-		cfg.ProgressNotifier = func(lines []string) {
+		cfg.ProgressNotifier = func(lines []string, _ string) {
 			if len(lines) > 0 {
 				last := lines[len(lines)-1]
 				if idx := strings.LastIndex(last, "\n"); idx >= 0 {
@@ -1176,6 +1180,10 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus
 				_ = a.sendMessage(originChannel, originChatID, prefixed)
 			}
 		}
+	} else if originChannel == "cli" {
+		// CLI 渠道 + 无父 callback：设置 dummy notifier 使 autoNotify=true，
+		// 这样 wireSubAgentCLIProgress 设置的 ProgressEventHandler 才会被调用。
+		cfg.ProgressNotifier = func(lines []string, _ string) {}
 	}
 
 	// Register one-shot subagent in interactiveSubAgents so it's visible
@@ -1307,6 +1315,39 @@ func convertWsSubAgentTree(nodes []SubAgentNode) []channelpkg.WsSubAgent {
 }
 
 // convertCLISubAgentTree 将 agent.SubAgentNode 转换为 channelpkg.CLISubAgent 树。
+// resolveSubAgents extracts the SubAgent tree from a ProgressEvent.
+// It prefers the structured SubAgents field (reliable), falling back to
+// text-based ExtractSubAgentTree only if structured data is unavailable.
+func resolveSubAgents(event *ProgressEvent) []channelpkg.CLISubAgent {
+	// Prefer structured data (no fragile text parsing)
+	if event.Structured != nil && len(event.Structured.SubAgents) > 0 {
+		return convertCLISubAgentTree(event.Structured.SubAgents)
+	}
+	// Fallback: text-based parsing for backward compatibility
+	if len(event.Lines) > 0 {
+		subAgents := ExtractSubAgentTree(event.Lines)
+		if len(subAgents) > 0 {
+			return convertCLISubAgentTree(subAgents)
+		}
+	}
+	return nil
+}
+
+// resolveWsSubAgents is the WsSubAgent variant of resolveSubAgents.
+func resolveWsSubAgents(event *ProgressEvent) []channelpkg.WsSubAgent {
+	if event.Structured != nil && len(event.Structured.SubAgents) > 0 {
+		return convertWsSubAgentTree(event.Structured.SubAgents)
+	}
+	if len(event.Lines) > 0 {
+		subAgents := ExtractSubAgentTree(event.Lines)
+		if len(subAgents) > 0 {
+			return convertWsSubAgentTree(subAgents)
+		}
+	}
+	return nil
+}
+
+// convertCLISubAgentTree 将 agent.SubAgentNode 转换为 channelpkg.CLISubAgent 树。
 func convertCLISubAgentTree(nodes []SubAgentNode) []channelpkg.CLISubAgent {
 	if len(nodes) == 0 {
 		return nil
@@ -1364,6 +1405,7 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 			payload := &channelpkg.CLIProgressPayload{
 				ChatID:           progressKey,
 				Phase:            string(s.Phase),
+				Seq:              s.Seq,
 				Iteration:        s.Iteration,
 				Thinking:         s.ThinkingContent,
 				Reasoning:        s.ReasoningContent,
@@ -1395,21 +1437,8 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 					ToolHints: t.ToolHints,
 				})
 			}
-			if len(event.Lines) > 0 {
-				subAgents := ExtractSubAgentTree(event.Lines)
-				if len(subAgents) > 0 {
-					cliSubAgents := make([]channelpkg.CLISubAgent, len(subAgents))
-					for i, sa := range subAgents {
-						cliSubAgents[i] = channelpkg.CLISubAgent{
-							Role:     sa.Role,
-							Instance: sa.Instance,
-							Status:   sa.Status,
-							Desc:     sa.Desc,
-							Children: convertCLISubAgentTree(sa.Children),
-						}
-					}
-					payload.SubAgents = cliSubAgents
-				}
+			if cliSubAgents := resolveSubAgents(event); len(cliSubAgents) > 0 {
+				payload.SubAgents = cliSubAgents
 			}
 			if len(s.Todos) > 0 {
 				payload.Todos = make([]channelpkg.CLITodoItem, len(s.Todos))
@@ -1436,6 +1465,7 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 		if remoteCLICh != nil {
 			payload := &channelpkg.WsProgressPayload{
 				ChatID:           progressKey,
+				Seq:              s.Seq,
 				Phase:            string(s.Phase),
 				Iteration:        s.Iteration,
 				Thinking:         s.ThinkingContent,
@@ -1468,15 +1498,8 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 					Iteration: t.Iteration,
 				})
 			}
-			if len(event.Lines) > 0 {
-				subAgents := ExtractSubAgentTree(event.Lines)
-				if len(subAgents) > 0 {
-					wsSubAgents := make([]channelpkg.WsSubAgent, len(subAgents))
-					for i, sa := range subAgents {
-						wsSubAgents[i] = channelpkg.WsSubAgent{Role: sa.Role, Instance: sa.Instance, Status: sa.Status, Desc: sa.Desc, Children: convertWsSubAgentTree(sa.Children)}
-					}
-					payload.SubAgents = wsSubAgents
-				}
+			if wsSubAgents := resolveWsSubAgents(event); len(wsSubAgents) > 0 {
+				payload.SubAgents = wsSubAgents
 			}
 			if len(s.Todos) > 0 {
 				payload.Todos = make([]channelpkg.WsTodoItem, len(s.Todos))
@@ -1499,6 +1522,7 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 			// because only the local cliCh path stored snapshots.
 			cliPayload := &channelpkg.CLIProgressPayload{
 				ChatID:           progressKey,
+				Seq:              s.Seq,
 				Phase:            string(s.Phase),
 				Iteration:        s.Iteration,
 				Thinking:         s.ThinkingContent,
@@ -1517,21 +1541,8 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 					Elapsed: t.Elapsed.Milliseconds(), Iteration: t.Iteration, Summary: t.Summary, Detail: t.Detail, Args: t.Args, ToolHints: t.ToolHints,
 				})
 			}
-			if len(event.Lines) > 0 {
-				subAgents := ExtractSubAgentTree(event.Lines)
-				if len(subAgents) > 0 {
-					cliSubAgents := make([]channelpkg.CLISubAgent, len(subAgents))
-					for i, sa := range subAgents {
-						cliSubAgents[i] = channelpkg.CLISubAgent{
-							Role:     sa.Role,
-							Instance: sa.Instance,
-							Status:   sa.Status,
-							Desc:     sa.Desc,
-							Children: convertCLISubAgentTree(sa.Children),
-						}
-					}
-					cliPayload.SubAgents = cliSubAgents
-				}
+			if cliSubAgents := resolveSubAgents(event); len(cliSubAgents) > 0 {
+				cliPayload.SubAgents = cliSubAgents
 			}
 			if len(s.Todos) > 0 {
 				cliPayload.Todos = make([]channelpkg.CLITodoItem, len(s.Todos))
@@ -1587,6 +1598,7 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 		payload := &channelpkg.WsProgressPayload{
 			ChatID:           progressKey,
 			Phase:            string(s.Phase),
+			Seq:              s.Seq,
 			Iteration:        s.Iteration,
 			Thinking:         s.ThinkingContent,
 			Reasoning:        s.ReasoningContent,
@@ -1618,22 +1630,9 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 				Iteration: t.Iteration,
 			})
 		}
-		// Parse sub-agent tree from progress lines
-		if len(event.Lines) > 0 {
-			subAgents := ExtractSubAgentTree(event.Lines)
-			if len(subAgents) > 0 {
-				wsSubAgents := make([]channelpkg.WsSubAgent, len(subAgents))
-				for i, sa := range subAgents {
-					wsSubAgents[i] = channelpkg.WsSubAgent{
-						Role:     sa.Role,
-						Instance: sa.Instance,
-						Status:   sa.Status,
-						Desc:     sa.Desc,
-						Children: convertWsSubAgentTree(sa.Children),
-					}
-				}
-				payload.SubAgents = wsSubAgents
-			}
+		// Resolve sub-agent tree (structured data preferred over text parsing)
+		if wsSubAgents := resolveWsSubAgents(event); len(wsSubAgents) > 0 {
+			payload.SubAgents = wsSubAgents
 		}
 		// Copy todo items for web display
 		if len(s.Todos) > 0 {
@@ -1674,7 +1673,7 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 // buildStreamCallbacks resolves CLI and Web channels and returns stream content
 // and reasoning stream callbacks. Returns nil, nil if streaming is disabled or
 // no channels are available.
-func (a *Agent) buildStreamCallbacks(chatID, channel string) (streamContentFunc func(string), streamReasoningFunc func(string)) {
+func (a *Agent) buildStreamCallbacks(chatID, channel string, progressSeq *atomic.Uint64) (streamContentFunc func(string), streamReasoningFunc func(string)) {
 	var cliCh *channelpkg.CLIChannel
 	var remoteCLICh *channelpkg.RemoteCLIChannel
 	if ch, ok := a.channelFinder("cli"); ok {
@@ -1692,8 +1691,9 @@ func (a *Agent) buildStreamCallbacks(chatID, channel string) (streamContentFunc 
 	}
 
 	streamContentFunc = func(content string) {
+		seq := progressSeq.Add(1)
 		if cliCh != nil {
-			cliCh.SendProgress(chatID, &channelpkg.CLIProgressPayload{ChatID: sessionKey(channel, chatID), StreamContent: content})
+			cliCh.SendProgress(chatID, &channelpkg.CLIProgressPayload{ChatID: sessionKey(channel, chatID), Seq: seq, StreamContent: content})
 		}
 		if remoteCLICh != nil {
 			remoteCLICh.SendStreamContent(chatID, content, "")
@@ -1703,8 +1703,9 @@ func (a *Agent) buildStreamCallbacks(chatID, channel string) (streamContentFunc 
 		}
 	}
 	streamReasoningFunc = func(content string) {
+		seq := progressSeq.Add(1)
 		if cliCh != nil {
-			cliCh.SendProgress(chatID, &channelpkg.CLIProgressPayload{ChatID: sessionKey(channel, chatID), ReasoningStreamContent: content})
+			cliCh.SendProgress(chatID, &channelpkg.CLIProgressPayload{ChatID: sessionKey(channel, chatID), Seq: seq, ReasoningStreamContent: content})
 		}
 		if remoteCLICh != nil {
 			remoteCLICh.SendStreamContent(chatID, "", content)

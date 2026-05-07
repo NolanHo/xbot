@@ -5,6 +5,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"encoding/json"
 	"fmt"
+
+	// Markdown rendering for assistant messages
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/x/ansi"
@@ -198,7 +200,7 @@ func newGlamourRenderer(wrapWidth int) *glamour.TermRenderer {
 
 // cliCommands 已知命令列表（用于 Tab 补全，§8）
 var cliCommands = []string{
-	"/cancel", "/channel", "/chat", "/clear", "/commands", "/compact", "/context", "/exit",
+	"/cancel", "/channel", "/chat", "/clear", "/commands", "/compress", "/context", "/exit",
 	"/help", "/model", "/models", "/new", "/palette", "/plugin", "/quit", "/rewind", "/search",
 	"/sessions", "/settings", "/setup", "/ss", "/su", "/tasks", "/update",
 	"/usage", "/user",
@@ -238,6 +240,7 @@ const (
 // CLIProgressPayload 结构化进度消息负载（对应 agent.StructuredProgress）。
 type CLIProgressPayload struct {
 	ChatID                 string // session key for routing — CLI filters by m.chatID
+	Seq                    uint64 // monotonic sequence number — linear consistency guarantee
 	Phase                  string
 	Iteration              int
 	ActiveTools            []CLIToolProgress

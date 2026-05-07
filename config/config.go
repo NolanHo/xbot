@@ -182,6 +182,10 @@ type Config struct {
 	Subscriptions []SubscriptionConfig `json:"subscriptions,omitempty"`
 	CLI           CLIConfig            `json:"cli,omitempty"`
 	Plugins       PluginConfig         `json:"plugins,omitempty"`
+
+	// hasPluginsKey is true when the JSON file contained a "plugins" key.
+	// Used by Load() to set the default (enabled=true when absent).
+	hasPluginsKey bool `json:"-"`
 }
 
 // PluginConfig configures the plugin system.
@@ -327,6 +331,11 @@ func LoadFromFile(path string) *Config {
 		slog.Warn("failed to parse config file, ignoring", "path", path, "error", err)
 		return nil
 	}
+	// Detect whether the "plugins" key exists in the JSON so Load() can set
+	// the default. We check here (instead of in Load) to avoid re-reading the file.
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(data, &raw)
+	cfg.hasPluginsKey = raw != nil && string(raw["plugins"]) != ""
 	return &cfg
 }
 
@@ -869,6 +878,11 @@ func Load() *Config {
 	}
 	if cfg.Agent.MaxContextTokens == 0 {
 		cfg.Agent.MaxContextTokens = 200000
+	}
+	// Plugin system defaults to enabled when config file has no "plugins" section.
+	// When the section exists (even as {}), respect the user's explicit setting.
+	if !cfg.hasPluginsKey {
+		cfg.Plugins.Enabled = true
 	}
 	if cfg.Agent.CompressionThreshold == 0 {
 		cfg.Agent.CompressionThreshold = 0.9

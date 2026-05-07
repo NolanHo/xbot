@@ -25,6 +25,7 @@ func (e *ProgressEvent) FullText() string {
 
 // StructuredProgress 结构化进度信息，描述 Agent 当前状态。
 type StructuredProgress struct {
+	Seq              uint64 // monotonic sequence number per Run — linear consistency guarantee
 	Phase            ProgressPhase
 	Iteration        int
 	ActiveTools      []ToolProgress
@@ -37,6 +38,10 @@ type StructuredProgress struct {
 	// HistoryCompacted is set to true after context compression completes.
 	// CLI uses this to rebuild its message list from session storage.
 	HistoryCompacted bool
+
+	// SubAgents carries the structured SubAgent tree directly, avoiding
+	// the fragile text-based parsing in ExtractSubAgentTree.
+	SubAgents []SubAgentNode
 }
 
 // ProgressPhase Agent 运行阶段。
@@ -96,6 +101,7 @@ type SubAgentProgressDetail struct {
 	Lines    []string // 进度内容（所有行，已清理换行）
 	Depth    int      // 嵌套深度（0 = 直接子 Agent）
 	Instance string   // 子 Agent 实例 ID（用于区分同 role 的不同实例）
+	Thinking string   // 当前迭代的 assistant thinking/content（用于进度树描述）
 }
 
 // --- 辅助函数 ---
@@ -372,6 +378,12 @@ func isPlausibleAgentRole(name string) bool {
 	// ASCII 小写开头 → 角色名（如 "explore", "crown-prince"）
 	// 但需排除含空格的句子
 	if strings.Contains(name, " ") {
+		return false
+	}
+	// 含下划线且不含连字符 → 工具名（如 "offload_recall", "mcp_go-debugger_attach"）
+	// SubAgent 角色名使用连字符而非下划线（如 "crown-prince", "ministry-works"）。
+	// 但 "test-agent_v2" 这样的 role+instance 格式允许。
+	if strings.Contains(name, "_") && !strings.Contains(name, "-") {
 		return false
 	}
 	return true
@@ -726,6 +738,97 @@ func renderChildrenTree(children []childAgentStatus, baseIndent string, currentD
 		}
 	}
 	return lines
+}
+
+// extractSubAgentNodesFromDetail builds structured SubAgentNode trees directly
+// from SubAgentProgressDetail, without relying on text-based parsing.
+// This replaces the fragile ExtractSubAgentTree that parses progress text lines.
+func extractSubAgentNodesFromDetail(detail SubAgentProgressDetail) []SubAgentNode {
+	roleName := extractRoleName(detail.Path)
+
+	flat := flattenLines(detail.Lines)
+	_, children := extractOwnAndChildProgress(flat)
+
+	// Status:穿透回调只在 SubAgent 运行期间触发（完成后不再调用），
+	// 所以状态始终为 "running"。绝不能从 ownLine 推断 "done" ——
+	// ownLine 是 SubAgent 内部的 progressLines，工具完成后包含 ✅ 前缀，
+	// 会被 CLI renderSubAgentTree 跳过导致进度树消失。
+	status := "running"
+
+	// Description:优先使用 thinking content（LLM 迭代的实际输出），
+	// 这比工具行名称更能反映 SubAgent 当前在做什么。
+	desc := ""
+	if detail.Thinking != "" {
+		desc = detail.Thinking
+		if r := []rune(desc); len(r) > 80 {
+			desc = string(r[:80]) + "…"
+		}
+	}
+	if desc == "" {
+		// Fallback:从 progressLines 提取最新活动行（跳过 ✅/❌ 和 💭 占位行）。
+		// 如果所有行都是完成的工具或思考占位，desc 保持空，
+		// 让 mergeSubAgentTrees 保留上一条有意义的描述。
+		ownLine := ""
+		for i := len(flat) - 1; i >= 0; i-- {
+			line := flat[i]
+			if strings.HasPrefix(line, "> ✅") || strings.HasPrefix(line, "✅") ||
+				strings.HasPrefix(line, "> ❌") || strings.HasPrefix(line, "❌") ||
+				strings.HasPrefix(line, "💭") || strings.HasPrefix(line, "> 💭") {
+				continue
+			}
+			ownLine = line
+			break
+		}
+		if ownLine != "" {
+			ownLine = strings.TrimPrefix(ownLine, "> ")
+			if len(ownLine) > 80 {
+				desc = string([]rune(ownLine)[:80]) + "…"
+			} else {
+				desc = ownLine
+			}
+		}
+	}
+
+	node := SubAgentNode{
+		Role:     roleName,
+		Instance: detail.Instance,
+		Status:   status,
+		Desc:     desc,
+	}
+	if len(children) > 0 {
+		node.Children = convertChildTree(children)
+	}
+	return []SubAgentNode{node}
+}
+
+// mergeSubAgentNodeList merges new nodes into existing list by Role+Instance key.
+// Existing nodes with matching key are updated; new nodes are appended.
+// Nodes not present in new list are preserved (they belong to other SubAgents).
+func mergeSubAgentNodeList(existing, incoming []SubAgentNode) []SubAgentNode {
+	if len(existing) == 0 {
+		return incoming
+	}
+	// Build key set of incoming nodes
+	incomingByKey := make(map[string]SubAgentNode)
+	for _, n := range incoming {
+		key := n.Role + "/" + n.Instance
+		incomingByKey[key] = n
+	}
+	// Update existing nodes that match
+	result := make([]SubAgentNode, len(existing))
+	copy(result, existing)
+	for i, n := range result {
+		key := n.Role + "/" + n.Instance
+		if updated, ok := incomingByKey[key]; ok {
+			result[i] = updated
+			delete(incomingByKey, key)
+		}
+	}
+	// Append truly new nodes
+	for _, n := range incomingByKey {
+		result = append(result, n)
+	}
+	return result
 }
 
 // --- 主格式化函数 ---

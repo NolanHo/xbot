@@ -63,12 +63,10 @@ func (m *cliModel) renderTitleBar() string {
 		titleRight = ""
 	}
 	titlePad := m.width - lipgloss.Width(titleLeft) - lipgloss.Width(titleRight)
-	if titlePad < 3 {
-		titlePad = 3
+	if titlePad < 1 {
+		titlePad = 1
 	}
-	// Diagonal fill between left and right sections
-	diagPad := m.styles.DimGuideSt.Render(strings.Repeat("╱", titlePad))
-	return m.styles.TitleBar.Render(titleLeft + diagPad + titleRight)
+	return m.styles.TitleBar.Render(titleLeft + strings.Repeat(" ", titlePad) + titleRight)
 }
 
 // renderInputArea renders the textarea input box with dynamic border color
@@ -171,7 +169,7 @@ func (m *cliModel) layoutSearch(titleBar, input string) string {
 }
 
 // layoutAskUser renders the askuser panel layout: title bar, viewport,
-// scrollable ask panel with progress indicator.
+// scrollable ask panel with progress indicator and optional scrollbar.
 func (m *cliModel) layoutAskUser(titleBar string) string {
 	askRaw := m.viewAskUserPanel()
 	m.clampAskUserPanelScroll(askRaw)
@@ -183,44 +181,62 @@ func (m *cliModel) layoutAskUser(titleBar string) string {
 	if askVisibleH < 3 {
 		askVisibleH = 3
 	}
-	if m.askPanelScrollY+askVisibleH > len(askLines) {
-		m.askPanelScrollY = max(0, len(askLines)-askVisibleH)
+	totalAskLines := len(askLines)
+	if m.askPanelScrollY+askVisibleH > totalAskLines {
+		m.askPanelScrollY = max(0, totalAskLines-askVisibleH)
 	}
 	end := m.askPanelScrollY + askVisibleH
-	if end > len(askLines) {
-		end = len(askLines)
+	if end > totalAskLines {
+		end = totalAskLines
 	}
 	visibleAsk := askLines[m.askPanelScrollY:end]
 	askContent := strings.Join(visibleAsk, "\n")
+	// Append scrollbar when content overflows
+	if totalAskLines > askVisibleH && askVisibleH > 0 {
+		contentWidth := m.width - 4 - 2 // PanelBox border(2) + padding(2) - scrollbar(2)
+		if contentWidth < 10 {
+			contentWidth = 10
+		}
+		askContent = m.applyScrollbar(askContent, contentWidth, totalAskLines, m.askPanelScrollY)
+	}
 	boxedAsk := m.styles.PanelBox.Render(askContent)
-	// Scroll indicator
+	// Scroll indicator — mouse wheel or ↑↓ at edges scrolls content
 	scrollHint := ""
-	totalAskLines := len(askLines)
 	if totalAskLines > askVisibleH {
 		pct := (m.askPanelScrollY + askVisibleH) * 100 / totalAskLines
-		scrollHint = m.styles.PanelDesc.Render(fmt.Sprintf(" [%d%%] Ctrl+↑↓/PgUp/PgDn", pct))
+		scrollHint = m.styles.PanelDesc.Render(fmt.Sprintf(" [%d%%] ↕ scroll", pct))
 	}
 	return fmt.Sprintf("%s\n%s\n%s%s",
 		titleBar, m.viewport.View(), boxedAsk, scrollHint)
 }
 
 // layoutPanel renders the generic panel-mode layout: title bar, scrollable
-// panel content in a bordered box, and panel footer.
+// panel content in a bordered box with optional scrollbar, and panel footer.
 func (m *cliModel) layoutPanel(titleBar string) string {
 	panelFooter := m.renderFooter()
 	rawContent := m.viewPanel()
 	m.clampPanelScroll(rawContent)
 	rawLines := strings.Split(rawContent, "\n")
 	visibleH := m.panelVisibleHeight()
-	if m.panelScrollY+visibleH > len(rawLines) {
-		m.panelScrollY = max(0, len(rawLines)-visibleH)
+	totalLines := len(rawLines)
+	if m.panelScrollY+visibleH > totalLines {
+		m.panelScrollY = max(0, totalLines-visibleH)
 	}
 	end := m.panelScrollY + visibleH
-	if end > len(rawLines) {
-		end = len(rawLines)
+	if end > totalLines {
+		end = totalLines
 	}
 	visible := rawLines[m.panelScrollY:end]
 	panelContent := strings.Join(visible, "\n")
+	// Append scrollbar when content overflows
+	if totalLines > visibleH && visibleH > 0 {
+		// contentWidth: PanelBox inner width minus border(2) minus padding(2)
+		contentWidth := m.width - 4 - 2 // -2 for scrollbar + spacing
+		if contentWidth < 10 {
+			contentWidth = 10
+		}
+		panelContent = m.applyScrollbar(panelContent, contentWidth, totalLines, m.panelScrollY)
+	}
 	boxedContent := m.styles.PanelBox.Render(panelContent)
 	return fmt.Sprintf("%s\n%s%s",
 		titleBar, boxedContent, panelFooter)
@@ -362,6 +378,9 @@ func (m *cliModel) resolveWidgetZone(zone string) string {
 
 // View renders the CLI interface.
 func (m *cliModel) View() tea.View {
+	// Reset mouse zones for this frame
+	m.mouseZones.reset()
+
 	// Splash screen
 	if !m.splashDone {
 		v := tea.NewView(m.renderSplash())
@@ -393,27 +412,35 @@ func (m *cliModel) View() tea.View {
 	borderColor, completionsHint := m.renderCompletionsHint(m.textarea.Value())
 	input := m.renderInputArea(borderColor)
 
-	// Layout selection
+	// Layout selection + zone tracking
 	var content string
 	switch {
 	case m.searchMode:
 		content = m.layoutSearch(titleBar, input)
+		m.trackMainLayoutZones(&m.mouseZones)
 	case m.panelMode == "askuser":
 		content = m.layoutAskUser(titleBar)
+		m.trackAskUserZones(&m.mouseZones)
 	case m.panelMode != "":
 		content = m.layoutPanel(titleBar)
+		m.trackPanelZones(&m.mouseZones)
 	default:
 		content = m.layoutMain(titleBar, input, completionsHint)
+		m.trackMainLayoutZones(&m.mouseZones)
 	}
 
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 
 	// Command palette overlay (highest priority — hides everything)
 	if m.paletteOpen {
 		if overlay := m.viewCommandPalette(m.width, m.height); overlay != "" {
 			v.Content = overlay
 		}
+		// Re-track zones for overlay
+		m.mouseZones.reset()
+		m.trackOverlayZones(&m.mouseZones)
 		return v
 	}
 
@@ -422,6 +449,8 @@ func (m *cliModel) View() tea.View {
 		if overlay := m.viewQuickSwitch(m.width, m.height); overlay != "" {
 			v.Content = overlay
 		}
+		m.mouseZones.reset()
+		m.trackOverlayZones(&m.mouseZones)
 	}
 
 	// Rewind overlay
@@ -429,6 +458,8 @@ func (m *cliModel) View() tea.View {
 		if overlay := m.viewRewindPanel(m.width, m.height); overlay != "" {
 			v.Content = overlay
 		}
+		m.mouseZones.reset()
+		m.trackOverlayZones(&m.mouseZones)
 	}
 
 	return v
@@ -560,9 +591,7 @@ func (m *cliModel) renderTodoBar() string {
 
 // titleText 生成标题栏文字。
 func (m *cliModel) titleText() string {
-	// Gradient "xbot" wordmark — gradient from Accent to Gradient colors
-	gradientXbot := gradientWordmark("xbot", currentTheme.Accent, currentTheme.Gradient)
-	modeLabel := gradientXbot
+	modeLabel := "xbot"
 	if m.remoteMode {
 		host := m.remoteServerURL
 		// Strip scheme for display: "ws://host:port" → "host:port"
@@ -582,9 +611,9 @@ func (m *cliModel) titleText() string {
 			cloud = IconCloudOn
 		}
 		if host != "" {
-			modeLabel = fmt.Sprintf("%s %s %s", cloud, gradientXbot, host)
+			modeLabel = fmt.Sprintf("%s xbot %s", cloud, host)
 		} else {
-			modeLabel = fmt.Sprintf("%s %s remote", cloud, gradientXbot)
+			modeLabel = fmt.Sprintf("%s xbot remote", cloud)
 		}
 	}
 	if m.workDir != "" {
@@ -605,9 +634,9 @@ func (m *cliModel) titleText() string {
 // displayed in the header bar so they're always visible regardless of scroll.
 // Keep it short — header width is limited and line wrap looks terrible.
 func (m *cliModel) askUserTitleHints() string {
-	hints := []string{"Shift+↑↓ history", "Ctrl+↑↓ question", "Enter submit", "Esc cancel"}
+	hints := []string{"↑↓ select", "Space check", "Enter submit", "Esc cancel"}
 	if len(m.panelItems) > 1 {
-		hints = append([]string{"←→/Tab switch"}, hints...)
+		hints = append([]string{"←→ switch"}, hints...)
 	}
 	return strings.Join(hints, " · ")
 }
@@ -793,6 +822,10 @@ func (m *cliModel) renderFooter() string {
 
 	if m.panelMode != "" {
 		// 面板打开时：显示面板相关快捷键
+		escLabel := m.locale.FooterClose
+		if len(m.panelStack) > 0 {
+			escLabel = m.locale.FooterBack
+		}
 		switch m.panelMode {
 		case "bgtasks":
 			if m.panelBgViewing {
@@ -802,8 +835,16 @@ func (m *cliModel) renderFooter() string {
 			}
 		case "approval":
 			hints = append(hints, m.keyHint("←→", m.locale.FooterNavigate), m.keyHint("y/n", "Quick"), m.keyHint("Enter", m.locale.FooterSelect), m.keyHint("Esc", "Deny"))
+		case "settings":
+			hints = append(hints, m.keyHint("↑↓", m.locale.FooterNavigate), m.ctrlKey("s", "Save"), m.keyHint("Esc", escLabel))
+		case "askuser":
+			hints = append(hints, m.keyHint("↑↓", m.locale.FooterNavigate), m.keyHint("Space", "Check"), m.keyHint("Enter", m.locale.FooterSelect), m.keyHint("Esc", m.locale.FooterClose))
+		case "danger":
+			hints = append(hints, m.keyHint("↑↓", m.locale.FooterNavigate), m.keyHint("Enter", "Confirm"), m.keyHint("Esc", escLabel))
+		case "runner":
+			hints = append(hints, m.keyHint("↑↓", "Field"), m.keyHint("Enter", "Connect"), m.keyHint("Esc", escLabel))
 		default:
-			hints = append(hints, m.keyHint("↑↓", m.locale.FooterNavigate), m.keyHint("Enter", m.locale.FooterSelect), m.keyHint("Esc", m.locale.FooterClose))
+			hints = append(hints, m.keyHint("↑↓", m.locale.FooterNavigate), m.keyHint("Enter", m.locale.FooterSelect), m.keyHint("Esc", escLabel))
 		}
 	} else if m.typing {
 		// 处理中：显示取消快捷键

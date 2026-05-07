@@ -286,9 +286,10 @@ func (m *cliModel) carryForwardProgressState(prev *CLIProgressPayload) {
 		// completion status for agents no longer reported by the server.
 		m.progress.SubAgents = mergeSubAgentTrees(prev.SubAgents, m.progress.SubAgents)
 	} else if len(prev.SubAgents) > 0 {
-		// No new SubAgent data — carry forward previous tree as-is.
-		// This is the common case between SubAgent progress updates.
-		m.progress.SubAgents = prev.SubAgents
+		// No new SubAgent data — carry forward previous tree, but filter out
+		// agents that were already done in prev. Done agents have already been
+		// displayed to the user and should not linger across subsequent updates.
+		m.progress.SubAgents = pruneDoneSubAgents(prev.SubAgents)
 	}
 }
 
@@ -315,6 +316,23 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 
 	turnID := m.agentTurnID // capture before any mutation
 	prev := m.progress
+
+	// Seq monotonic check: discard out-of-order or duplicate progress events.
+	// Placed after ChatID filtering, before any state mutation.
+	if msg.payload != nil && msg.payload.Seq > 0 {
+		if msg.payload.Seq <= m.lastProgressSeq {
+			return
+		}
+		m.lastProgressSeq = msg.payload.Seq
+	}
+
+	// New turn's first non-PhaseDone progress clears the cancel flag.
+	// This allows the new turn (started by bg notification injection or queue flush)
+	// to receive progress events, while still blocking stale progress from the
+	// cancelled turn. Guard: only clear when typing (turn is active).
+	if m.turnCancelled && msg.payload != nil && msg.payload.Phase != "done" && msg.payload.Phase != "" && m.typing {
+		m.turnCancelled = false
+	}
 
 	// Guard: ignore progress after explicit Ctrl+C cancel.
 	// PhaseDone is allowed through: it's idempotent (endAgentTurn checks turnID).
@@ -350,12 +368,6 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 			if msg.payload.ReasoningStreamContent != "" {
 				m.progress.ReasoningStreamContent = msg.payload.ReasoningStreamContent
 			}
-			// If reasoning is arriving and the current iteration has already
-			// been snapshotted (completed), this reasoning belongs to a new
-			// iteration that hasn't received a structured progress update yet.
-			// Advance the iteration number so reasoning isn't attributed to
-			// the wrong iteration snapshot.
-			m.advanceIterationForReasoning(m.progress)
 		} else if m.typing {
 			// Turn started but no structured progress yet — create minimal payload
 			m.progress = msg.payload
@@ -384,11 +396,6 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 
 	m.carryForwardProgressState(prev)
 
-	// After TUI restart, the restored progress may have reasoning content
-	// that belongs to a new iteration (beyond the last completed snapshot).
-	// Advance the iteration number so reasoning is displayed correctly.
-	m.advanceIterationForReasoning(m.progress)
-
 	// Update bg task count from callback
 	if m.bgTaskCountFn != nil {
 		m.bgTaskCount = m.bgTaskCountFn()
@@ -416,6 +423,14 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 		m.syncProgressTodos(msg.payload)
 		// Detect iteration change and snapshot previous iteration
 		m.snapshotIterationChange(msg.payload, prev)
+
+		// Record per-iteration reasoning from structured progress.
+		if m.progress != nil && m.progress.Reasoning != "" && m.progress.Iteration >= 0 {
+			if m.reasoningByIter == nil {
+				m.reasoningByIter = make(map[int]string)
+			}
+			m.reasoningByIter[m.progress.Iteration] = m.progress.Reasoning
+		}
 
 		// §2 工具可视化：快照 CompletedTools 到独立字段
 		// Accept all completed tools regardless of their Iteration field — they
@@ -478,7 +493,10 @@ func (m *cliModel) snapshotIterationChange(payload *CLIProgressPayload, prev *CL
 		}
 		prevReasoning := prev.Reasoning
 		if prevReasoning == "" {
-			prevReasoning = m.lastReasoning
+			prevReasoning = m.reasoningByIter[m.lastSeenIteration]
+		}
+		if prevReasoning == "" {
+			prevReasoning = prev.ReasoningStreamContent
 		}
 		if len(prevIterTools) > 0 || prev.Thinking != "" || prevReasoning != "" {
 			snap := cliIterationSnapshot{
@@ -496,82 +514,83 @@ func (m *cliModel) snapshotIterationChange(payload *CLIProgressPayload, prev *CL
 	}
 }
 
-// advanceIterationForReasoning advances the iteration number in a progress
-// payload if reasoning content exists but the iteration matches a completed
-// snapshot. This prevents reasoning stream content from being attributed to
-// the wrong iteration (e.g. after TUI restart, or when the agent starts
-// reasoning for a new iteration before sending the first structured update).
-//
-// When advancing, it also snapshots the current iteration into iterationHistory
-// so that snapshotIterationChange won't miss it when the next structured
-// progress arrives.
-func (m *cliModel) advanceIterationForReasoning(progress *CLIProgressPayload) {
-	if progress == nil || progress.ReasoningStreamContent == "" {
-		return
-	}
-	// Case 1: iteration history has a snapshot matching the current iteration.
-	// The reasoning must belong to a new (not-yet-structured) iteration.
-	if len(m.iterationHistory) > 0 {
-		lastSnap := m.iterationHistory[len(m.iterationHistory)-1]
-		if lastSnap.Iteration == progress.Iteration {
-			m.snapshotAndAdvance(progress)
-			return
-		}
-	}
-	// Case 2: no iteration history (snapshotIterationChange hasn't fired yet),
-	// but the current progress already has static Reasoning from a completed
-	// iteration (set by recordAssistantMsg's structured progress). New stream
-	// content that differs from this static Reasoning must be the next iteration.
-	// This handles the common 0→1 transition where iter 0 was never snapshotted
-	// because snapshotIterationChange requires Iteration > lastSeenIteration.
-	if progress.Reasoning != "" && progress.ReasoningStreamContent != progress.Reasoning {
-		m.snapshotAndAdvance(progress)
-		return
-	}
-}
-
-// snapshotAndAdvance creates a snapshot of the current iteration and advances
-// the iteration counter. Used by advanceIterationForReasoning to ensure the
-// completed iteration is recorded before the counter moves forward.
-func (m *cliModel) snapshotAndAdvance(progress *CLIProgressPayload) {
-	oldIter := m.lastSeenIteration
-	// Dedup: if iterationHistory already has a snapshot for oldIter, skip.
-	for _, s := range m.iterationHistory {
-		if s.Iteration == oldIter {
-			// Already snapshotted — just advance the counter.
-			progress.Iteration = oldIter + 1
-			m.lastSeenIteration = progress.Iteration
-			m.iterationStartTime = time.Now()
-			return
-		}
-	}
-	reasoning := progress.Reasoning
-	if reasoning == "" {
-		reasoning = m.lastReasoning
-	}
-	snap := cliIterationSnapshot{
-		Iteration:   oldIter,
-		Reasoning:   reasoning,
-		Thinking:    m.lastThinking,
-		ElapsedWall: time.Since(m.iterationStartTime).Milliseconds(),
-	}
-	// Include tools from the completed iteration if available.
-	for _, t := range m.lastCompletedTools {
-		if t.Iteration == oldIter {
-			snap.Tools = append(snap.Tools, t)
-		}
-	}
-	if len(snap.Tools) > 0 || snap.Reasoning != "" || snap.Thinking != "" {
-		m.iterationHistory = append(m.iterationHistory, snap)
-	}
-	progress.Iteration = oldIter + 1
-	m.lastSeenIteration = progress.Iteration
-	m.iterationStartTime = time.Now()
-}
-
 // handleProgressDone handles the Phase "done" case: snapshots the final iteration,
 // generates tool summary, resets iteration tracking state, and synthesizes agent messages.
 func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPayload, turnID uint64) {
+	// When turn was cancelled (Ctrl+C), still generate tool_summary from
+	// accumulated iterationHistory so tool records survive rewind operations.
+	// Without this, cancelled turns lose their tool records because iterationHistory
+	// is cleared by endAgentTurn, and no tool_summary message exists in m.messages.
+	// (Restarting the client restores them via ConvertMessagesToHistory from DB,
+	// proving the data is valid — we just need to persist it in-memory too.)
+	if m.turnCancelled {
+		// Snapshot the final iteration (same logic as the non-cancelled path below).
+		// This is needed because snapshotIterationChange only fires on iteration
+		// *changes* (N→N+1), so a single-iteration turn won't have any snapshots yet.
+		if m.lastSeenIteration >= 0 {
+			alreadySnapped := slices.ContainsFunc(m.iterationHistory, func(s cliIterationSnapshot) bool {
+				return s.Iteration == m.lastSeenIteration
+			})
+			if !alreadySnapped {
+				var finalTools []CLIToolProgress
+				finalTools = append(finalTools, msg.payload.CompletedTools...)
+				for _, t := range msg.payload.ActiveTools {
+					if t.Status == "done" || t.Status == "error" {
+						if !slices.ContainsFunc(finalTools, func(existing CLIToolProgress) bool {
+							return existing.Name == t.Name && existing.Label == t.Label
+						}) {
+							finalTools = append(finalTools, t)
+						}
+					}
+				}
+				for _, t := range m.lastCompletedTools {
+					if !slices.ContainsFunc(finalTools, func(existing CLIToolProgress) bool {
+						return existing.Name == t.Name && existing.Label == t.Label
+					}) {
+						finalTools = append(finalTools, t)
+					}
+				}
+				snap := cliIterationSnapshot{
+					Iteration:   m.lastSeenIteration,
+					Thinking:    msg.payload.Thinking,
+					Tools:       finalTools,
+					ElapsedWall: time.Since(m.iterationStartTime).Milliseconds(),
+				}
+				if m.reasoningByIter != nil {
+					snap.Reasoning = m.reasoningByIter[m.lastSeenIteration]
+				}
+				if snap.Reasoning == "" {
+					snap.Reasoning = m.lastReasoning
+				}
+				if snap.Reasoning == "" {
+					snap.Reasoning = msg.payload.Reasoning
+				}
+				if len(finalTools) > 0 || snap.Thinking != "" || snap.Reasoning != "" {
+					m.iterationHistory = append(m.iterationHistory, snap)
+				}
+			}
+		}
+		if len(m.iterationHistory) > 0 {
+			toolSummaryMsg := cliMessage{
+				role:       "tool_summary",
+				content:    "",
+				timestamp:  time.Now(),
+				iterations: append([]cliIterationSnapshot{}, m.iterationHistory...),
+				dirty:      true,
+			}
+			m.upsertMessageByTurn(turnID, "tool_summary", toolSummaryMsg)
+			m.renderCacheValid = false
+		}
+		m.setTurnDoneProcessed(turnID)
+		m.endAgentTurn(turnID)
+		if turnID == m.agentTurnID {
+			m.inputReady = true
+			if len(m.messageQueue) > 0 {
+				m.needFlushQueue = true
+			}
+		}
+		return
+	}
 	// Snapshot the final iteration before clearing progress.
 	// This handles the case where PhaseDone arrives before
 	// handleAgentMessage (e.g. agent error/cancel).
@@ -609,19 +628,21 @@ func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPaylo
 				Tools:       finalTools,
 				ElapsedWall: time.Since(m.iterationStartTime).Milliseconds(),
 			}
-			// Carry over reasoning: priority is lastReasoning (captured before progress clear)
+			// Carry over reasoning: priority is reasoningByIter (per-iteration, authoritative)
+			// > lastReasoning (captured before progress clear)
 			// > prev progress Reasoning (server-authoritative, from ReasoningContent)
 			// > PhaseDone payload Reasoning
-			// Note: prev.ReasoningStreamContent is intentionally NOT used — streaming
-			// content may be polluted by the next iteration's reasoning stream that
-			// arrived between structured progress updates.
-			if m.lastReasoning != "" {
-				snap.Reasoning = m.lastReasoning
-			} else if prev != nil && prev.Reasoning != "" {
-				snap.Reasoning = prev.Reasoning
-			} else if msg.payload.Reasoning != "" {
-				snap.Reasoning = msg.payload.Reasoning
+			reasoning := m.reasoningByIter[m.lastSeenIteration]
+			if reasoning == "" {
+				reasoning = m.lastReasoning
 			}
+			if reasoning == "" && prev != nil {
+				reasoning = prev.Reasoning
+			}
+			if reasoning == "" {
+				reasoning = msg.payload.Reasoning
+			}
+			snap.Reasoning = reasoning
 			if len(finalTools) > 0 || snap.Thinking != "" || snap.Reasoning != "" {
 				m.iterationHistory = append(m.iterationHistory, snap)
 			}
@@ -985,12 +1006,10 @@ func mergeSubAgentTrees(prev, new []CLISubAgent) []CLISubAgent {
 		return new
 	}
 	if len(new) == 0 {
-		// Mark all running/pending agents as done — they completed while the
-		// server wasn't reporting them.
-		for i := range prev {
-			prev[i] = markDoneIfRunning(prev[i])
-		}
-		return prev
+		// Server stopped reporting all agents — they completed.
+		// Return empty slice (no zombies). Previous carry-forward
+		// in carryForwardProgressState will handle pruning.
+		return nil
 	}
 
 	// Build lookup from new by unique key (Role + Instance)
@@ -1006,16 +1025,24 @@ func mergeSubAgentTrees(prev, new []CLISubAgent) []CLISubAgent {
 	for _, p := range prev {
 		key := subAgentKey(p.Role, p.Instance)
 		if idx, ok := newByKey[key]; ok {
-			// Agent exists in both — merge: use new data but recursively merge children
+			// Agent exists in both — merge: use new data but preserve
+			// previous Desc when new is empty (SubAgent progress may
+			// report an empty Desc between activity bursts).
 			n := new[idx]
 			merged := n
+			if merged.Desc == "" && p.Desc != "" {
+				merged.Desc = p.Desc
+			}
 			merged.Children = mergeSubAgentTrees(p.Children, n.Children)
 			result = append(result, merged)
 			delete(newByKey, key)
 		} else {
 			// Agent only in prev — server stopped reporting it.
-			// Mark as done if still running/pending (it completed between updates).
-			result = append(result, markDoneIfRunning(p))
+			// If already done/error, skip it (zombie cleanup — prevents
+			// completed agents from accumulating in the tree forever).
+			// If still running/pending, mark as done (it completed between
+			// updates) but also skip — the user already saw it finish.
+			_ = markDoneIfRunning(p) // mark children recursively
 		}
 	}
 
@@ -1047,6 +1074,21 @@ func markDoneIfRunning(sa CLISubAgent) CLISubAgent {
 		sa.Children[i] = markDoneIfRunning(sa.Children[i])
 	}
 	return sa
+}
+
+// pruneDoneSubAgents removes agents (and their children) that are already
+// marked "done". This prevents zombie entries from accumulating across
+// iteration boundaries when no new SubAgent data arrives.
+// Agents still "running" or "pending" are kept (they may complete soon).
+func pruneDoneSubAgents(agents []CLISubAgent) []CLISubAgent {
+	var kept []CLISubAgent
+	for _, a := range agents {
+		a.Children = pruneDoneSubAgents(a.Children)
+		if a.Status != "done" && a.Status != "error" {
+			kept = append(kept, a)
+		}
+	}
+	return kept
 }
 
 // handleCtrlC handles the unified Ctrl+C keypress.
@@ -1082,7 +1124,7 @@ func (m *cliModel) handleCtrlC() (tea.Model, tea.Cmd, bool) {
 		if queueLen > 0 {
 			if m.queueEditing {
 				// 正在编辑排队消息 → 取消编辑并删除该消息
-				removed := m.messageQueue[len(m.messageQueue)-1]
+				removed := m.messageQueue[len(m.messageQueue)-1].content
 				m.messageQueue = m.messageQueue[:len(m.messageQueue)-1]
 				m.queueEditing = false
 				m.queueEditBuf = ""
@@ -1090,7 +1132,7 @@ func (m *cliModel) handleCtrlC() (tea.Model, tea.Cmd, bool) {
 				m.showSystemMsg(fmt.Sprintf(m.locale.QueueItemRemoved, removed), feedbackInfo)
 			} else if queueLen > 1 {
 				// 多条排队 → 删除最后一条
-				removed := m.messageQueue[len(m.messageQueue)-1]
+				removed := m.messageQueue[len(m.messageQueue)-1].content
 				m.messageQueue = m.messageQueue[:len(m.messageQueue)-1]
 				m.showSystemMsg(fmt.Sprintf(m.locale.QueueItemRemoved+". "+m.locale.QueueCleared, removed, len(m.messageQueue)), feedbackInfo)
 			} else {
@@ -1422,14 +1464,14 @@ func (m *cliModel) handleEnterKey() (tea.Model, []tea.Cmd, bool) {
 		// §Q 消息队列：typing 期间允许排队消息
 		if m.queueEditing {
 			// 正在编辑排队消息 → 保存编辑结果
-			m.messageQueue[len(m.messageQueue)-1] = m.textarea.Value()
+			m.messageQueue[len(m.messageQueue)-1].content = m.textarea.Value()
 			m.queueEditing = false
 			m.queueEditBuf = ""
 			m.textarea.SetValue("")
 			return m, nil, true
 		}
 		if m.textarea.Value() != "" {
-			m.messageQueue = append(m.messageQueue, m.textarea.Value())
+			m.messageQueue = append(m.messageQueue, queuedMsg{content: m.textarea.Value(), chatID: m.chatID})
 			m.textarea.SetValue("")
 			// 显示队列提示
 			if len(m.messageQueue) == 1 {
@@ -1510,7 +1552,7 @@ func (m *cliModel) handleShiftUp() (tea.Model, []tea.Cmd, bool) {
 		if !m.queueEditing && m.textarea.Value() == "" {
 			// 追回最后一条排队消息
 			m.queueEditing = true
-			m.queueEditBuf = m.messageQueue[len(m.messageQueue)-1]
+			m.queueEditBuf = m.messageQueue[len(m.messageQueue)-1].content
 			m.textarea.SetValue(m.queueEditBuf)
 			m.autoExpandInput()
 			return m, nil, true

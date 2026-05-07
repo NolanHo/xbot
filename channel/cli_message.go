@@ -641,7 +641,7 @@ func (m *cliModel) handleSlashCommand(cmd string) tea.Cmd {
 	default:
 		// /debug subcommands for runtime diagnostics
 		if strings.HasPrefix(command, "/debug") {
-			m.handleDebugCommand(command)
+			m.handleDebugCommand(cmd) // pass full input including subcommand
 			return nil
 		}
 		// 🥚 彩蛋 #7: /version 三连检测

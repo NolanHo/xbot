@@ -1675,7 +1675,7 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 	// §20 使用缓存样式
 	s := &m.styles
 	var sb strings.Builder
-	contentWidth := m.width - 4 // 留边距
+	contentWidth := m.chatWidth() - 4
 	timeStyle := s.Time
 	userLabelStyle := s.UserLabel
 	streamingLabelStyle := s.StreamingLabel

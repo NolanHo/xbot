@@ -446,12 +446,17 @@ func (m *cliModel) renderSidebarSessions(w int) string {
 	return b.String()
 }
 
-// sidebarSessionEntries returns the full session entries (not just names).
+// sidebarSessionEntries returns all session entries (backend + local dir).
 func (m *cliModel) sidebarSessionEntries() []SessionPanelEntry {
-	if m.sessionsListFn == nil {
-		return nil
+	entries := make([]SessionPanelEntry, 0)
+	// Backend sessions (remote/server)
+	if m.sessionsListFn != nil {
+		entries = append(entries, m.sessionsListFn()...)
 	}
-	return m.sessionsListFn()
+	// Local dir sessions
+	dirEntries := m.listLocalDirSessions()
+	entries = append(entries, dirEntries...)
+	return entries
 }
 
 func (m *cliModel) renderSidebarActive() string {
@@ -470,15 +475,11 @@ func (m *cliModel) renderSidebarActive() string {
 	return b.String()
 }
 
-// sidebarSessionList returns session names for sidebar display.
 // sidebarCurrentIdx returns the index of the currently active session.
 func (m *cliModel) sidebarCurrentIdx() int {
-	if m.sessionsListFn == nil {
-		return -1
-	}
-	entries := m.sessionsListFn()
+	entries := m.sidebarSessionEntries()
 	for i, e := range entries {
-		if e.Active {
+		if e.Active || e.ID == m.chatID {
 			return i
 		}
 	}

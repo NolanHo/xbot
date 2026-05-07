@@ -404,6 +404,8 @@ func (m *cliModel) renderSidebarForBlock(block string) string {
 func (m *cliModel) renderSidebarSessions(w int) string {
 	// Reset tracking
 	sidebarSessionLines = nil
+	sidebarDeleteXStart = nil
+	sidebarDeleteXEnd = nil
 	sidebarNewSessionY = -1
 
 	entries := m.sidebarSessionEntries()
@@ -412,11 +414,15 @@ func (m *cliModel) renderSidebarSessions(w int) string {
 	var b strings.Builder
 	b.WriteString(m.styles.SidebarHeader.Render("Sessions"))
 	sidebarSessionLines = append(sidebarSessionLines, -1) // header line
+	sidebarDeleteXStart = append(sidebarDeleteXStart, -1)
+	sidebarDeleteXEnd = append(sidebarDeleteXEnd, -1)
 
 	if len(entries) == 0 {
 		b.WriteByte('\n')
 		b.WriteString(m.styles.TextMutedSt.Render("  (empty)"))
 		sidebarSessionLines = append(sidebarSessionLines, -1)
+		sidebarDeleteXStart = append(sidebarDeleteXStart, -1)
+		sidebarDeleteXEnd = append(sidebarDeleteXEnd, -1)
 	} else {
 		for i, s := range entries {
 			b.WriteByte('\n')
@@ -424,23 +430,46 @@ func (m *cliModel) renderSidebarSessions(w int) string {
 			if label == "" {
 				label = s.ID
 			}
-			maxLen := w - 4
+			maxLen := w - 7 // room for icon + label + " ×" delete button
+			if maxLen < 4 {
+				maxLen = 4
+			}
 			if len(label) > maxLen {
 				label = label[:maxLen-1] + "…"
 			}
-			if i == currentIdx {
-				b.WriteString(m.styles.SidebarActive.Render(" ● " + label))
-			} else {
-				b.WriteString(m.styles.SidebarItem.Render(" ○ " + label))
+
+			isActive := i == currentIdx
+			icon := "○"
+			itemStyle := m.styles.SidebarItem
+			if isActive {
+				icon = "●"
+				itemStyle = m.styles.SidebarActive
 			}
-			sidebarSessionLines = append(sidebarSessionLines, i) // session index
+
+			// Render: " ○ label" + right-aligned " ×"
+			// Calculate delete button position
+			labelPart := " " + icon + " " + label
+			deletePart := " ×"
+			deleteXStart := len(labelPart) // approximate: after label
+			deleteXEnd := deleteXStart + len(deletePart)
+
+			b.WriteString(itemStyle.Render(labelPart))
+			if !isActive {
+				b.WriteString(m.styles.TextMutedSt.Render(deletePart))
+				sidebarDeleteXStart = append(sidebarDeleteXStart, deleteXStart)
+				sidebarDeleteXEnd = append(sidebarDeleteXEnd, deleteXEnd)
+			} else {
+				sidebarDeleteXStart = append(sidebarDeleteXStart, -1)
+				sidebarDeleteXEnd = append(sidebarDeleteXEnd, -1)
+			}
+			sidebarSessionLines = append(sidebarSessionLines, i)
 		}
 	}
 
 	// "+ New" button
 	b.WriteByte('\n')
 	b.WriteByte('\n')
-	sidebarNewSessionY = len(sidebarSessionLines) + 1 // blank line + new button line
+	sidebarNewSessionY = len(sidebarSessionLines) + 1
 	b.WriteString(m.styles.Accent.Bold(true).Render("  + New"))
 
 	return b.String()
@@ -1021,6 +1050,13 @@ var sidebarSessionLines []int
 // sidebarNewSessionY tracks the Y-offset of the "+ New" button in the sidebar.
 // -1 means not rendered.
 var sidebarNewSessionY int
+
+// sidebarDeleteXStart tracks the X position of the "×" delete button for each
+// session line. Indexed same as sidebarSessionLines. -1 means no delete button.
+var sidebarDeleteXStart []int
+
+// sidebarDeleteXEnd is the X end of each "×" delete button.
+var sidebarDeleteXEnd []int
 
 // renderFooter 渲染底部快捷键提示条。
 // 根据当前状态动态显示最相关的快捷键，避免信息过载。

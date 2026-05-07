@@ -3326,6 +3326,12 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			m.lastTokenUsage = nil
 			m.invalidateAllCache(false)
 			m.restoreSession()
+			// Ensure typing is cleared — the restored session may have stale
+			// typing=true from a completed turn. Engine will re-set via turnDone.
+			m.typing = false
+			m.progress = nil
+			m.messageQueue = nil
+			m.queueEditing = false
 			m.relayoutViewport()
 			if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
 				m.suLoading = true
@@ -3347,6 +3353,10 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			m.lastTokenUsage = nil
 			m.invalidateAllCache(false)
 			m.restoreSession()
+			m.typing = false
+			m.progress = nil
+			m.messageQueue = nil
+			m.queueEditing = false
 			m.relayoutViewport()
 			if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
 				m.suLoading = true

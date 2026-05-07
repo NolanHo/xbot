@@ -134,6 +134,8 @@ func (m *cliModel) handleMouseClick(msg tea.MouseClickMsg) (bool, tea.Model, tea
 		return m.clickSessionsItem(zone.Index)
 	case "sidebarSession":
 		return m.clickSidebarSession(zone.Index)
+	case "sidebarDeleteSession":
+		return m.clickSidebarDeleteSession(zone.Index)
 	case "sidebarNewSession":
 		return m.clickSidebarNewSession()
 	case "bgtaskItem":
@@ -795,6 +797,9 @@ func (m *cliModel) trackMainLayoutZones(zb *mouseZoneBuilder) {
 				if sessionIdx >= 0 {
 					zb.addX(relY+borderOffset, sbXStart, sbXEnd, "sidebarSession", sessionIdx)
 				}
+				if relY < len(sidebarDeleteXStart) && sidebarDeleteXStart[relY] >= 0 {
+					zb.addX(relY+borderOffset, sbXStart+sidebarDeleteXStart[relY], sbXStart+sidebarDeleteXEnd[relY], "sidebarDeleteSession", sessionIdx)
+				}
 			}
 			if sidebarNewSessionY >= 0 {
 				zb.addX(sidebarNewSessionY+borderOffset, sbXStart, sbXEnd, "sidebarNewSession", 0)
@@ -806,6 +811,9 @@ func (m *cliModel) trackMainLayoutZones(zb *mouseZoneBuilder) {
 			for relY, sessionIdx := range sidebarSessionLines {
 				if sessionIdx >= 0 {
 					zb.addX(relY+borderOffset, 0, sbXEnd, "sidebarSession", sessionIdx)
+				}
+				if relY < len(sidebarDeleteXStart) && sidebarDeleteXStart[relY] >= 0 {
+					zb.addX(relY+borderOffset, sidebarDeleteXStart[relY], sidebarDeleteXEnd[relY], "sidebarDeleteSession", sessionIdx)
 				}
 			}
 			if sidebarNewSessionY >= 0 {
@@ -1339,4 +1347,20 @@ func (m *cliModel) clickSidebarSession(index int) (bool, tea.Model, tea.Cmd) {
 func (m *cliModel) clickSidebarNewSession() (bool, tea.Model, tea.Cmd) {
 	cmd := m.showSessionCreateDialog()
 	return true, m, cmd
+}
+
+// clickSidebarDeleteSession handles clicking the "×" delete button on a session item.
+func (m *cliModel) clickSidebarDeleteSession(index int) (bool, tea.Model, tea.Cmd) {
+	entries := m.sidebarSessionEntries()
+	if index < 0 || index >= len(entries) {
+		return false, m, nil
+	}
+	entry := entries[index]
+	// Don't delete the currently active session
+	if entry.ID == m.chatID {
+		m.showTempStatus("Cannot delete the active session")
+		return true, m, nil
+	}
+	m.deleteLocalSession(entry)
+	return true, m, nil
 }

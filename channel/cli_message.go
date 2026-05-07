@@ -1367,22 +1367,29 @@ func (m *cliModel) renderCurrentDynamic(
 			}
 		}
 	} else if !hasTools {
-		switch m.progress.Phase {
-		case "thinking":
-			sb.WriteString("  ")
-			sb.WriteString(m.ticker.view())
-			sb.WriteString(thinkingStyle.Render(" " + m.pickVerb(m.ticker.ticks) + "..."))
-			sb.WriteString("\n")
-		case "compressing":
-			sb.WriteString("  ")
-			sb.WriteString(m.ticker.viewFrames(orbitFrames))
-			sb.WriteString(thinkingStyle.Render(" compressing..."))
-			sb.WriteString("\n")
-		case "retrying":
-			sb.WriteString("  ")
-			sb.WriteString(m.ticker.viewFrames(orbitFrames))
-			sb.WriteString(thinkingStyle.Render(" retrying..."))
-			sb.WriteString("\n")
+		// Only show phase spinner if reasoning/thinking hasn't already
+		// been rendered in the static cache — otherwise we get duplicate
+		// "thinking..." text on top of actual reasoning lines.
+		hasReasoning := m.progress.Reasoning != "" || m.progress.ReasoningStreamContent != ""
+		hasThinking := m.progress.Thinking != ""
+		if !hasReasoning && !hasThinking {
+			switch m.progress.Phase {
+			case "thinking":
+				sb.WriteString("  ")
+				sb.WriteString(m.ticker.view())
+				sb.WriteString(thinkingStyle.Render(" " + m.pickVerb(m.ticker.ticks) + "..."))
+				sb.WriteString("\n")
+			case "compressing":
+				sb.WriteString("  ")
+				sb.WriteString(m.ticker.viewFrames(orbitFrames))
+				sb.WriteString(thinkingStyle.Render(" compressing..."))
+				sb.WriteString("\n")
+			case "retrying":
+				sb.WriteString("  ")
+				sb.WriteString(m.ticker.viewFrames(orbitFrames))
+				sb.WriteString(thinkingStyle.Render(" retrying..."))
+				sb.WriteString("\n")
+			}
 		}
 	}
 

@@ -2708,6 +2708,40 @@ func padBgRight(content string, bgHex string, targetWidth int) string {
 	return content + padding
 }
 
+// expandTabs replaces tab characters with spaces, respecting ANSI escape
+// sequences so that escape codes don't affect tab-stop calculation.
+func expandTabs(s string, tabWidth int) string {
+	if !strings.ContainsRune(s, '\t') {
+		return s
+	}
+	var b strings.Builder
+	col := 0
+	inEscape := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			b.WriteRune(r)
+			continue
+		}
+		if inEscape {
+			b.WriteRune(r)
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
+		if r == '\t' {
+			spaces := tabWidth - (col % tabWidth)
+			b.WriteString(strings.Repeat(" ", spaces))
+			col += spaces
+		} else {
+			b.WriteRune(r)
+			col++
+		}
+	}
+	return b.String()
+}
+
 func renderBgLine(content string, fgHex string, bgHex string, targetWidth int) string {
 	content = ansi.Truncate(content, targetWidth, "")
 	st := lipgloss.NewStyle().Background(lipgloss.Color(bgHex))
@@ -2814,9 +2848,8 @@ func renderDiffStyled(md string, maxW, maxLines int) string {
 	}
 
 	numFmt := fmt.Sprintf("%%%dd", lineNumDigits)
-	lineNumColW := lineNumDigits*2 + 1        // oldNum + space + newNum
-	prefixW := 2                              // ± + space
-	codeW := maxW - prefixW - lineNumColW - 1 // -1 for space between lineNums and code
+	lineNumColW := lineNumDigits*2 + 2
+	codeW := maxW - lineNumColW - 2
 	if codeW < 10 {
 		codeW = 10
 	}
@@ -2824,6 +2857,8 @@ func renderDiffStyled(md string, maxW, maxLines int) string {
 	lineNumStyleAdd := lipgloss.NewStyle().Foreground(fgMeta).Background(bgAdd)
 	lineNumStyleDel := lipgloss.NewStyle().Foreground(fgMeta).Background(bgDel)
 	lineNumStyleCtx := lipgloss.NewStyle().Foreground(fgMeta)
+	symStyleAdd := lipgloss.NewStyle().Background(bgAdd).Foreground(fgAdd)
+	symStyleDel := lipgloss.NewStyle().Background(bgDel).Foreground(fgDel)
 
 	var sb strings.Builder
 	for i, line := range diffLines {
@@ -2847,13 +2882,14 @@ func renderDiffStyled(md string, maxW, maxLines int) string {
 			if hl, ok := highlightMap[i]; ok {
 				code = hl
 			}
+			code = expandTabs(code, 4)
 			code = ansi.Truncate(code, codeW, "")
-			sym := lipgloss.NewStyle().Background(bgAdd).Foreground(fgAdd).Render("+")
 			oldNum := strings.Repeat("\u00a0", lineNumDigits)
 			newNum := fmt.Sprintf(numFmt, newLine)
-			lineNums := lineNumStyleAdd.Render(oldNum + "\u00a0" + newNum)
+			lineNums := lineNumStyleAdd.Render(oldNum + " " + newNum + " ")
+			sym := symStyleAdd.Render("+ ")
 			codeStyled := padBgRight(code, t.SuccessBg, codeW)
-			sb.WriteString(sym + "\u00a0" + lineNums + "\u00a0" + codeStyled)
+			sb.WriteString(lineNums + sym + codeStyled)
 			newLine++
 
 		case strings.HasPrefix(line, "-"):
@@ -2861,13 +2897,14 @@ func renderDiffStyled(md string, maxW, maxLines int) string {
 			if hl, ok := highlightMap[i]; ok {
 				code = hl
 			}
+			code = expandTabs(code, 4)
 			code = ansi.Truncate(code, codeW, "")
-			sym := lipgloss.NewStyle().Background(bgDel).Foreground(fgDel).Render("-")
 			oldNum := fmt.Sprintf(numFmt, oldLine)
 			newNum := strings.Repeat("\u00a0", lineNumDigits)
-			lineNums := lineNumStyleDel.Render(oldNum + "\u00a0" + newNum)
+			lineNums := lineNumStyleDel.Render(oldNum + " " + newNum + " ")
+			sym := symStyleDel.Render("- ")
 			codeStyled := padBgRight(code, t.ErrorBg, codeW)
-			sb.WriteString(sym + "\u00a0" + lineNums + "\u00a0" + codeStyled)
+			sb.WriteString(lineNums + sym + codeStyled)
 			oldLine++
 
 		default:
@@ -2875,12 +2912,12 @@ func renderDiffStyled(md string, maxW, maxLines int) string {
 			if hl, ok := highlightMap[i]; ok {
 				code = hl
 			}
+			code = expandTabs(code, 4)
 			code = ansi.Truncate(code, codeW, "")
-			sym := lipgloss.NewStyle().Foreground(fgMeta).Render("│")
 			oldNum := fmt.Sprintf(numFmt, oldLine)
 			newNum := fmt.Sprintf(numFmt, newLine)
-			lineNums := lineNumStyleCtx.Render(oldNum + "\u00a0" + newNum)
-			sb.WriteString(sym + "\u00a0" + lineNums + "\u00a0" + code)
+			lineNums := lineNumStyleCtx.Render(oldNum + " " + newNum + " ")
+			sb.WriteString(lineNums + "  " + code)
 			oldLine++
 			newLine++
 		}

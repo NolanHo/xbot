@@ -1872,19 +1872,17 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 			// 内容够窄，左填充实现气泡靠右
 			userStyle = s.UserContent.PaddingLeft(contentWidth - maxWidth)
 		}
-		// 内容超宽时退回左对齐，避免终端折行后跑到最左边
-		// CRITICAL: lipgloss Render pads ALL lines (including blank lines) to the
-		// width of the longest line. When a blank line is padded to e.g. 424 chars
-		// and the terminal is 120 cols, hardWrapRunes in setViewportContent wraps
-		// that "blank" line into 4 visual lines — amplifying every blank line by
-		// maxWidth/terminalWidth. Fix: strip trailing whitespace from blank lines
-		// after Render so they stay as single empty lines.
+		// CRITICAL: lipgloss Render pads ALL lines to maxWidth including trailing
+		// spaces. When contentWidth is close to terminal width, the padded lines
+		// can overflow after being processed by hardWrapRunes. Fix: Render first,
+		// then right-trim each line — the padding is visual-only (left-aligned by
+		// PaddingLeft) and trailing spaces serve no purpose.
 		renderedUser := userStyle.Render(rendered)
 		userLines := strings.Split(renderedUser, "\n")
 		for i, rl := range userLines {
-			if strings.TrimSpace(rl) == "" {
-				userLines[i] = "" // collapse padded blank lines back to empty
-			}
+			// Strip trailing whitespace (lipgloss padding) from ALL lines.
+			// The left-padding is preserved because TrimRight only removes right side.
+			userLines[i] = strings.TrimRight(rl, " \t")
 		}
 		sb.WriteString(strings.Join(userLines, "\n"))
 	default:

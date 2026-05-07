@@ -1299,16 +1299,6 @@ func (m *cliModel) getCurrentStaticCache(
 		}
 	}
 
-	// SubAgent tree
-	if len(m.progress.SubAgents) > 0 {
-		var treeSB strings.Builder
-		m.renderSubAgentTree(&treeSB, m.progress.SubAgents, "", innerWidth)
-		if treeSB.Len() > 0 {
-			sb.WriteString("\n")
-			sb.WriteString(treeSB.String())
-		}
-	}
-
 	m.cachedCurrentStatic = sb.String()
 	m.cachedCurrentStaticWidth = bubbleWidth
 	m.cachedCurrentIter = m.progress.Iteration
@@ -1456,6 +1446,16 @@ func (m *cliModel) renderCurrentDynamic(
 				}
 				sb.WriteString("\n")
 			}
+		}
+	}
+
+	// SubAgent tree — rendered after active tools and stream content
+	if len(m.progress.SubAgents) > 0 {
+		var treeSB strings.Builder
+		m.renderSubAgentTree(&treeSB, m.progress.SubAgents, "", innerWidth)
+		if treeSB.Len() > 0 {
+			sb.WriteString("\n")
+			sb.WriteString(treeSB.String())
 		}
 	}
 }

@@ -466,6 +466,13 @@ type cliModel struct {
 	cachedProgressHistoryLen   int    // len(iterationHistory) when cache was built
 	cachedProgressHistoryWidth int    // viewport width when cache was built
 
+	// Current iteration static content cache — avoids re-rendering reasoning,
+	// completed tools, tool content, and SubAgent tree on every 100ms tick.
+	cachedCurrentStatic      string // rendered static parts of current iteration
+	cachedCurrentStaticWidth int    // bubbleWidth when cache was built
+	cachedCurrentIter        int    // progress.Iteration when cache was built
+	cachedCurrentStaticFP    uint64 // fingerprint of static content for dirty detection
+
 	// --- §2 工具可视化 ---
 	lastCompletedTools []CLIToolProgress // 每轮结束时快照，不依赖 m.progress 生命周期
 	lastReasoning      string            // 最后一次迭代的 reasoning_content，在 progress 清除前捕获

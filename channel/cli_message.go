@@ -1,8 +1,10 @@
 package channel
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -346,6 +348,10 @@ func (m *cliModel) invalidateProgressHistoryCache() {
 	m.cachedProgressHistory = ""
 	m.cachedProgressHistoryLen = 0
 	m.cachedProgressHistoryWidth = 0
+	m.cachedCurrentStatic = ""
+	m.cachedCurrentStaticFP = 0
+	m.cachedCurrentStaticWidth = 0
+	m.cachedCurrentIter = 0
 }
 
 // resetProgressState resets iteration tracking for a new agent turn.
@@ -1106,225 +1112,16 @@ func (m *cliModel) renderProgressBlock() string {
 		sb.WriteString(iterStyle.Render(fmt.Sprintf("#%d", m.progress.Iteration)))
 		sb.WriteString("\n")
 
-		// Reasoning: prefer streaming content (real-time) over static snapshot
-		reasoningText := m.progress.ReasoningStreamContent
-		if reasoningText == "" {
-			reasoningText = m.progress.Reasoning
-		}
-		isReasoningStreaming := m.progress.ReasoningStreamContent != "" && m.progress.StreamContent == ""
-		if reasoningText != "" {
-			// Typewriter effect for reasoning streaming content
-			totalReasoningRunes := len([]rune(m.progress.ReasoningStreamContent))
-			if isReasoningStreaming && totalReasoningRunes > 0 {
-				runes := []rune(m.progress.ReasoningStreamContent)
-				if m.rwVisible > 0 && m.rwVisible < totalReasoningRunes {
-					runes = runes[:m.rwVisible]
-				}
-				reasoningText = string(runes)
-			}
-			lines := strings.Split(reasoningText, "\n")
-			// Solid cursor while actively typing; blink only when waiting for next chunk.
-			reasoningTyping := isReasoningStreaming && m.rwVisible < totalReasoningRunes
-			cursorVisible := reasoningTyping || (m.ticker.ticks/5)%2 == 0
-			for i, line := range lines {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				isLastLine := i == len(lines)-1
-				wrappedLines := strings.Split(hardWrapRunes(line, innerWidth-reasoningW), "\n")
-				for j, wl := range wrappedLines {
-					isLast := isLastLine && j == len(wrappedLines)-1
-					guide := reasoningGuide.Render("  │ ")
-					if isLast && isReasoningStreaming {
-						cursorStr := s.StreamCursor.Render("▋")
-						cursorOverflow := reasoningW+lipgloss.Width(wl)+lipgloss.Width("▋") > innerWidth
-						if cursorOverflow {
-							// Cursor would overflow: always render on a separate line
-							// to prevent visual height jumping during cursor blink.
-							sb.WriteString(guide + reasoningStyle.Render(wl))
-							sb.WriteString("\n")
-							if cursorVisible {
-								sb.WriteString(guide + cursorStr)
-							} else {
-								sb.WriteString(guide)
-							}
-						} else if cursorVisible {
-							sb.WriteString(guide + reasoningStyle.Render(wl) + cursorStr)
-						} else {
-							sb.WriteString(guide + reasoningStyle.Render(wl))
-						}
-					} else {
-						sb.WriteString(guide + reasoningStyle.Render(wl))
-					}
-					sb.WriteString("\n")
-				}
-			}
+		// Static parts (reasoning, thinking, completed tools, tool content, SubAgent tree)
+		// — cached between ticks to avoid re-running lipgloss.Style.Render every 100ms.
+		static := m.getCurrentStaticCache(bubbleWidth, innerWidth, s, reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle, toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, iterStyle)
+		if static != "" {
+			sb.WriteString(static)
 		}
 
-		if m.progress.Thinking != "" {
-			for _, line := range strings.Split(m.progress.Thinking, "\n") {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n") {
-					sb.WriteString(thinkingGuide.Render("  │ ") + thinkingStyle.Render(wl))
-					sb.WriteString("\n")
-				}
-			}
-		}
-
-		// Completed tools in current iteration — filter by Iteration field
-		for _, tool := range m.progress.CompletedTools {
-			if tool.Iteration != m.progress.Iteration {
-				continue
-			}
-			label, icon, sty := toolDisplayInfo(tool, toolDoneStyle, toolErrorStyle)
-			var elapsedStyled string
-			if tool.Elapsed > 0 {
-				elapsedStyled = elapsedStyle.Render(formatElapsed(tool.Elapsed))
-			}
-			sb.WriteString(sty.Render(toolLine(icon, label, elapsedStyled, innerWidth)))
-			sb.WriteString("\n")
-		}
-
-		// Done/error ActiveTools: also render label lines so they don't
-		// vanish between the tool-finishing progress event and the
-		// snapshotCompletedIteration progress event that moves them to
-		// CompletedTools. Without this, the label line disappears for 1-2
-		// frames causing a visible height flicker (shrink then grow).
-		for _, tool := range m.progress.ActiveTools {
-			if tool.Status != "done" && tool.Status != "error" {
-				continue
-			}
-			label, icon, sty := toolDisplayInfo(tool, toolDoneStyle, toolErrorStyle)
-			var elapsedStyled string
-			if tool.Elapsed > 0 {
-				elapsedStyled = elapsedStyle.Render(formatElapsed(tool.Elapsed))
-			}
-			sb.WriteString(sty.Render(toolLine(icon, label, elapsedStyled, innerWidth)))
-			sb.WriteString("\n")
-		}
-
-		guide := reasoningGuide.Render("  │ ")
-		for i := range m.progress.CompletedTools {
-			tool := &m.progress.CompletedTools[i]
-			if content := m.renderToolContentBelow(tool, guide, innerWidth, false, 0); content != "" {
-				sb.WriteString(content)
-				sb.WriteString("\n")
-			}
-		}
-		for i := range m.progress.ActiveTools {
-			tool := &m.progress.ActiveTools[i]
-			if tool.Status != "done" && tool.Status != "error" {
-				continue
-			}
-			if content := m.renderToolContentBelow(tool, guide, innerWidth, false, 0); content != "" {
-				sb.WriteString(content)
-				sb.WriteString("\n")
-			}
-		}
-
-		// Active tools — label + live elapsed timer
-		for _, tool := range m.progress.ActiveTools {
-			if tool.Status == "done" || tool.Status == "error" {
-				continue
-			}
-			label, _, _ := toolDisplayInfo(tool, toolDoneStyle, toolErrorStyle)
-			pulseIcon := m.ticker.viewFrames(pulseFrames)
-			// Calculate live elapsed time
-			var elapsedMs int64
-			if !tool.StartedAt.IsZero() {
-				elapsedMs = time.Since(tool.StartedAt).Milliseconds()
-			} else {
-				elapsedMs = tool.Elapsed
-			}
-			elapsedStyled := elapsedStyle.Render(formatElapsed(elapsedMs))
-			sb.WriteString(toolRunningStyle.Render(toolLine(pulseIcon, label, elapsedStyled, innerWidth)))
-			sb.WriteString("\n")
-		}
-
-		// Phase-specific fallback when no tools are shown
-		hasTools := len(m.progress.ActiveTools) > 0 || len(m.progress.CompletedTools) > 0
-
-		// Stream content: render LLM output in progress block when streaming
-		if m.progress.StreamContent != "" {
-			// Typewriter effect: gradually reveal characters
-			totalRunes := len([]rune(m.progress.StreamContent))
-			runes := []rune(m.progress.StreamContent)
-			if m.twVisible > 0 && m.twVisible < totalRunes {
-				runes = runes[:m.twVisible]
-			}
-			streamText := string(runes)
-			lines := strings.Split(streamText, "\n")
-			// Blinking cursor: only blink when waiting for next stream chunk.
-			// While actively typing (behind buffer), cursor stays solid.
-			typing := m.twVisible < totalRunes
-			cursorVisible := typing || (m.ticker.ticks/5)%2 == 0
-			for i, line := range lines {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				isLastLine := i == len(lines)-1
-				wrappedLines := strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n")
-				for j, wl := range wrappedLines {
-					isLast := isLastLine && j == len(wrappedLines)-1
-					guide := thinkingGuide.Render("  │ ")
-					if isLast {
-						cursorStr := s.StreamCursor.Render("▋")
-						cursorOverflow := thinkingW+lipgloss.Width(wl)+lipgloss.Width("▋") > innerWidth
-						if cursorOverflow {
-							// Cursor would overflow: always render on a separate line
-							// to prevent visual height jumping during cursor blink.
-							sb.WriteString(guide + thinkingStyle.Render(wl))
-							sb.WriteString("\n")
-							if cursorVisible {
-								sb.WriteString(guide + cursorStr)
-							} else {
-								sb.WriteString(guide)
-							}
-						} else if cursorVisible {
-							sb.WriteString(guide + thinkingStyle.Render(wl) + cursorStr)
-						} else {
-							sb.WriteString(guide + thinkingStyle.Render(wl))
-						}
-					} else {
-						sb.WriteString(guide + thinkingStyle.Render(wl))
-					}
-					sb.WriteString("\n")
-				}
-			}
-		} else if !hasTools {
-			switch m.progress.Phase {
-			case "thinking":
-				sb.WriteString("  ")
-				sb.WriteString(m.ticker.view())
-				sb.WriteString(thinkingStyle.Render(" " + m.pickVerb(m.ticker.ticks) + "..."))
-				sb.WriteString("\n")
-			case "compressing":
-				sb.WriteString("  ")
-				sb.WriteString(m.ticker.viewFrames(orbitFrames))
-				sb.WriteString(thinkingStyle.Render(" compressing..."))
-				sb.WriteString("\n")
-			case "retrying":
-				sb.WriteString("  ")
-				sb.WriteString(m.ticker.viewFrames(orbitFrames))
-				sb.WriteString(thinkingStyle.Render(" retrying..."))
-				sb.WriteString("\n")
-			}
-		}
-
-		// SubAgent tree
-		if len(m.progress.SubAgents) > 0 {
-			var treeSB strings.Builder
-			m.renderSubAgentTree(&treeSB, m.progress.SubAgents, "", innerWidth)
-			if treeSB.Len() > 0 {
-				sb.WriteString("\n")
-				sb.WriteString(treeSB.String())
-			}
-		}
+		// Dynamic parts (active tools elapsed + pulse, stream content, spinner)
+		// — rendered fresh every tick (lightweight: typically 2-3 lines).
+		m.renderCurrentDynamic(&sb, s, innerWidth, reasoningW, thinkingW, reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle, toolRunningStyle, elapsedStyle, iterStyle)
 	} else if m.typing {
 		sb.WriteString("  ")
 		sb.WriteString(m.ticker.viewFrames(orbitFrames))
@@ -1351,6 +1148,316 @@ func (m *cliModel) renderProgressBlock() string {
 	blockStyle := s.ProgressBlock.Width(bubbleWidth)
 
 	return blockStyle.Render(header+"\n"+content) + "\n\n"
+}
+
+// progressStaticFP computes a fingerprint for the static parts of the current
+// iteration's progress. When the fingerprint doesn't change between ticks,
+// we can skip re-rendering reasoning/thinking/completed-tools/SubAgent tree.
+func (m *cliModel) progressStaticFP() uint64 {
+	if m.progress == nil {
+		return 0
+	}
+	p := m.progress
+	h := fnv.New64a()
+	h.Write([]byte(p.Reasoning))
+	h.Write([]byte(p.ReasoningStreamContent))
+	h.Write([]byte(p.Thinking))
+	h.Write([]byte(p.Phase))
+	// Completed tools: count + status + label (elapsed is static after completion)
+	for _, t := range p.CompletedTools {
+		if t.Iteration == p.Iteration {
+			h.Write([]byte(t.Name))
+			h.Write([]byte(t.Status))
+			var eb [8]byte
+			binary.LittleEndian.PutUint64(eb[:], uint64(t.Elapsed))
+			h.Write(eb[:])
+		}
+	}
+	// Done/error active tools (also static once finished)
+	for _, t := range p.ActiveTools {
+		if t.Status == "done" || t.Status == "error" {
+			h.Write([]byte(t.Name))
+			h.Write([]byte(t.Status))
+		}
+	}
+	// SubAgent tree structure
+	for _, sa := range p.SubAgents {
+		h.Write([]byte(sa.Role))
+		h.Write([]byte(sa.Instance))
+		h.Write([]byte(sa.Status))
+	}
+	return h.Sum64()
+}
+
+// getCurrentStaticCache returns the cached rendering of static parts for the
+// current iteration (reasoning lines, thinking lines, completed tools, tool
+// content, SubAgent tree). Rebuilds only when the content fingerprint changes.
+func (m *cliModel) getCurrentStaticCache(
+	bubbleWidth, innerWidth int,
+	s *cliStyles,
+	reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle,
+	toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, iterStyle lipgloss.Style,
+) string {
+	if m.progress == nil {
+		m.cachedCurrentStatic = ""
+		return ""
+	}
+
+	fp := m.progressStaticFP()
+	if m.cachedCurrentStatic != "" &&
+		m.cachedCurrentStaticWidth == bubbleWidth &&
+		m.cachedCurrentIter == m.progress.Iteration &&
+		m.cachedCurrentStaticFP == fp {
+		return m.cachedCurrentStatic
+	}
+
+	// Rebuild
+	reasoningW := lipgloss.Width(reasoningGuide.Render("  │ "))
+	thinkingW := lipgloss.Width(thinkingGuide.Render("  │ "))
+
+	var sb strings.Builder
+
+	// Reasoning (static: only when NOT streaming — streaming reasoning is dynamic due to typewriter)
+	isReasoningStreaming := m.progress.ReasoningStreamContent != "" && m.progress.StreamContent == ""
+	reasoningText := m.progress.Reasoning
+	if !isReasoningStreaming && reasoningText == "" {
+		reasoningText = m.progress.ReasoningStreamContent
+	}
+	if !isReasoningStreaming && reasoningText != "" {
+		lines := strings.Split(reasoningText, "\n")
+		for _, line := range lines {
+			line = strings.TrimRight(line, " \t\r")
+			if line == "" {
+				continue
+			}
+			for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-reasoningW), "\n") {
+				sb.WriteString(reasoningGuide.Render("  │ ") + reasoningStyle.Render(wl))
+				sb.WriteString("\n")
+			}
+		}
+	}
+
+	// Thinking
+	if m.progress.Thinking != "" {
+		for _, line := range strings.Split(m.progress.Thinking, "\n") {
+			line = strings.TrimRight(line, " \t\r")
+			if line == "" {
+				continue
+			}
+			for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n") {
+				sb.WriteString(thinkingGuide.Render("  │ ") + thinkingStyle.Render(wl))
+				sb.WriteString("\n")
+			}
+		}
+	}
+
+	// Completed tools in current iteration
+	for _, tool := range m.progress.CompletedTools {
+		if tool.Iteration != m.progress.Iteration {
+			continue
+		}
+		label, icon, sty := toolDisplayInfo(tool, toolDoneStyle, toolErrorStyle)
+		var elapsedStyled string
+		if tool.Elapsed > 0 {
+			elapsedStyled = elapsedStyle.Render(formatElapsed(tool.Elapsed))
+		}
+		sb.WriteString(sty.Render(toolLine(icon, label, elapsedStyled, innerWidth)))
+		sb.WriteString("\n")
+	}
+
+	// Done/error active tools (static once finished)
+	for _, tool := range m.progress.ActiveTools {
+		if tool.Status != "done" && tool.Status != "error" {
+			continue
+		}
+		label, icon, sty := toolDisplayInfo(tool, toolDoneStyle, toolErrorStyle)
+		var elapsedStyled string
+		if tool.Elapsed > 0 {
+			elapsedStyled = elapsedStyle.Render(formatElapsed(tool.Elapsed))
+		}
+		sb.WriteString(sty.Render(toolLine(icon, label, elapsedStyled, innerWidth)))
+		sb.WriteString("\n")
+	}
+
+	// Tool content (completed + done/error active)
+	guide := reasoningGuide.Render("  │ ")
+	for i := range m.progress.CompletedTools {
+		tool := &m.progress.CompletedTools[i]
+		if content := m.renderToolContentBelow(tool, guide, innerWidth, false, 0); content != "" {
+			sb.WriteString(content)
+			sb.WriteString("\n")
+		}
+	}
+	for i := range m.progress.ActiveTools {
+		tool := &m.progress.ActiveTools[i]
+		if tool.Status != "done" && tool.Status != "error" {
+			continue
+		}
+		if content := m.renderToolContentBelow(tool, guide, innerWidth, false, 0); content != "" {
+			sb.WriteString(content)
+			sb.WriteString("\n")
+		}
+	}
+
+	// SubAgent tree
+	if len(m.progress.SubAgents) > 0 {
+		var treeSB strings.Builder
+		m.renderSubAgentTree(&treeSB, m.progress.SubAgents, "", innerWidth)
+		if treeSB.Len() > 0 {
+			sb.WriteString("\n")
+			sb.WriteString(treeSB.String())
+		}
+	}
+
+	m.cachedCurrentStatic = sb.String()
+	m.cachedCurrentStaticWidth = bubbleWidth
+	m.cachedCurrentIter = m.progress.Iteration
+	m.cachedCurrentStaticFP = fp
+	return m.cachedCurrentStatic
+}
+
+// renderCurrentDynamic renders the tick-sensitive parts of the current iteration:
+// active tool elapsed timers, pulse icons, stream content with typewriter/cursor,
+// and phase-specific spinners. These change every tick and are lightweight to render.
+func (m *cliModel) renderCurrentDynamic(
+	sb *strings.Builder,
+	s *cliStyles,
+	innerWidth, reasoningW, thinkingW int,
+	reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle,
+	toolRunningStyle, elapsedStyle, iterStyle lipgloss.Style,
+) {
+	if m.progress == nil {
+		return
+	}
+
+	// Active tools — label + live elapsed timer (tick-sensitive)
+	for _, tool := range m.progress.ActiveTools {
+		if tool.Status == "done" || tool.Status == "error" {
+			continue
+		}
+		label, _, _ := toolDisplayInfo(tool, toolRunningStyle, lipgloss.Style{})
+		pulseIcon := m.ticker.viewFrames(pulseFrames)
+		var elapsedMs int64
+		if !tool.StartedAt.IsZero() {
+			elapsedMs = time.Since(tool.StartedAt).Milliseconds()
+		} else {
+			elapsedMs = tool.Elapsed
+		}
+		elapsedStyled := elapsedStyle.Render(formatElapsed(elapsedMs))
+		sb.WriteString(toolRunningStyle.Render(toolLine(pulseIcon, label, elapsedStyled, innerWidth)))
+		sb.WriteString("\n")
+	}
+
+	// Phase-specific fallback / stream content (tick-sensitive due to cursor blink & typewriter)
+	hasTools := len(m.progress.ActiveTools) > 0 || len(m.progress.CompletedTools) > 0
+
+	if m.progress.StreamContent != "" {
+		totalRunes := len([]rune(m.progress.StreamContent))
+		runes := []rune(m.progress.StreamContent)
+		if m.twVisible > 0 && m.twVisible < totalRunes {
+			runes = runes[:m.twVisible]
+		}
+		streamText := string(runes)
+		lines := strings.Split(streamText, "\n")
+		typing := m.twVisible < totalRunes
+		cursorVisible := typing || (m.ticker.ticks/5)%2 == 0
+		for i, line := range lines {
+			line = strings.TrimRight(line, " \t\r")
+			if line == "" {
+				continue
+			}
+			isLastLine := i == len(lines)-1
+			wrappedLines := strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n")
+			for j, wl := range wrappedLines {
+				isLast := isLastLine && j == len(wrappedLines)-1
+				guide := thinkingGuide.Render("  │ ")
+				if isLast {
+					cursorStr := s.StreamCursor.Render("▋")
+					cursorOverflow := thinkingW+lipgloss.Width(wl)+lipgloss.Width("▋") > innerWidth
+					if cursorOverflow {
+						sb.WriteString(guide + thinkingStyle.Render(wl))
+						sb.WriteString("\n")
+						if cursorVisible {
+							sb.WriteString(guide + cursorStr)
+						} else {
+							sb.WriteString(guide)
+						}
+					} else if cursorVisible {
+						sb.WriteString(guide + thinkingStyle.Render(wl) + cursorStr)
+					} else {
+						sb.WriteString(guide + thinkingStyle.Render(wl))
+					}
+				} else {
+					sb.WriteString(guide + thinkingStyle.Render(wl))
+				}
+				sb.WriteString("\n")
+			}
+		}
+	} else if !hasTools {
+		switch m.progress.Phase {
+		case "thinking":
+			sb.WriteString("  ")
+			sb.WriteString(m.ticker.view())
+			sb.WriteString(thinkingStyle.Render(" " + m.pickVerb(m.ticker.ticks) + "..."))
+			sb.WriteString("\n")
+		case "compressing":
+			sb.WriteString("  ")
+			sb.WriteString(m.ticker.viewFrames(orbitFrames))
+			sb.WriteString(thinkingStyle.Render(" compressing..."))
+			sb.WriteString("\n")
+		case "retrying":
+			sb.WriteString("  ")
+			sb.WriteString(m.ticker.viewFrames(orbitFrames))
+			sb.WriteString(thinkingStyle.Render(" retrying..."))
+			sb.WriteString("\n")
+		}
+	}
+
+	// Reasoning streaming with typewriter effect (tick-sensitive)
+	isReasoningStreaming := m.progress.ReasoningStreamContent != "" && m.progress.StreamContent == ""
+	if isReasoningStreaming && m.progress.ReasoningStreamContent != "" {
+		totalReasoningRunes := len([]rune(m.progress.ReasoningStreamContent))
+		runes := []rune(m.progress.ReasoningStreamContent)
+		if m.rwVisible > 0 && m.rwVisible < totalReasoningRunes {
+			runes = runes[:m.rwVisible]
+		}
+		reasoningText := string(runes)
+		lines := strings.Split(reasoningText, "\n")
+		reasoningTyping := m.rwVisible < totalReasoningRunes
+		cursorVisible := reasoningTyping || (m.ticker.ticks/5)%2 == 0
+		for i, line := range lines {
+			line = strings.TrimRight(line, " \t\r")
+			if line == "" {
+				continue
+			}
+			isLastLine := i == len(lines)-1
+			wrappedLines := strings.Split(hardWrapRunes(line, innerWidth-reasoningW), "\n")
+			for j, wl := range wrappedLines {
+				isLast := isLastLine && j == len(wrappedLines)-1
+				guide := reasoningGuide.Render("  │ ")
+				if isLast {
+					cursorStr := s.StreamCursor.Render("▋")
+					cursorOverflow := reasoningW+lipgloss.Width(wl)+lipgloss.Width("▋") > innerWidth
+					if cursorOverflow {
+						sb.WriteString(guide + reasoningStyle.Render(wl))
+						sb.WriteString("\n")
+						if cursorVisible {
+							sb.WriteString(guide + cursorStr)
+						} else {
+							sb.WriteString(guide)
+						}
+					} else if cursorVisible {
+						sb.WriteString(guide + reasoningStyle.Render(wl) + cursorStr)
+					} else {
+						sb.WriteString(guide + reasoningStyle.Render(wl))
+					}
+				} else {
+					sb.WriteString(guide + reasoningStyle.Render(wl))
+				}
+				sb.WriteString("\n")
+			}
+		}
+	}
 }
 
 // renderSubAgentTree renders nested sub-agents with indentation.

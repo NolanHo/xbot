@@ -151,6 +151,10 @@
 
 ## Development Principles
 
+### Never Blame the User's Binary
+
+**永远不假设用户用了旧二进制。** 如果怀疑版本问题，说明自己的排查逻辑有漏洞，不是用户的问题。
+
 ### Always Prefer Explicit
 
 **核心原则：永远优先使用显式 API，避免隐式假设。**

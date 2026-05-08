@@ -38,7 +38,7 @@ func NewCLIChannel(cfg CLIChannelConfig, msgBus *bus.MessageBus) *CLIChannel {
 		workDir:    cfg.WorkDir,
 		msgChan:    make(chan bus.OutboundMessage, cliMsgBufSize),
 		progressCh: make(chan *CLIProgressPayload, 1), // buffered-1: latest progress wins
-		asyncCh:    make(chan tea.Msg, 64),            // unified async send: progress + outbound
+		asyncCh:    make(chan tea.Msg, 256),           // unified async send: progress + outbound
 		stopCh:     make(chan struct{}),
 	}
 }
@@ -792,7 +792,9 @@ func (c *CLIChannel) handleOutbound() {
 }
 
 // handleProgressDrain drains the progress coalescing channel and forwards
-// events to the unified asyncCh. Non-blocking — drops stale progress events.
+// handleProgressDrain drains progressCh and forwards non-blockingly
+// to the unified asyncCh. Drops stale progress when event loop is behind
+// (asyncCh full) — the next progress event will be fresher.
 func (c *CLIChannel) handleProgressDrain() {
 	defer c.wg.Done()
 

@@ -970,24 +970,45 @@ func (m *cliModel) updateSessionsPanel(msg tea.KeyPressMsg) (bool, *cliModel, te
 					m.saveCurrentSession() // save current session state
 					m.chatID = entry.ID
 					m.channelName = entry.Channel
+					// Update workdir to match the session's workdir.
+					workDir, _ := ParseChatID(entry.ID)
+					if workDir != "" {
+						m.workDir = workDir
+						if m.channel != nil && m.channel.config.SetCWDFn != nil {
+							_ = m.channel.config.SetCWDFn(entry.Channel, entry.ID, workDir)
+						}
+					}
+					// Update background task session key for isolation
+					if m.channel != nil {
+						m.channel.bgSessionKey = "cli:" + entry.ID
+						m.channel.updateBgTaskCountFn()
+					}
 					m.messages = nil
 					m.lastTokenUsage = nil // clear stale token bar on session switch
 					m.invalidateAllCache(false)
+					m.todos = nil // clear stale todos from previous session
+					m.todosDoneCleared = false
 					m.restoreSession() // restore target session state (or reset to idle)
-					m.typing = false
+					// Do NOT unconditionally override typing/progress/iterationHistory here.
+					// handleSuHistoryLoad (async) will reconcile with authoritative server data.
 					m.inputReady = true
-					m.progress = nil
-					m.iterationHistory = nil
-					m.invalidateProgressHistoryCache()
 					m.messageQueue = nil
 					m.queueEditing = false
 					// Close panel first
 					m.panelMode = ""
 					m.panelSessionItems = nil
+					var cmds []tea.Cmd
 					if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
 						m.suLoading = true
 						m.splashFrame = 0
-						return true, m, tea.Batch(m.splashTick(0), m.suLoadHistoryCmd())
+						cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
+					}
+					if m.typing && m.progress != nil && !m.fastTickActive {
+						m.fastTickActive = true
+						cmds = append(cmds, tickCmd())
+					}
+					if len(cmds) > 0 {
+						return true, m, tea.Batch(cmds...)
 					}
 					m.showSystemMsg(fmt.Sprintf("✅ 已切换到会话: %s", entry.Label), feedbackInfo)
 				} else {
@@ -1007,23 +1028,44 @@ func (m *cliModel) updateSessionsPanel(msg tea.KeyPressMsg) (bool, *cliModel, te
 					m.saveCurrentSession() // save current session state
 					m.chatID = agentChatID
 					m.channelName = "agent"
+					// Update workdir to match the parent session's workdir.
+					workDir, _ := ParseChatID(entry.ParentID)
+					if workDir != "" {
+						m.workDir = workDir
+						if m.channel != nil && m.channel.config.SetCWDFn != nil {
+							_ = m.channel.config.SetCWDFn(entry.Channel, entry.ParentID, workDir)
+						}
+					}
+					// Update background task session key for isolation
+					if m.channel != nil {
+						m.channel.bgSessionKey = "agent:" + agentChatID
+						m.channel.updateBgTaskCountFn()
+					}
 					m.messages = nil
 					m.lastTokenUsage = nil // clear stale token bar on session switch
 					m.invalidateAllCache(false)
+					m.todos = nil // clear stale todos from previous session
+					m.todosDoneCleared = false
 					m.restoreSession() // restore target session state (or reset to idle)
-					m.typing = false
+					// Do NOT unconditionally override typing/progress/iterationHistory here.
+					// See note in main session switch path above.
 					m.inputReady = true
-					m.progress = nil
-					m.iterationHistory = nil
-					m.invalidateProgressHistoryCache()
 					m.messageQueue = nil
 					m.queueEditing = false
 					m.panelMode = ""
 					m.panelSessionItems = nil
+					var cmds []tea.Cmd
 					if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
 						m.suLoading = true
 						m.splashFrame = 0
-						return true, m, tea.Batch(m.splashTick(0), m.suLoadHistoryCmd())
+						cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
+					}
+					if m.typing && m.progress != nil && !m.fastTickActive {
+						m.fastTickActive = true
+						cmds = append(cmds, tickCmd())
+					}
+					if len(cmds) > 0 {
+						return true, m, tea.Batch(cmds...)
 					}
 					m.showSystemMsg(fmt.Sprintf("✅ 已切换到 agent 会话: %s/%s", entry.Role, entry.Instance), feedbackInfo)
 				} else {
@@ -2465,7 +2507,6 @@ func (m *cliModel) applyQuickSwitch() {
 			{Key: "sub_model", Label: "Model", Description: "Model name", Type: SettingTypeText, DefaultValue: ""},
 			{Key: "sub_base_url", Label: "Base URL", Description: "API base URL (leave empty for provider default)", Type: SettingTypeText, DefaultValue: ""},
 			{Key: "sub_api_key", Label: "API Key", Description: "API key (leave empty to use global key)", Type: SettingTypePassword, DefaultValue: ""},
-			{Key: "sub_max_context", Label: "Max Context", Description: "Default max context tokens (0 = use global default)", Type: SettingTypeNumber, DefaultValue: "0"},
 			{Key: "sub_max_output_tokens", Label: "Max Output Tokens", Description: "Default max output tokens (0 = use 8192)", Type: SettingTypeNumber, DefaultValue: "0"},
 			{Key: "sub_thinking_mode", Label: "Thinking Mode", Description: "Thinking/reasoning mode", Type: SettingTypeSelect, DefaultValue: "", Options: []SettingOption{
 				{Label: "Auto (default)", Value: ""},
@@ -2492,7 +2533,6 @@ func (m *cliModel) applyQuickSwitch() {
 			if name == "" {
 				name = "unnamed"
 			}
-			maxCtx, _ := strconv.Atoi(values["sub_max_context"])
 			maxOut, _ := strconv.Atoi(values["sub_max_output_tokens"])
 			sub := &Subscription{
 				ID:              fmt.Sprintf("sub_%d", time.Now().UnixNano()),
@@ -2501,7 +2541,6 @@ func (m *cliModel) applyQuickSwitch() {
 				BaseURL:         values["sub_base_url"],
 				APIKey:          values["sub_api_key"],
 				Model:           values["sub_model"],
-				MaxContext:      maxCtx,
 				MaxOutputTokens: maxOut,
 				ThinkingMode:    values["sub_thinking_mode"],
 				Active:          false,
@@ -2601,7 +2640,6 @@ func (m *cliModel) editQuickSwitchEntry() {
 		{Key: "sub_model", Label: "Model", Description: "Model name", Type: SettingTypeCombo, DefaultValue: target.Model},
 		{Key: "sub_base_url", Label: "Base URL", Description: "API base URL (leave empty for provider default)", Type: SettingTypeText, DefaultValue: target.BaseURL},
 		{Key: "sub_api_key", Label: "API Key", Description: "API key (leave empty to use global key)", Type: SettingTypePassword, DefaultValue: target.APIKey},
-		{Key: "sub_max_context", Label: "Max Context", Description: "Default max context tokens (0 = use global default)", Type: SettingTypeNumber, DefaultValue: strconv.Itoa(target.MaxContext)},
 		{Key: "sub_max_output_tokens", Label: "Max Output Tokens", Description: "Default max output tokens (0 = use 8192)", Type: SettingTypeNumber, DefaultValue: strconv.Itoa(target.MaxOutputTokens)},
 		{Key: "sub_thinking_mode", Label: "Thinking Mode", Description: "Thinking/reasoning mode", Type: SettingTypeSelect, DefaultValue: target.ThinkingMode, Options: []SettingOption{
 			{Label: "Auto (default)", Value: ""},
@@ -2626,7 +2664,6 @@ func (m *cliModel) editQuickSwitchEntry() {
 		"sub_model":             target.Model,
 		"sub_base_url":          target.BaseURL,
 		"sub_api_key":           target.APIKey,
-		"sub_max_context":       strconv.Itoa(target.MaxContext),
 		"sub_max_output_tokens": strconv.Itoa(target.MaxOutputTokens),
 		"sub_thinking_mode":     target.ThinkingMode,
 	}
@@ -2640,7 +2677,6 @@ func (m *cliModel) editQuickSwitchEntry() {
 		if isMaskedAPIKey(apiKey) {
 			apiKey = target.APIKey
 		}
-		maxCtx, _ := strconv.Atoi(values["sub_max_context"])
 		maxOut, _ := strconv.Atoi(values["sub_max_output_tokens"])
 		updated := &Subscription{
 			ID:              target.ID,
@@ -2649,7 +2685,6 @@ func (m *cliModel) editQuickSwitchEntry() {
 			Model:           values["sub_model"],
 			BaseURL:         values["sub_base_url"],
 			APIKey:          apiKey,
-			MaxContext:      maxCtx,
 			MaxOutputTokens: maxOut,
 			ThinkingMode:    values["sub_thinking_mode"],
 			Active:          target.Active,
@@ -3339,9 +3374,19 @@ func (m *cliModel) showSessionCreateDialog() tea.Cmd {
 		m.chatID = chatID
 		m.sessionName = name
 		m.channelName = "cli"
+		// Update workdir and persist CWD for the new session (same as switchToSession)
+		workDir, _ := ParseChatID(chatID)
+		if workDir != "" {
+			m.workDir = workDir
+			if m.channel != nil && m.channel.config.SetCWDFn != nil {
+				_ = m.channel.config.SetCWDFn("cli", chatID, workDir)
+			}
+		}
 		m.messages = nil
 		m.lastTokenUsage = nil
 		m.invalidateAllCache(false)
+		m.todos = nil // clear stale todos from previous session
+		m.todosDoneCleared = false
 		m.restoreSession()
 		// Ensure clean state — restored session may have stale typing=true
 		m.typing = false
@@ -3351,6 +3396,13 @@ func (m *cliModel) showSessionCreateDialog() tea.Cmd {
 		m.invalidateProgressHistoryCache()
 		m.messageQueue = nil
 		m.queueEditing = false
+		// Refresh sessions list cache so sidebar/sessions panel shows the new session
+		if m.sessionsListFn != nil {
+			m.panelSessionItems = m.sessionsListFn()
+		}
+		if m.channel != nil && m.channel.config.SessionsListRefresh != nil {
+			m.channel.config.SessionsListRefresh()
+		}
 		m.showTempStatus(fmt.Sprintf("Created session: %s", name))
 	})
 	return nil
@@ -3384,10 +3436,24 @@ func (m *cliModel) deleteLocalSession(entry SessionPanelEntry) {
 		m.saveCurrentSession()
 		m.chatID = m.defaultChatID
 		m.sessionName = defaultSessionName
+		// Update workdir and persist CWD for the default session
+		m.workDir = m.defaultChatID
+		if m.channel != nil && m.channel.config.SetCWDFn != nil {
+			_ = m.channel.config.SetCWDFn("cli", m.defaultChatID, m.defaultChatID)
+		}
 		m.messages = nil
 		m.lastTokenUsage = nil
 		m.invalidateAllCache(false)
+		m.todos = nil // clear stale todos from deleted session
+		m.todosDoneCleared = false
 		m.restoreSession()
+	}
+	// Refresh sessions list so sidebar/sessions panel reflects the deletion
+	if m.sessionsListFn != nil {
+		m.panelSessionItems = m.sessionsListFn()
+	}
+	if m.channel != nil && m.channel.config.SessionsListRefresh != nil {
+		m.channel.config.SessionsListRefresh()
 	}
 	m.showTempStatus(fmt.Sprintf("Deleted session: %s", entry.Label))
 }
@@ -3407,6 +3473,14 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			m.saveCurrentSession()
 			m.chatID = entry.ID
 			m.channelName = entry.Channel
+			// Update workdir to match the session's workdir.
+			workDir, _ := ParseChatID(entry.ID)
+			if workDir != "" {
+				m.workDir = workDir
+				if m.channel != nil && m.channel.config.SetCWDFn != nil {
+					_ = m.channel.config.SetCWDFn(entry.Channel, entry.ID, workDir)
+				}
+			}
 			// Update background task session key for isolation
 			if m.channel != nil {
 				m.channel.bgSessionKey = "cli:" + entry.ID
@@ -3415,20 +3489,32 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			m.messages = nil
 			m.lastTokenUsage = nil
 			m.invalidateAllCache(false)
+			m.todos = nil // clear stale todos from previous session
+			m.todosDoneCleared = false
 			m.restoreSession()
-			// Ensure typing is cleared — the restored session may have stale
-			// typing=true from a completed turn. Engine will re-set via turnDone.
-			m.typing = false
+			// Do NOT unconditionally override typing/progress/iterationHistory here.
+			// handleSuHistoryLoad (async) will reconcile with authoritative server data.
+			// For the non-async path, the restored state is the best we have — clearing
+			// typing would block progress when turnCancelled=true from a Ctrl+C'd session.
 			m.inputReady = true
-			m.progress = nil
-			m.iterationHistory = nil
-			m.invalidateProgressHistoryCache()
 			m.messageQueue = nil
 			m.queueEditing = false
+			var cmds []tea.Cmd
 			if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
 				m.suLoading = true
 				m.splashFrame = 0
-				return true, tea.Batch(m.splashTick(0), m.suLoadHistoryCmd())
+				cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
+			}
+			// If the restored session has an active turn, start fast tick immediately.
+			// restoreSession() doesn't persist fastTickActive, so the tick chain may be
+			// broken. Without this, streaming output freezes until handleSuHistoryLoad
+			// restarts the tick (which may be delayed by async RPC in remote mode).
+			if m.typing && m.progress != nil && !m.fastTickActive {
+				m.fastTickActive = true
+				cmds = append(cmds, tickCmd())
+			}
+			if len(cmds) > 0 {
+				return true, tea.Batch(cmds...)
 			}
 			m.showSystemMsg(fmt.Sprintf("✅ 已切换到会话: %s", entry.Label), feedbackInfo)
 		}
@@ -3447,6 +3533,14 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			m.saveCurrentSession()
 			m.chatID = agentChatID
 			m.channelName = "agent"
+			// Update workdir to match the parent session's workdir.
+			workDir, _ := ParseChatID(entry.ParentID)
+			if workDir != "" {
+				m.workDir = workDir
+				if m.channel != nil && m.channel.config.SetCWDFn != nil {
+					_ = m.channel.config.SetCWDFn(entry.Channel, entry.ParentID, workDir)
+				}
+			}
 			// Update background task session key for isolation
 			if m.channel != nil {
 				m.channel.bgSessionKey = "agent:" + agentChatID
@@ -3455,18 +3549,28 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			m.messages = nil
 			m.lastTokenUsage = nil
 			m.invalidateAllCache(false)
+			m.todos = nil // clear stale todos from previous session
+			m.todosDoneCleared = false
 			m.restoreSession()
-			m.typing = false
+			// Do NOT unconditionally override typing/progress/iterationHistory here.
+			// See note in main session switch path above.
 			m.inputReady = true
-			m.progress = nil
-			m.iterationHistory = nil
-			m.invalidateProgressHistoryCache()
 			m.messageQueue = nil
 			m.queueEditing = false
+			var cmds []tea.Cmd
 			if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
 				m.suLoading = true
 				m.splashFrame = 0
-				return true, tea.Batch(m.splashTick(0), m.suLoadHistoryCmd())
+				cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
+			}
+			// If the restored session has an active turn, start fast tick immediately
+			// (same fix as main session path above).
+			if m.typing && m.progress != nil && !m.fastTickActive {
+				m.fastTickActive = true
+				cmds = append(cmds, tickCmd())
+			}
+			if len(cmds) > 0 {
+				return true, tea.Batch(cmds...)
 			}
 			m.showSystemMsg(fmt.Sprintf("✅ 已切换到 agent 会话: %s/%s", entry.Role, entry.Instance), feedbackInfo)
 		}

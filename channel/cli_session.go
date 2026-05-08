@@ -43,6 +43,12 @@ func ParseChatID(chatID string) (workDir, sessionName string) {
 	if !strings.HasPrefix(workDir, "/") && !strings.HasPrefix(workDir, ".") && !strings.HasPrefix(workDir, "~") {
 		return chatID, defaultSessionName
 	}
+	// Resolve relative workDir (e.g. "." from legacy sessions) to absolute path
+	if !filepath.IsAbs(workDir) {
+		if abs, err := filepath.Abs(workDir); err == nil {
+			workDir = abs
+		}
+	}
 	return workDir, sessionName
 }
 
@@ -94,6 +100,12 @@ func sessionDirHash(workDir string) string {
 
 // loadDirSessions loads the session list for a given work directory.
 func loadDirSessions(workDir string) (*dirSessions, error) {
+	// Resolve relative workDir to absolute path so ds.Dir is always absolute
+	if !filepath.IsAbs(workDir) {
+		if abs, err := filepath.Abs(workDir); err == nil {
+			workDir = abs
+		}
+	}
 	dir := sessionsDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err

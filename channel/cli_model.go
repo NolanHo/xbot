@@ -359,9 +359,22 @@ func (m *cliModel) restoreSession() {
 		m.inputHistory = saved.inputHistory
 		m.inputHistoryIdx = saved.inputHistoryIdx
 		m.inputDraft = saved.inputDraft
-		// Load todo list for the restored session
+		// Load todo list for the restored session and sync to display
 		if m.todoManager != nil {
 			_ = m.todoManager.LoadFromFile(key)
+			if items := m.todoManager.GetTodos(key); len(items) > 0 {
+				m.todos = make([]CLITodoItem, len(items))
+				for i, t := range items {
+					m.todos[i] = CLITodoItem{ID: t.ID, Text: t.Text, Done: t.Done}
+				}
+				m.todosDoneCleared = false
+			} else {
+				m.todos = nil
+				m.todosDoneCleared = false
+			}
+		} else {
+			m.todos = nil
+			m.todosDoneCleared = false
 		}
 		delete(m.savedSessions, key) // clean up
 	} else {
@@ -384,6 +397,9 @@ func (m *cliModel) restoreSession() {
 		m.rwVisible = 0
 		m.typewriterTickActive = false
 		m.pendingUserMsg = nil
+		// Clear todos — no saved state means no active todo list
+		m.todos = nil
+		m.todosDoneCleared = false
 	}
 }
 
@@ -550,6 +566,20 @@ type cliModel struct {
 	cachedCurrentStaticWidth int    // bubbleWidth when cache was built
 	cachedCurrentIter        int    // progress.Iteration when cache was built
 	cachedCurrentStaticFP    uint64 // fingerprint of static content for dirty detection
+
+	// Reasoning/stream/thinking block caches — avoids per-line Style.Render,
+	// lipgloss.Width, and hardWrapRunes on every tick when content is static.
+	cachedReasoningBlock      string // rendered reasoning lines with guides and cursor
+	cachedReasoningBlockFP    uint64 // fingerprint for dirty detection
+	cachedReasoningBlockWidth int    // innerWidth when cache was built
+
+	cachedStreamBlock      string // rendered stream lines with guides and cursor
+	cachedStreamBlockFP    uint64 // fingerprint for dirty detection
+	cachedStreamBlockWidth int    // innerWidth when cache was built
+
+	cachedThinkingBlock      string // rendered thinking lines with guides
+	cachedThinkingBlockFP    uint64 // fingerprint for dirty detection
+	cachedThinkingBlockWidth int    // innerWidth when cache was built
 
 	// --- §2 工具可视化 ---
 	lastCompletedTools []CLIToolProgress // 每轮结束时快照，不依赖 m.progress 生命周期

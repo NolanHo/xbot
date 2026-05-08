@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -959,6 +960,16 @@ func buildToolContext(ctx context.Context, cfg *RunConfig) *tools.ToolContext {
 		// Fallback: new session has empty CWD, use InitialCWD (inherited from parent).
 		if tc.CurrentDir == "" && cfg.InitialCWD != "" {
 			tc.CurrentDir = cfg.InitialCWD
+		}
+		// Final fallback: use WorkingDir if both session CWD and InitialCWD are empty
+		if tc.CurrentDir == "" && cfg.WorkingDir != "" {
+			tc.CurrentDir = cfg.WorkingDir
+		}
+		// Resolve relative CWD to absolute path
+		if tc.CurrentDir != "" && !filepath.IsAbs(tc.CurrentDir) {
+			if abs, err := filepath.Abs(tc.CurrentDir); err == nil {
+				tc.CurrentDir = abs
+			}
 		}
 		tc.SetCurrentDir = func(dir string) {
 			cfg.Session.SetCurrentDir(dir)

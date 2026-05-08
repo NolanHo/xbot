@@ -230,10 +230,11 @@ type AgentConfig struct {
 
 	ContextMode string `json:"context_mode"`
 	// EnableAutoCompress 为 nil 表示 JSON 未写该字段，Load 后与未设置 AGENT_ENABLE_AUTO_COMPRESS 一致，默认启用压缩。
-	EnableAutoCompress   *bool   `json:"enable_auto_compress,omitempty"`
-	MaxContextTokens     int     `json:"max_context_tokens"`
-	CompressionThreshold float64 `json:"compression_threshold"`
-	DynamicMaxTokens     *bool   `json:"dynamic_max_tokens,omitempty"` // DEPRECATED: no longer used, kept for config.json compat
+	EnableAutoCompress   *bool          `json:"enable_auto_compress,omitempty"`
+	MaxContextTokens     int            `json:"max_context_tokens"`
+	ModelContexts        map[string]int `json:"model_contexts,omitempty"` // model -> max context tokens, overrides MaxContextTokens
+	CompressionThreshold float64        `json:"compression_threshold"`
+	DynamicMaxTokens     *bool          `json:"dynamic_max_tokens,omitempty"` // DEPRECATED: no longer used, kept for config.json compat
 
 	PurgeOldMessages bool `json:"purge_old_messages"`
 
@@ -274,7 +275,6 @@ type SubscriptionConfig struct {
 	BaseURL         string `json:"base_url"`
 	APIKey          string `json:"api_key"`
 	Model           string `json:"model"`
-	MaxContext      int    `json:"max_context,omitempty"`       // 0 = use default
 	MaxOutputTokens int    `json:"max_output_tokens,omitempty"` // 0 = use default (8192)
 	ThinkingMode    string `json:"thinking_mode,omitempty"`     // "" = auto, "enabled", "disabled"
 	Active          bool   `json:"active"`

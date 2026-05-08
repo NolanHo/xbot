@@ -44,18 +44,18 @@ func (a *todoManagerAdapter) ClearTodos(sessionKey string) {
 	a.mgr.SetTodos(sessionKey, nil)
 }
 
-// applyUserMaxContext 如果用户在 Settings 中设置了 max_context，
-// 创建一个新的 ContextManagerConfig 副本并覆盖 MaxContextTokens，
+// applyUserMaxContext 如果模型订阅中设置了 MaxContext，
+// 创建一个新的 ContextManagerConfig 副本覆盖 MaxContextTokens，
 // 避免污染 Agent 级别的原始配置（含 sync.RWMutex）。
+// 模型级别的 MaxContext 优先级高于全局 MaxContextTokens：
+//   - userMaxCtx > 0 → 直接使用模型配置的值
+//   - userMaxCtx == 0 → 回退到全局 base.MaxContextTokens
 func applyUserMaxContext(base *ContextManagerConfig, userMaxCtx int) *ContextManagerConfig {
 	if base == nil {
 		return nil
 	}
-	// userMaxCtx is the model's native context window (from subscription).
-	// base.MaxContextTokens is the user-configured cap (from settings panel, default 200k).
-	// Use the user's cap if set and lower than the model's window, otherwise use the model's.
 	effective := base.MaxContextTokens
-	if userMaxCtx > 0 && (effective <= 0 || userMaxCtx < effective) {
+	if userMaxCtx > 0 {
 		effective = userMaxCtx
 	}
 	if effective <= 0 {
@@ -117,6 +117,7 @@ func (a *Agent) buildBaseRunConfig(
 		PreferredSandbox: a.sandboxMode,
 		Sandbox:          resolveSandbox(a.sandbox, sandboxUserID),
 		SandboxMode:      a.sandboxMode,
+		InitialCWD:       a.workDir, // absolute-resolved at buildToolContext time
 
 		// 循环控制
 		MaxIterations:   a.getMaxIterations(),

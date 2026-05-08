@@ -607,6 +607,7 @@ type CLIChannelConfig struct {
 	AgentMessages        func(roleName, instance string) []SessionChatMessage                                                           // 获取 interactive agent 的对话消息
 	ChatCreateFn         func(channelName, senderID, label string) (string, error)                                                      // 创建新 ChatRoom（返回 chatID）
 	SessionsDeleteFn     func(channelName, chatID string) error                                                                         // 删除 session（本地 JSON + 服务端 DB 级联）
+	SessionsListRefresh  func()                                                                                                         // 侧边栏刷新：session 创建/删除后立即调用，确保 sidebar 不显示过期数据
 	SessionsList         func() []SessionPanelEntry                                                                                     // 列出所有 session（main + subagent）
 	GetActiveProgressFn  func(channelName, chatID string) *CLIProgressPayload                                                           // 获取目标 session 的活跃进度（session switch 恢复用）
 	ChannelConfigGetFn   func() (map[string]map[string]string, error)                                                                   // 获取频道配置（用于 /channel 面板）
@@ -619,6 +620,7 @@ type CLIChannelConfig struct {
 	SidebarWidthOverride int                                                                                                            // --sidebar-width N (0 = use setting/default)
 	NoSidebar            bool                                                                                                           // --no-sidebar
 	TodoManager          *tools.TodoManager                                                                                             // per-session todo persistence
+	SetCWDFn             func(channelName, chatID, dir string) error                                                                    // 会话切换时初始化 CWD
 }
 
 type AgentPanelEntry struct {
@@ -748,7 +750,6 @@ type Subscription struct {
 	BaseURL         string
 	APIKey          string
 	Model           string
-	MaxContext      int
 	MaxOutputTokens int
 	ThinkingMode    string
 	Active          bool

@@ -164,6 +164,7 @@ func (app *cliApp) refreshRemoteValuesCache() {
 		}
 		app.cfg.LLM = llmCfg
 		app.backend.LLMFactory().SetModelTiers(llmCfg)
+		app.backend.LLMFactory().SetModelContexts(app.cfg.Agent.ModelContexts)
 	}
 }
 
@@ -762,6 +763,7 @@ func newCLIApp(serverURL, token string, forceLocal bool) *cliApp {
 		backend.RegisterCoreTool(tools.NewWebSearchTool(cfg.TavilyAPIKey))
 		backend.IndexGlobalTools()
 		backend.LLMFactory().SetModelTiers(cfg.LLM)
+		backend.LLMFactory().SetModelContexts(cfg.Agent.ModelContexts)
 		backend.LLMFactory().SetRetryConfig(llm.RetryConfig{
 			Attempts: uint(cfg.Agent.LLMRetryAttempts),
 			Delay:    time.Duration(cfg.Agent.LLMRetryDelay),
@@ -1010,7 +1012,7 @@ func main() {
 	var tenantSvc *sqlite.TenantService
 
 	cliCfg := channel.CLIChannelConfig{
-		WorkDir:              app.workDir,
+		WorkDir:              absWorkDir,
 		ChatID:               absWorkDir,
 		RemoteMode:           isRemoteBackend,
 		RemoteServerURL:      remoteServerURL,
@@ -1604,6 +1606,10 @@ func main() {
 	}
 
 	// Agent session history: load from in-memory interactiveSubAgents (not DB).
+	// refreshAgentCache is declared here at function level (not inside an if block)
+	// so it's accessible from both the SessionsListRefresh callback and the remote
+	// client setup below. Assigned later with = (not :=).
+	var refreshAgentCache func()
 	if app.backend != nil {
 		backend := app.backend
 		cliCfg.GetActiveProgressFn = func(channelName, chatID string) *channel.CLIProgressPayload {
@@ -1619,6 +1625,16 @@ func main() {
 			}
 			cs := sqlite.NewChatService(app.db.Conn())
 			return cs.DeleteChat(channelName, cliSenderID, chatID)
+		}
+		// sessionsListRefresh will be assigned when refreshAgentCache is defined below.
+		// We defer wiring via a pointer so the closure can capture the later-defined func.
+		cliCfg.SessionsListRefresh = func() {
+			if refreshAgentCache != nil {
+				refreshAgentCache()
+			}
+		}
+		cliCfg.SetCWDFn = func(channelName, chatID, dir string) error {
+			return backend.SetCWD(channelName, chatID, dir)
 		}
 		cliCfg.AgentSessionDumpFn = func(chatID string) ([]channel.HistoryMessage, error) {
 			// Try in-memory first (running sessions)
@@ -2046,7 +2062,7 @@ func main() {
 		})
 		// Background goroutine: periodically refresh agent count/list cache
 		// (RPC calls must not happen from BubbleTea event loop → deadlock)
-		refreshAgentCache := func() {
+		refreshAgentCache = func() {
 			if app.backend == nil {
 				return
 			}
@@ -2413,7 +2429,6 @@ func (m *configSubscriptionManager) List(_ string) ([]channel.Subscription, erro
 			BaseURL:         s.BaseURL,
 			APIKey:          s.APIKey,
 			Model:           s.Model,
-			MaxContext:      s.MaxContext,
 			MaxOutputTokens: s.MaxOutputTokens,
 			ThinkingMode:    s.ThinkingMode,
 			Active:          s.Active,
@@ -2432,7 +2447,6 @@ func (m *configSubscriptionManager) GetDefault(_ string) (*channel.Subscription,
 				BaseURL:         s.BaseURL,
 				APIKey:          s.APIKey,
 				Model:           s.Model,
-				MaxContext:      s.MaxContext,
 				MaxOutputTokens: s.MaxOutputTokens,
 				ThinkingMode:    s.ThinkingMode,
 				Active:          true,
@@ -2450,7 +2464,6 @@ func (m *configSubscriptionManager) Add(sub *channel.Subscription) error {
 		BaseURL:         sub.BaseURL,
 		APIKey:          sub.APIKey,
 		Model:           sub.Model,
-		MaxContext:      sub.MaxContext,
 		MaxOutputTokens: sub.MaxOutputTokens,
 		ThinkingMode:    sub.ThinkingMode,
 		Active:          sub.Active,
@@ -2532,7 +2545,6 @@ func (m *configSubscriptionManager) Update(id string, sub *channel.Subscription)
 				m.cfg.Subscriptions[i].APIKey = sub.APIKey
 			}
 			m.cfg.Subscriptions[i].Model = sub.Model
-			m.cfg.Subscriptions[i].MaxContext = sub.MaxContext
 			m.cfg.Subscriptions[i].MaxOutputTokens = sub.MaxOutputTokens
 			m.cfg.Subscriptions[i].ThinkingMode = sub.ThinkingMode
 			// If modifying active subscription, sync cfg.LLM

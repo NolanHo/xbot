@@ -270,6 +270,24 @@ func (m *cliModel) carryForwardProgressState(prev *CLIProgressPayload) {
 	if m.progress.Thinking == "" && prev.Thinking != "" && sameIter {
 		m.progress.Thinking = prev.Thinking
 	}
+
+	// Carry forward StreamContent within the same iteration.
+	// Structured payloads from progressFinalizer/GetActiveProgress do not carry
+	// StreamContent; losing it mid-stream causes visible "frozen" display after
+	// session switch recovery.
+	// Skip when Thinking is already set — it contains the same finalized content
+	// and carrying StreamContent forward would cause duplicate rendering
+	// (renderCurrentIteration renders both fields separately).
+	if prev.StreamContent != "" && m.progress.StreamContent == "" && sameIter {
+		if m.progress.Thinking == "" {
+			m.progress.StreamContent = prev.StreamContent
+		}
+	}
+
+	// Carry forward ReasoningStreamContent.
+	// Guard: only when StreamContent is also empty — reasoning stream is the
+	// LLM's internal thinking; once the actual text response (StreamContent)
+	// starts, reasoning stream from the previous progress shouldn't reappear.
 	if m.progress.ReasoningStreamContent == "" && prev.ReasoningStreamContent != "" && sameIter {
 		if m.progress.StreamContent == "" {
 			m.progress.ReasoningStreamContent = prev.ReasoningStreamContent
@@ -380,6 +398,14 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 			// Turn started but no structured progress yet — create minimal payload
 			m.progress = msg.payload
 		}
+		return
+	}
+	// Structured (non-stream-only) payload: replace m.progress.
+	// Carrying forward stream content (same-iteration only) is handled by
+	// carryForwardProgressState below — the single source of truth for all
+	// carry-forward logic.
+	if msg.payload == nil {
+		m.progress = nil
 		return
 	}
 	m.progress = msg.payload
@@ -862,6 +888,22 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 			m.startAgentTurn()
 		}
 		m.progress = msg.activeProgress
+
+		// Restore token usage from server snapshot so the context bar
+		// doesn't disappear on session switch. Without this, lastTokenUsage
+		// stays nil (cleared by session switch paths) and the context bar
+		// only reappears with the next live progress event.
+		m.cacheTokenUsage(msg.activeProgress.TokenUsage)
+		// Resolve cached context settings from current session's config.
+		if m.cachedMaxContextTokens == 0 {
+			m.cachedMaxContextTokens = m.resolveMaxContextTokens()
+		}
+		if m.cachedCompressRatio == 0 {
+			m.cachedCompressRatio = m.resolveCompressRatio()
+		}
+		if m.cachedMaxOutputTokens == 0 {
+			m.cachedMaxOutputTokens = m.resolveMaxOutputTokens()
+		}
 
 		// Restore StartedAt for active tools so live elapsed timers work.
 		for i := range m.progress.ActiveTools {

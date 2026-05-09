@@ -26,6 +26,11 @@ processMessage (agent/agent.go)
 ### WorktreeRegistry (`tools/worktree_registry.go`)
 
 Process-level `sync.Map`-based registry. Single source of truth for active worktrees.
+**Persisted per-repo** to `{repo}/../.xbot-worktrees/registry.json`:
+- `Register`/`Deregister`/`UpdateStatus` → atomic save (tmp+rename)
+- `ensureLoaded` → lazy load on first access (thread-safe via `loadedMu`)
+- Skip orphaned entries whose worktree directory no longer exists
+- Each git repo has its own `registry.json`, isolated from other repos
 
 ```go
 type WorktreeEntry struct {

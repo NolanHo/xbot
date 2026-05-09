@@ -77,6 +77,10 @@ type AgentBackend interface {
 	// Local: no-op.
 	OnPluginWidgets(callback func(zones map[string]string, chatID string))
 
+	// OnTUIControlRequest registers a callback for server-initiated TUI control requests.
+	// Local: no-op. Remote: called when server sends a tui_control_req WS message.
+	OnTUIControlRequest(callback func(action string, params map[string]string) (map[string]string, error))
+
 	// Subscribe registers this client to receive events for a chatID.
 	// Local: no-op. Remote: sends subscribe message via WS.
 	Subscribe(chatID string) error
@@ -100,6 +104,13 @@ type AgentBackend interface {
 
 	// SettingsService returns the settings service.
 	SettingsService() *SettingsService
+
+	// SetTUICallbacks sets the TUI control and config callbacks (CLI only, no-op for remote).
+	SetTUICallbacks(
+		tuiCtrl func(action string, params map[string]string) (map[string]string, error),
+		configGet func(key string) (string, error),
+		configSet func(key, value string) (string, error),
+	)
 
 	// MultiSession returns the multi-tenant session manager.
 	MultiSession() *session.MultiTenantSession

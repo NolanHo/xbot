@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 
 	"xbot/tools"
 )
@@ -646,18 +647,15 @@ func (m *cliModel) clickApprovalBtn(idx int) (bool, tea.Model, tea.Cmd) {
 // --- Textarea click handler ---
 
 func (m *cliModel) clickTextarea(x, y int) (bool, tea.Model, tea.Cmd) {
-	// Click on main textarea area — position cursor
-	// Account for InputBox horizontal padding (Padding(0,1) = 1 col border left)
-	// and sidebar offset when sidebar is on the left.
-	sidebarOffset := 0
-	if m.isWide() && m.sidebarEnabled && m.sidebarVisible && m.sidebarPosition == "left" {
-		// When sidebar is on the left, all middleBlock content (including InputBox)
-		// is shifted right by sidebarWidth + 4 (sidebar + gap between sidebar and chat).
-		// Without this, clicking in the textarea when sidebar is visible on the left
-		// positions the cursor too far right.
-		sidebarOffset = m.sidebarWidth + 4
-	}
-	contentX := x - 1 - sidebarOffset
+	// x is terminal column (from msg.X). Convert to textarea-relative column.
+	// xShift is the actual rendered sidebar width (measured dynamically to account
+	// for character width variations like RUNEWIDTH_EASTASIAN).
+	// InputBox content offset = visual width of border-left char + padding-left.
+	// Border char width varies: │ is width=1 normally, width=2 with EASTASIAN.
+	inputBox := m.styles.InputBox
+	borderLeftVisW := lipgloss.Width(lipgloss.RoundedBorder().Left)
+	contentOffset := borderLeftVisW + inputBox.GetPaddingLeft()
+	contentX := x - m.xShift - contentOffset
 	if contentX < 0 {
 		contentX = 0
 	}
@@ -787,12 +785,15 @@ func (m *cliModel) trackMainLayoutZones(zb *mouseZoneBuilder) {
 	// If sidebar is visible, register session item zones and new-session button.
 	showSidebar := m.isWide() && m.sidebarEnabled && m.sidebarVisible
 	// xShift: when sidebar is on the left, all middleBlock content is shifted right
+	// by the actual rendered sidebar width (depends on char widths, e.g. EASTASIAN).
 	xShift := 0
 	if showSidebar {
-		// SidebarBg has RoundedBorder (1 col) + Padding(0,1) (1 col) = 2 col
-		// offset before content area. Click zones are measured from
-		// content start, so add this offset for screen coordinates.
-		const sidebarContentOffset = 2
+		// sidebarContentOffset: border left + padding left (in visual columns).
+		// Border char width varies with EASTASIAN: │ is width=1 normally, width=2 with EASTASIAN.
+		sbStyle := m.styles.SidebarBg
+		sbBorderLeftVisW := lipgloss.Width(lipgloss.RoundedBorder().Left)
+		sidebarContentOffset := sbBorderLeftVisW + sbStyle.GetPaddingLeft()
+		sbVisW := m.sidebarRenderedWidth() // actual visual width (accounts for EASTASIAN etc.)
 		if m.sidebarPosition == "right" {
 			// sidebar on right: middleBlock starts at 0, sidebar starts at chatWidth
 			sbXStart := m.chatWidth()
@@ -810,23 +811,23 @@ func (m *cliModel) trackMainLayoutZones(zb *mouseZoneBuilder) {
 				zb.addX(sidebarNewSessionY+borderOffset, sbXStart, sbXEnd, "sidebarNewSession", 0)
 			}
 		} else {
-			// sidebar on left: middleBlock content starts at sidebarWidth+4
-			sbXEnd := m.sidebarWidth + 4
+			// sidebar on left: middleBlock starts at sbVisW
 			borderOffset := 1 // RoundedBorder top edge
 			for relY, sessionIdx := range sidebarSessionLines {
 				if sessionIdx >= 0 {
-					zb.addX(relY+borderOffset, 0, sbXEnd, "sidebarSession", sessionIdx)
+					zb.addX(relY+borderOffset, 0, sbVisW, "sidebarSession", sessionIdx)
 				}
 				if relY < len(sidebarDeleteXStart) && sidebarDeleteXStart[relY] >= 0 {
 					zb.addX(relY+borderOffset, sidebarContentOffset+sidebarDeleteXStart[relY], sidebarContentOffset+sidebarDeleteXEnd[relY], "sidebarDeleteSession", sessionIdx)
 				}
 			}
 			if sidebarNewSessionY >= 0 {
-				zb.addX(sidebarNewSessionY+borderOffset, 0, sbXEnd, "sidebarNewSession", 0)
+				zb.addX(sidebarNewSessionY+borderOffset, 0, sbVisW, "sidebarNewSession", 0)
 			}
-			xShift = sbXEnd
+			xShift = sbVisW
 		}
 	}
+	m.xShift = xShift
 
 	zb.skip(viewportH)
 
@@ -855,7 +856,9 @@ func (m *cliModel) trackMainLayoutZones(zb *mouseZoneBuilder) {
 	// Input box: border top + textarea height + border bottom
 	zb.skip(1) // top border (or context bar replacement)
 
-	// Textarea content lines — interactive (click to position cursor)
+	// Textarea content lines — interactive (click to position cursor).
+	// Full-row zone (XStart=-1): matches any X at textarea Y level.
+	// Coordinate offset is computed via m.xShift + InputBox border in clickTextarea.
 	taH := m.textarea.Height()
 	if taH < 1 {
 		taH = 1

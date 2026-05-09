@@ -156,6 +156,9 @@ func (b *Backend) OnConnStateChange(cb func(state string))         { b.transport
 func (b *Backend) OnPluginWidgets(cb func(zones map[string]string, chatID string)) {
 	b.transport.OnPluginWidgets(cb)
 }
+func (b *Backend) OnTUIControlRequest(cb func(action string, params map[string]string) (map[string]string, error)) {
+	b.transport.OnTUIControlRequest(cb)
+}
 func (b *Backend) Subscribe(chatID string) error { return b.transport.Subscribe(chatID) }
 func (b *Backend) ConnState() string             { return b.transport.ConnState() }
 func (b *Backend) ServerURL() string             { return b.transport.ServerURL() }
@@ -169,6 +172,16 @@ func (b *Backend) IsRemote() bool                    { return b.transport.IsRemo
 func (b *Backend) Bus() *bus.MessageBus              { return b.bus }
 func (b *Backend) LLMFactory() *LLMFactory           { return withAgent(b, (*Agent).LLMFactory) }
 func (b *Backend) SettingsService() *SettingsService { return withAgent(b, (*Agent).SettingsService) }
+
+func (b *Backend) SetTUICallbacks(
+	tuiCtrl func(action string, params map[string]string) (map[string]string, error),
+	configGet func(key string) (string, error),
+	configSet func(key, value string) (string, error),
+) {
+	if b.agent != nil {
+		b.agent.SetTUICallbacks(tuiCtrl, configGet, configSet)
+	}
+}
 func (b *Backend) MultiSession() *session.MultiTenantSession {
 	return withAgent(b, (*Agent).MultiSession)
 }

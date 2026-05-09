@@ -425,6 +425,54 @@ func (m *cliModel) restoreSession() {
 	}
 }
 
+// postRestoreSessionSetup handles the common setup after restoreSession() in all
+// session switch paths. It resets turn state for remote mode (pending RPC authority),
+// sets inputReady appropriately, starts async history loading, and kicks the tick chain
+// if the restored session has an active turn.
+//
+// In remote mode (DynamicHistoryLoader != nil): inputReady=false and typing/progress
+// are reset to idle. The authoritative state comes from handleSuHistoryLoad (RPC).
+// This prevents stale client-side typing/busy state from causing:
+//   - flushMessageQueue sending queued messages before RPC confirms idle
+//   - handleProgressMsg auto-starting a turn on stale progress events
+//   - handleAgentMessage rendering stale replies
+//
+// In local mode: inputReady=true immediately (no async delay, no RPC).
+func (m *cliModel) postRestoreSessionSetup() []tea.Cmd {
+	isRemote := m.channel != nil && m.channel.config.DynamicHistoryLoader != nil
+	var cmds []tea.Cmd
+
+	if isRemote {
+		// Remote mode: don't trust restored typing/progress state.
+		// Force idle until handleSuHistoryLoad reconciles with server.
+		// The RPC (get_active_progress) is the authoritative source.
+		m.typing = false
+		m.progress = nil
+		m.needFlushQueue = false
+		m.turnCancelled = false
+		m.fastTickActive = false
+		m.typewriterTickActive = false
+		m.tickGen++ // invalidate any pending ticks from previous chain
+		m.lastProgressSeq = 0
+		m.suPhaseDoneConfirmed = false
+		m.inputReady = false
+
+		m.suLoading = true
+		m.splashFrame = 0
+		cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
+	} else {
+		// Local mode: restored state is authoritative (no RPC delay).
+		m.inputReady = true
+		// Kick tick chain if restored session has active turn.
+		if m.typing && m.progress != nil && !m.fastTickActive {
+			m.fastTickActive = true
+			cmds = append(cmds, m.tickCmd())
+		}
+	}
+
+	return cmds
+}
+
 // savePendingToSessionState syncs m.pendingUserMsg into the saved session state
 // for the current session. Call after setting m.pendingUserMsg to ensure it survives
 // a subsequent saveCurrentSession() call during session switch.
@@ -460,6 +508,21 @@ type cliToastMsg struct {
 
 // cliToastClearMsg Toast 通知自动清除消息（弹出队列头部）
 type cliToastClearMsg struct{}
+
+// cliSessionControlMsg AI-triggered TUI session control message.
+// Sent from tui_control tool via asyncCh to operate sidebar sessions.
+type cliSessionControlMsg struct {
+	action string                 // "switch" | "close"
+	chatID string                 // target session chatID
+	params map[string]string      // extra params (e.g. confirm=true)
+	result chan *cliSessionResult // result channel (tool blocks on this)
+}
+
+// cliSessionResult carries the outcome of a TUI session control operation.
+type cliSessionResult struct {
+	ok  bool
+	err string
+}
 
 // cliModel Bubble Tea 状态模型
 type cliModel struct {
@@ -545,6 +608,7 @@ type cliModel struct {
 	lastProgressSeq      uint64                 // 上次进度事件的序列号（单调递增校验）
 	iterationStartTime   time.Time              // current iteration wall-clock start time
 	fastTickActive       bool                   // true when a fast tick chain (100ms) is running
+	tickGen              uint64                 // incremented on session switch; stale ticks are discarded
 	typewriterTickActive bool                   // true when typewriter tick chain (50ms) is running
 	twVisible            int                    // typewriter: runes currently visible in stream content
 	rwVisible            int                    // typewriter: runes currently visible in reasoning stream content
@@ -737,9 +801,10 @@ type cliModel struct {
 	panelSubGeneration int
 
 	// --- §14 Splash 画面 ---
-	splashDone  bool // true = splash 动画结束，进入正常界面
-	splashFrame int  // 当前 splash 动画帧索引
-	suLoading   bool // true = /su 切换用户后正在加载历史，显示 loading 画面
+	splashDone           bool // true = splash 动画结束，进入正常界面
+	splashFrame          int  // 当前 splash 动画帧索引
+	suLoading            bool // true = /su 切换用户后正在加载历史，显示 loading 画面
+	suPhaseDoneConfirmed bool // true = PhaseDone received during suLoading (server confirmed idle)
 
 	// --- §16 Toast 通知队列 ---
 	toasts     []cliToastItem // Toast 队列（头部=当前显示）
@@ -779,6 +844,7 @@ type cliModel struct {
 	sidebarWidth    int    // sidebar width in chars
 	sidebarPosition string // "left" / "right"
 	sidebarVisible  bool   // runtime: is sidebar currently shown (user toggled with Ctrl+B)?
+	xShift          int    // sidebar X offset for middleBlock, set during trackMainLayoutZones
 
 	// toolDisplayInfo
 
@@ -977,7 +1043,9 @@ type cliHistoryLoadMsg struct {
 }
 
 // cliTickMsg 定时刷新（用于流式输出动画）
-type cliTickMsg struct{}
+type cliTickMsg struct {
+	gen uint64 // tick generation: stale ticks from previous chains are discarded
+}
 
 // typewriterTickMsg 独立的打字机刷新（50ms 间隔，逐 rune 输出）
 type typewriterTickMsg struct{}

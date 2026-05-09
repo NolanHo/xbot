@@ -18,6 +18,8 @@ import (
 	"xbot/storage/sqlite"
 	"xbot/storage/vectordb"
 	"xbot/tools"
+
+	log "xbot/logger"
 )
 
 // SubAgentProgressCallback is the type for SubAgent progress callback.
@@ -155,6 +157,17 @@ type RunConfig struct {
 
 	// SettingsSvc provides access to user settings (nil = settings not available).
 	SettingsSvc *SettingsService
+
+	// TUICtrlFn is called by tui_control tool to operate TUI (CLI channel only).
+	TUICtrlFn func(action string, params map[string]string) (map[string]string, error)
+	// ConfigGetFn is called by config tool to read settings.
+	ConfigGetFn func(key string) (string, error)
+	// ConfigSetFn is called by config tool to write settings.
+	ConfigSetFn func(key, value string) (string, error)
+
+	// RemoteTUICtrlFn is set in buildMainRunConfig for remote CLI mode.
+	// It sends TUI control requests to the remote CLI client via WS.
+	RemoteTUICtrlFn func(action string, params map[string]string) (map[string]string, error)
 
 	// OffloadStore Layer 1 offload store（nil = 不启用）
 	OffloadStore *OffloadStore
@@ -1002,6 +1015,46 @@ func buildToolContext(ctx context.Context, cfg *RunConfig) *tools.ToolContext {
 	if cfg.InitialGroupID != "" {
 		tc.GroupID = cfg.InitialGroupID
 		tc.GroupMembers = cfg.InitialGroupMembers
+	}
+
+	// Inject TUI/Config callbacks
+	// TUI control: from Agent callback (CLI local mode) or remote WS (CLI remote mode)
+	if cfg.TUICtrlFn != nil {
+		tc.TUIControl = cfg.TUICtrlFn
+	} else if cfg.RemoteTUICtrlFn != nil {
+		tc.TUIControl = cfg.RemoteTUICtrlFn
+	} else {
+		log.WithFields(log.Fields{
+			"channel":   cfg.Channel,
+			"chat_id":   cfg.ChatID,
+			"hasTUI":    cfg.TUICtrlFn != nil,
+			"hasRemote": cfg.RemoteTUICtrlFn != nil,
+		}).Debug("buildToolContext: no TUI control callback available")
+	}
+	// Config read/write: from SettingsSvc (works everywhere: local + remote via RPC)
+	if cfg.SettingsSvc != nil {
+		svc := cfg.SettingsSvc
+		tc.ConfigGet = func(key string) (string, error) {
+			vals, err := svc.GetSettings(cfg.Channel, cfg.OriginUserID)
+			if err != nil {
+				return "", err
+			}
+			if v, ok := vals[key]; ok {
+				return v, nil
+			}
+			return "", fmt.Errorf("config: key %q not found", key)
+		}
+		tc.ConfigSet = func(key, value string) (string, error) {
+			vals, err := svc.GetSettings(cfg.Channel, cfg.OriginUserID)
+			if err != nil {
+				return "", err
+			}
+			oldVal := vals[key]
+			if err := svc.SetSetting(cfg.Channel, cfg.OriginUserID, key, value); err != nil {
+				return "", err
+			}
+			return oldVal, nil
+		}
 	}
 
 	return tc

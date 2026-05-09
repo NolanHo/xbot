@@ -811,15 +811,22 @@ func (s *runState) maybeCompress(ctx context.Context) {
 	// Offload handles large tool results; a single iteration cannot add enough
 	// tokens to justify delta estimation.
 	totalTokens, tokenSource := s.tokenTracker.GetPromptTokens()
-	if tokenSource == "no_data" {
-		// No API token data yet (first iteration of a new turn). Run observation
-		// masking with the most conservative keepGroups (12) to prevent the first
-		// LLM call from including massive unmasked tool results from the previous
-		// turn. Without this, the context bar spikes on turn boundaries because
-		// the last iteration's tool results were preserved by keepGroups during
-		// the previous turn and were never masked.
+	skippedNormalMask := false
+	if tokenSource == "no_data" || tokenSource == "restored" {
+		// No real LLM call in this Run yet (new turn, or restored from DB).
+		// Use conservative masking (keepGroups=12) to clean up old previous-turn
+		// tool results without eating into the most recent groups.
+		//
+		// Without this, "restored" goes through the normal path with stale
+		// high token counts from the previous Run, causing keepGroups to drop
+		// to 3–5, which masks the previous turn's last few iterations.
+		// The LLM in the new turn sees 📂[batch:...] placeholders instead of
+		// real tool output → "agent以为没tool call" → terminates.
 		s.maybeMaskObservations(ctx, 0, maxTokens)
-		return
+		if tokenSource == "no_data" {
+			return // no token data → skip compression
+		}
+		skippedNormalMask = true // restored: already masked conservatively
 	}
 
 	compressThreshold := 0.9
@@ -846,8 +853,11 @@ func (s *runState) maybeCompress(ctx context.Context) {
 		return
 	}
 
-	// Observation masking (lightweight, no LLM call)
-	s.maybeMaskObservations(ctx, totalTokens, maxTokens)
+	// Observation masking (lightweight, no LLM call).
+	// Skip if we already ran conservative masking for restored state.
+	if !skippedNormalMask {
+		s.maybeMaskObservations(ctx, totalTokens, maxTokens)
+	}
 }
 
 // runCompression performs the actual context compression.

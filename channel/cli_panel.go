@@ -548,15 +548,22 @@ func (m *cliModel) applyRewind() {
 	// Must be synchronous — Ctrl+Z calls os.Exit(0) which kills all goroutines.
 	// If we used async (go func()), the DELETE might not complete before exit,
 	// leaving the DB in an inconsistent state with modernc.org/sqlite WAL.
-	if m.trimHistoryFn == nil {
-		log.Warn("Rewind: trimHistoryFn is nil, DB messages will NOT be truncated")
-	} else if cutoff.IsZero() {
-		log.Warn("Rewind: cutoff timestamp is zero, DB messages will NOT be truncated")
-	} else {
-		log.WithFields(log.Fields{"cutIdx": cutIdx, "cutoff": cutoff, "totalMsgs": len(m.messages)}).Info("Rewind: truncating DB messages")
+	if m.channel != nil && m.channel.config.TrimHistoryFn != nil {
+		// Dynamic callback with current session's channel+chatID — works across
+		// session switches unlike the static trimHistoryFn which was captured
+		// at TUI startup with the initial chatID.
+		if err := m.channel.config.TrimHistoryFn(m.channelName, m.chatID, cutoff); err != nil {
+			log.WithError(err).Warn("Failed to trim session history after rewind")
+		}
+	} else if m.trimHistoryFn != nil {
+		log.WithFields(log.Fields{"cutIdx": cutIdx, "cutoff": cutoff, "totalMsgs": len(m.messages)}).Info("Rewind: truncating DB messages (legacy callback)")
 		if err := m.trimHistoryFn(cutoff); err != nil {
 			log.WithError(err).Warn("Failed to trim session history after rewind")
 		}
+	} else if cutoff.IsZero() {
+		log.Warn("Rewind: cutoff timestamp is zero, DB messages will NOT be truncated")
+	} else {
+		log.Warn("Rewind: trimHistoryFn is nil, DB messages will NOT be truncated")
 	}
 
 	// Reset cached token counts so maybeCompress doesn't use stale values
@@ -989,24 +996,9 @@ func (m *cliModel) updateSessionsPanel(msg tea.KeyPressMsg) (bool, *cliModel, te
 					m.todos = nil // clear stale todos from previous session
 					m.todosDoneCleared = false
 					m.restoreSession() // restore target session state (or reset to idle)
-					// Do NOT unconditionally override typing/progress/iterationHistory here.
-					// handleSuHistoryLoad (async) will reconcile with authoritative server data.
-					// Only allow input if the restored session is idle. If typing=true,
-					// the agent is still processing and input must be queued, not sent.
-					m.inputReady = !m.typing
-					// Close panel first
+					cmds := m.postRestoreSessionSetup()
 					m.panelMode = ""
 					m.panelSessionItems = nil
-					var cmds []tea.Cmd
-					if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
-						m.suLoading = true
-						m.splashFrame = 0
-						cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
-					}
-					if m.typing && m.progress != nil && !m.fastTickActive {
-						m.fastTickActive = true
-						cmds = append(cmds, tickCmd())
-					}
 					if len(cmds) > 0 {
 						return true, m, tea.Batch(cmds...)
 					}
@@ -1047,21 +1039,9 @@ func (m *cliModel) updateSessionsPanel(msg tea.KeyPressMsg) (bool, *cliModel, te
 					m.todos = nil // clear stale todos from previous session
 					m.todosDoneCleared = false
 					m.restoreSession() // restore target session state (or reset to idle)
-					// Do NOT unconditionally override typing/progress/iterationHistory here.
-					// See note in main session switch path above.
-					m.inputReady = !m.typing
+					cmds := m.postRestoreSessionSetup()
 					m.panelMode = ""
 					m.panelSessionItems = nil
-					var cmds []tea.Cmd
-					if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
-						m.suLoading = true
-						m.splashFrame = 0
-						cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
-					}
-					if m.typing && m.progress != nil && !m.fastTickActive {
-						m.fastTickActive = true
-						cmds = append(cmds, tickCmd())
-					}
 					if len(cmds) > 0 {
 						return true, m, tea.Batch(cmds...)
 					}
@@ -3490,25 +3470,7 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			m.todos = nil // clear stale todos from previous session
 			m.todosDoneCleared = false
 			m.restoreSession()
-			// Do NOT unconditionally override typing/progress/iterationHistory here.
-			// handleSuHistoryLoad (async) will reconcile with authoritative server data.
-			// For the non-async path, the restored state is the best we have — clearing
-			// typing would block progress when turnCancelled=true from a Ctrl+C'd session.
-			m.inputReady = !m.typing
-			var cmds []tea.Cmd
-			if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
-				m.suLoading = true
-				m.splashFrame = 0
-				cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
-			}
-			// If the restored session has an active turn, start fast tick immediately.
-			// restoreSession() doesn't persist fastTickActive, so the tick chain may be
-			// broken. Without this, streaming output freezes until handleSuHistoryLoad
-			// restarts the tick (which may be delayed by async RPC in remote mode).
-			if m.typing && m.progress != nil && !m.fastTickActive {
-				m.fastTickActive = true
-				cmds = append(cmds, tickCmd())
-			}
+			cmds := m.postRestoreSessionSetup()
 			if len(cmds) > 0 {
 				return true, tea.Batch(cmds...)
 			}
@@ -3548,21 +3510,7 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			m.todos = nil // clear stale todos from previous session
 			m.todosDoneCleared = false
 			m.restoreSession()
-			// Do NOT unconditionally override typing/progress/iterationHistory here.
-			// See note in main session switch path above.
-			m.inputReady = !m.typing
-			var cmds []tea.Cmd
-			if m.channel != nil && m.channel.config.DynamicHistoryLoader != nil {
-				m.suLoading = true
-				m.splashFrame = 0
-				cmds = append(cmds, m.splashTick(0), m.suLoadHistoryCmd())
-			}
-			// If the restored session has an active turn, start fast tick immediately
-			// (same fix as main session path above).
-			if m.typing && m.progress != nil && !m.fastTickActive {
-				m.fastTickActive = true
-				cmds = append(cmds, tickCmd())
-			}
+			cmds := m.postRestoreSessionSetup()
 			if len(cmds) > 0 {
 				return true, tea.Batch(cmds...)
 			}

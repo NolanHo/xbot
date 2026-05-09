@@ -610,6 +610,7 @@ type CLIChannelConfig struct {
 	SessionsListRefresh  func()                                                                                                         // 侧边栏刷新：session 创建/删除后立即调用，确保 sidebar 不显示过期数据
 	SessionsList         func() []SessionPanelEntry                                                                                     // 列出所有 session（main + subagent）
 	GetActiveProgressFn  func(channelName, chatID string) *CLIProgressPayload                                                           // 获取目标 session 的活跃进度（session switch 恢复用）
+	TrimHistoryFn        func(channelName, chatID string, cutoff time.Time) error                                                       // rewind 回退时删除 DB 消息（channel+chatID 动态传入，支持多 session）
 	ChannelConfigGetFn   func() (map[string]map[string]string, error)                                                                   // 获取频道配置（用于 /channel 面板）
 	ChannelConfigSetFn   func(channel string, values map[string]string) error                                                           // 保存频道配置（用于 /channel 面板）
 	CreateWebUserFn      func(username string) (password string, err error)                                                             // 创建 Web 用户（admin only，返回自动生成的密码）
@@ -772,6 +773,39 @@ type LLMSubscriber interface {
 	SwitchSubscription(senderID string, sub *Subscription, chatID string) error
 	SwitchModel(senderID, model string)
 	GetDefaultModel() string
+}
+
+// SendTUIControl sends a TUI session control message through asyncCh
+// (the single channel ALL BubbleTea-bound messages go through).
+// handleSessionControlMsg does zero WS RPCs, so no deadlock with the drain.
+func (c *CLIChannel) SendTUIControl(action string, params map[string]string) (map[string]string, error) {
+	resultCh := make(chan *cliSessionResult, 1)
+	msg := cliSessionControlMsg{
+		action: action,
+		params: params,
+		result: resultCh,
+	}
+	if v, ok := params["chat_id"]; ok {
+		msg.chatID = v
+	}
+
+	// Must go through asyncCh — handleAsyncDrain is the ONLY goroutine
+	// that calls program.Send. Direct prog.Send competes for p.msgs.
+	select {
+	case c.asyncCh <- msg:
+	default:
+		return nil, fmt.Errorf("tui_control: asyncCh full")
+	}
+
+	select {
+	case result := <-resultCh:
+		if !result.ok {
+			return nil, fmt.Errorf("%s", result.err)
+		}
+		return map[string]string{"status": "ok"}, nil
+	case <-time.After(10 * time.Second):
+		return nil, fmt.Errorf("tui_control: TUI event loop not responding (10s timeout)")
+	}
 }
 
 // NewCLIChannel 创建 CLI 渠道

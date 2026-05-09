@@ -38,6 +38,7 @@ type Transport interface {
 	OnReconnect(cb func())
 	OnConnStateChange(cb func(state string))
 	OnPluginWidgets(cb func(zones map[string]string, chatID string))
+	OnTUIControlRequest(cb func(action string, params map[string]string) (map[string]string, error))
 
 	// === State ===
 	ConnState() string

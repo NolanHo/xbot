@@ -283,7 +283,20 @@ func AutoDetectAndInit(workDir, sessionKey string) *WorktreeEntry {
 	// Check for dirty tree first
 	dirty, err := gitIsDirty(repoPath)
 	if err != nil || dirty {
-		return nil // can't create worktree on dirty tree
+		// Can't create worktree on dirty tree, but still register as peer
+		// so the agent knows about other sessions via peer awareness.
+		entry := &WorktreeEntry{
+			SessionKey:  sessionKey,
+			Role:        "peer-dirty", // indicates sharing main project (no worktree isolation)
+			RepoPath:    repoPath,
+			WorktreeDir: "", // sharing main project
+			Branch:      "",
+			Status:      "working",
+		}
+		if err := GlobalWorktreeRegistry.Register(entry); err != nil {
+			return nil
+		}
+		return entry
 	}
 
 	// Generate unique branch name

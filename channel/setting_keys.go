@@ -10,7 +10,16 @@ const (
 	ScopeAction                           // UI action trigger, not persisted
 )
 
-// SettingDef defines a single setting key — its scope and whether it needs runtime application.
+// ConfigPermission defines the AI accessibility level for a setting.
+type ConfigPermission string
+
+const (
+	PermTransient  ConfigPermission = "transient"  // Layer 0: AI free to modify, no confirmation
+	PermPersistent ConfigPermission = "persistent" // Layer 2: AI can modify with approval
+	PermManual     ConfigPermission = "manual"     // Layer 3: AI cannot modify, manual only
+)
+
+// SettingDef defines a single setting key — its scope, AI permission level, and whether it needs runtime application.
 // This is the SINGLE source of truth for all setting keys in the system.
 //
 // To add a new setting:
@@ -19,9 +28,11 @@ const (
 //  3. Add a handler to cmd/xbot-cli/setting_handlers.go (if Runtime=true)
 //  4. That's it — all scope maps and key lists are auto-derived.
 type SettingDef struct {
-	Key     string       // Unique string key used in UI, DB, and RPC
-	Scope   SettingScope // Where this setting's value lives
-	Runtime bool         // If true, requires runtime apply handler (config + backend side-effect)
+	Key        string           // Unique string key used in UI, DB, and RPC
+	Scope      SettingScope     // Where this setting's value lives
+	Runtime    bool             // If true, requires runtime apply handler (config + backend side-effect)
+	Permission ConfigPermission // AI accessibility level (transient/persistent/manual)
+	Sensitive  bool             // If true, value is masked in AI context and write is blocked
 }
 
 // AllSettingDefs is the single registry of all known setting keys.

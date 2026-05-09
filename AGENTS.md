@@ -172,6 +172,7 @@
 - **`IsWorktreeIsolated` overrides `isUnrestricted()`.** CLI mode (`sandbox="none"`) normally bypasses all path checks, but when `IsWorktreeIsolated=true`, `isUnrestricted()` returns `false`.
 - **Worktree paths must be outside main repo.** Git rejects `git worktree add` inside the main working tree. Paths: `{repo}/../.xbot-worktrees/{role}-{instance}/`.
 - **Worktree creation is serialized via `GlobalWorktreeRegistry.mu`.** Two agents creating worktrees simultaneously would race on `.git/worktrees/` lockfiles.
+- **Registry persisted per-repo to `{repo}/../.xbot-worktrees/registry.json`.** `saveRepoLocked` uses atomic tmp+rename. `ensureLoaded` lazily restores on first access. Orphaned worktree directories are skipped on load.
 - **`BuildSystemReminder` takes `sessionKey` parameter.** Used to query `GlobalWorktreeRegistry` for worktree/peer info injected into sys_reminder per iteration.
 - **`MethodSetCWD` only sets CWD when empty.** Prevents CLI session switch from overwriting worktree CWD with main workspace path. Session-specific CWDs (worktree, Cd tool) are preserved.
 - **`go:embed embed_skills/*` auto-discovers new skills.** Adding a directory under `tools/embed_skills/` requires zero code changes.

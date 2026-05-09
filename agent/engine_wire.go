@@ -155,6 +155,14 @@ func (a *Agent) buildBaseRunConfig(
 		// SettingsSvc — inherit from Agent
 		SettingsSvc: a.settingsSvc,
 
+		// TUI/Config callbacks — inherit from Agent (CLI local mode)
+		TUICtrlFn:   a.tuiCtrlFn,
+		ConfigGetFn: a.configGetFn,
+		ConfigSetFn: a.configSetFn,
+
+		// Remote TUI control — detect RemoteCLIChannel and inject WS-based callback
+		RemoteTUICtrlFn: a.buildRemoteTUICtrlFn(channel, chatID),
+
 		// LLM 并发限流回调（per-tenant）
 		LLMSemAcquire:             llmSemAcquire,
 		EnableConcurrentSubAgents: true,
@@ -684,6 +692,10 @@ func (a *Agent) buildSubAgentRunConfig(
 	cfg.HookManager = a.hookManager
 	cfg.PluginManager = a.pluginMgr
 	cfg.SettingsSvc = a.settingsSvc
+
+	// TUI/Config callbacks for tool execution (needed by tui_control/config tools)
+	cfg.TUICtrlFn = a.tuiCtrlFn
+	cfg.RemoteTUICtrlFn = a.buildRemoteTUICtrlFn(parentCtx.Channel, parentCtx.ChatID)
 	cfg.MessageSender = a.messageSender
 	cfg.RegisterAgentChannel = a.registerAgentChannel
 	cfg.UnregisterAgentChannel = a.unregisterAgentChannel
@@ -778,6 +790,10 @@ func (a *Agent) buildToolExecutor(channel, chatID, senderID, senderName, sandbox
 	cfg.HookManager = a.hookManager
 	cfg.PluginManager = a.pluginMgr
 	cfg.SettingsSvc = a.settingsSvc
+
+	// TUI/Config callbacks for tool execution (needed by tui_control/config tools)
+	cfg.TUICtrlFn = a.tuiCtrlFn
+	cfg.RemoteTUICtrlFn = a.buildRemoteTUICtrlFn(channel, chatID)
 
 	var sessionOnce sync.Once
 

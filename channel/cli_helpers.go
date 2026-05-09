@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	log "xbot/logger"
 	"xbot/storage/sqlite"
 )
 
@@ -89,7 +90,9 @@ func (m *cliModel) persistCLISettingsValues(values map[string]string) {
 			// Skip empty values — don't pollute the DB with meaningless entries
 			// that would block DefaultValue from taking effect.
 			if v != "" && isUserScopedSettingKey(k) {
-				_ = m.channel.settingsSvc.SetSetting(m.channelName, m.senderID, k, v)
+				if err := m.channel.settingsSvc.SetSetting(m.channelName, m.senderID, k, v); err != nil {
+					log.WithFields(log.Fields{"key": k, "val": v, "err": err}).Warn("persistCLISettingsValues: SetSetting failed")
+				}
 			}
 		}
 	}
@@ -1832,4 +1835,100 @@ func (m *cliModel) applyScrollbar(content string, contentWidth, totalLines, scro
 		}
 	}
 	return b.String()
+}
+
+// handleSessionControlMsg processes AI-triggered TUI session control operations
+// from the tui_control tool. It supports "switch", "close", "layout", and "theme" actions.
+func (m *cliModel) handleSessionControlMsg(sc cliSessionControlMsg) tea.Cmd {
+	switch sc.action {
+	case "switch":
+		if m.sessionsListFn == nil {
+			sc.result <- &cliSessionResult{ok: false, err: "session list not available"}
+			return nil
+		}
+		sessions := m.sessionsListFn()
+		if len(sessions) == 0 {
+			sc.result <- &cliSessionResult{ok: false, err: "no sessions found"}
+			return nil
+		}
+		var best *SessionPanelEntry
+		for i, entry := range sessions {
+			if entry.ID == sc.chatID {
+				best = &sessions[i]
+				break
+			}
+		}
+		if best == nil {
+			lower := strings.ToLower(sc.chatID)
+			for i, entry := range sessions {
+				if strings.Contains(strings.ToLower(entry.Label), lower) ||
+					strings.HasPrefix(strings.ToLower(entry.ID), lower) {
+					best = &sessions[i]
+					break
+				}
+			}
+		}
+		if best == nil {
+			sc.result <- &cliSessionResult{ok: false, err: "session not found: " + sc.chatID}
+			return nil
+		}
+		// Pure frontend switch — return success immediately, let history load async.
+		_, cmd := m.switchToSession(*best)
+		sc.result <- &cliSessionResult{ok: true}
+		return cmd
+
+	case "close":
+		if sc.chatID == m.defaultChatID {
+			sc.result <- &cliSessionResult{ok: false, err: "cannot close main session"}
+			return nil
+		}
+		if sc.params["confirm"] != "true" {
+			sc.result <- &cliSessionResult{ok: false, err: "confirmation_required: close session " + sc.chatID}
+			return nil
+		}
+		sessions := m.sessionsListFn()
+		for _, entry := range sessions {
+			if entry.ID == sc.chatID || strings.Contains(strings.ToLower(entry.Label), strings.ToLower(sc.chatID)) {
+				// RPC: deletes session on server to keep state consistent.
+				// readPump is responsive (goroutine in transport_remote.go), so RPC works.
+				if m.channel != nil && m.channel.config.SessionsDeleteFn != nil {
+					if err := m.channel.config.SessionsDeleteFn(entry.Channel, entry.ID); err != nil {
+						sc.result <- &cliSessionResult{ok: false, err: err.Error()}
+						return nil
+					}
+				}
+				sc.result <- &cliSessionResult{ok: true}
+				return nil
+			}
+		}
+		sc.result <- &cliSessionResult{ok: false, err: "session not found: " + sc.chatID}
+
+	case "layout":
+		key := sc.params["key"]
+		val := sc.params["value"]
+		if key == "" || val == "" {
+			sc.result <- &cliSessionResult{ok: false, err: "layout requires key and value"}
+			return nil
+		}
+		m.applyLayoutConfig(map[string]string{key: val})
+		m.relayoutViewport()
+		sc.result <- &cliSessionResult{ok: true}
+		m.persistCLISettingsValues(map[string]string{key: val})
+
+	case "theme":
+		theme := sc.params["theme"]
+		if theme == "" {
+			sc.result <- &cliSessionResult{ok: false, err: "theme requires theme name"}
+			return nil
+		}
+		m.applyThemeAndRebuild(theme)
+		m.renderCacheValid = false
+		m.updateViewportContent()
+		sc.result <- &cliSessionResult{ok: true}
+		m.persistCLISettingsValues(map[string]string{"theme": theme})
+
+	default:
+		sc.result <- &cliSessionResult{ok: false, err: "unknown action: " + sc.action}
+	}
+	return nil
 }

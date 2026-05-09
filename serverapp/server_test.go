@@ -367,8 +367,12 @@ func (b fakeBackend) CallRPC(string, any) (json.RawMessage, error) {
 func (b fakeBackend) Run(_ context.Context) error             { return nil }
 func (b fakeBackend) GetLLMConcurrency(_ string) int          { return 0 }
 func (b fakeBackend) SetLLMConcurrency(_ string, _ int) error { return nil }
-func (b fakeBackend) GetContextMode() string                  { return "" }
-func (b fakeBackend) PluginManager() *plugin.PluginManager    { return nil }
+func (b fakeBackend) SetTUICallbacks(_ func(action string, params map[string]string) (map[string]string, error), _ func(key string) (string, error), _ func(key, value string) (string, error)) {
+}
+func (b fakeBackend) OnTUIControlRequest(_ func(action string, params map[string]string) (map[string]string, error)) {
+}
+func (b fakeBackend) GetContextMode() string               { return "" }
+func (b fakeBackend) PluginManager() *plugin.PluginManager { return nil }
 
 func TestMigrateCLIUserSettingsFromGlobalIfNeeded_SeedsOnlyWhenEmpty(t *testing.T) {
 	cfg := newTestConfig()

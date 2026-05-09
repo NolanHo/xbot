@@ -34,11 +34,23 @@ func (m *cliModel) isNarrow() bool { return m.width < 60 }
 // isWide returns true when terminal width >= 120 — wide layout with extra info.
 func (m *cliModel) isWide() bool { return m.width >= 120 }
 
+// sidebarRenderedWidth returns the actual visual width of the sidebar after rendering.
+// This depends on character widths (e.g. RUNEWIDTH_EASTASIAN makes │ width=2),
+// so we measure it dynamically rather than using a hardcoded formula.
+func (m *cliModel) sidebarRenderedWidth() int {
+	sw := m.sidebarWidth
+	if sw < 12 {
+		sw = 12
+	}
+	rendered := m.styles.SidebarBg.Width(sw).Height(1).Render("")
+	line := strings.Split(rendered, "\n")[0]
+	return lipgloss.Width(line)
+}
+
 // chatWidth returns the effective width for the chat viewport, accounting for sidebar.
 func (m *cliModel) chatWidth() int {
 	if m.isWide() && m.sidebarEnabled && m.sidebarVisible {
-		// sidebar: RoundedBorder(2) + Padding(0,1)(2) + content(sidebarWidth) = sidebarWidth+4
-		w := m.width - m.sidebarWidth - 4
+		w := m.width - m.sidebarRenderedWidth()
 		if w < 20 {
 			w = 20
 		}
@@ -378,7 +390,7 @@ func (m *cliModel) renderSidebarForBlock(block string) string {
 		h = 5
 	}
 
-	contentW := sw - 4 // SidebarBg: Width(sw) includes border (2 cols) + Padding(0,1) (2 cols)
+	contentW := sw - m.styles.SidebarBg.GetHorizontalFrameSize() // Width(sw) includes border+padding; content = sw - frame
 
 	// Only render sections that have real content
 	var blocks []string
@@ -439,7 +451,10 @@ func (m *cliModel) renderSidebarSessions(w int) string {
 			deletePart := " ×"
 			deleteVisW := lipgloss.Width(deletePart)
 			indentW := lipgloss.Width(indent)
-			maxLabelW := w - indentW - 3 - 1 - deleteVisW // indent + " ○ " = indentW+3 cols, 1 col min padding
+			// " ○ " visual width varies with EASTASIAN (○ is width 2 in CJK locales).
+			// Both ○ and ● have the same width, so we use ○ for measurement.
+			iconSepW := lipgloss.Width(" ○ ")
+			maxLabelW := w - indentW - iconSepW - 1 - deleteVisW // indent + " ○ " + label + padding(1) + " ×"
 			if maxLabelW < 1 {
 				maxLabelW = 1
 			}

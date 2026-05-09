@@ -370,7 +370,10 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 
 	// Auto-start turn: when receiving progress for current session but not typing,
 	// start the turn. This handles first-switch to a running SubAgent session.
-	if !m.typing && msg.payload != nil && msg.payload.Phase != "done" {
+	// Guard: !suLoading — during session switch in remote mode, progress events
+	// from the old session may arrive before the RPC reconciles state. Starting
+	// a turn here would create an inconsistent state with no message history loaded.
+	if !m.typing && !m.suLoading && msg.payload != nil && msg.payload.Phase != "done" {
 		log.WithFields(log.Fields{
 			"phase":     msg.payload.Phase,
 			"iteration": msg.payload.Iteration,
@@ -378,6 +381,21 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 			"chatID":    msg.payload.ChatID,
 		}).Info("handleProgressMsg: auto-start turn")
 		m.startAgentTurn()
+	}
+
+	// suLoading guard: during session switch in remote mode, discard all
+	// non-PhaseDone progress events. Only PhaseDone is allowed through
+	// (to clear stale turn state). All other events are stale — the RPC
+	// (handleSuHistoryLoad) will reconcile with authoritative server data.
+	if m.suLoading && msg.payload != nil && msg.payload.Phase != "done" {
+		return
+	}
+	// suLoading + PhaseDone: server confirmed the turn is done.
+	// Record this so handleSuHistoryLoad won't restore stale progress
+	// as active (which would create a stuck spinner — typing=true with
+	// no more progress events coming from the idle server).
+	if m.suLoading && msg.payload != nil && msg.payload.Phase == "done" {
+		m.suPhaseDoneConfirmed = true
 	}
 
 	// Stream-only payloads (from StreamContentFunc/StreamReasoningFunc) only carry
@@ -517,6 +535,20 @@ func (m *cliModel) snapshotIterationChange(payload *CLIProgressPayload, prev *CL
 		return
 	}
 	if payload.Iteration > m.lastSeenIteration && m.lastSeenIteration >= 0 && prev != nil {
+		// Guard: only create snapshot if prev actually belongs to lastSeenIteration.
+		// After session switch, resetProgressState sets lastSeenIteration=0 but
+		// the restored m.progress has Iteration=N. When the next live progress
+		// arrives, prev (which came from the restore) has Iteration=N, not 0.
+		// Snapshoting "iteration 0" with iteration N's data would cause #0 and #1
+		// to display the same reasoning content.
+		if prev.Iteration != m.lastSeenIteration {
+			// Data mismatch: prev belongs to a different iteration than what
+			// lastSeenIteration claims. Skip the snapshot to avoid corruption,
+			// but update the counter to prevent repeated misfires.
+			m.lastSeenIteration = payload.Iteration
+			m.iterationStartTime = time.Now()
+			return
+		}
 		prevIterTools := prev.CompletedTools
 		// Also include ActiveTools that completed (status=done/error) but
 		// haven't been moved to CompletedTools yet by progressFinalizer.
@@ -738,6 +770,11 @@ func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPaylo
 
 // handleInjectedUserMsg processes user messages injected by the agent (e.g. bg task completion).
 func (m *cliModel) handleInjectedUserMsg(msg cliInjectedUserMsg) []tea.Cmd {
+	// suLoading guard: during session switch in remote mode, discard injected messages.
+	// They belong to the previous session's context; the RPC will handle state.
+	if m.suLoading {
+		return nil
+	}
 	// Filter by session: if chatID is set, only apply to matching session.
 	// Legacy messages (chatID="") are always applied for backward compat.
 	if msg.chatID != "" {
@@ -815,10 +852,15 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 	m.suLoading = false
 
 	// Stale result guard: if user switched away from the target session
-	// while the async load was in-flight, discard the result.
+	// while the async load was in-flight, discard the result entirely.
+	// Do NOT clear suLoading here — the new session's loading guard is
+	// set by its own postRestoreSessionSetup call.
 	if msg.channelName != m.channelName || msg.chatID != m.chatID {
 		return nil
 	}
+
+	// Only clear suLoading for the matching session.
+	m.suLoading = false
 
 	if msg.err != nil {
 		m.showSystemMsg(fmt.Sprintf(m.locale.SuLoadFailed, msg.err), feedbackWarning)
@@ -827,6 +869,8 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 		// switch, potentially creating duplicate user messages when history
 		// eventually loads successfully.
 		m.pendingUserMsg = nil
+		// RPC failed — no authoritative data. Enable input so the user can retry.
+		m.inputReady = true
 	} else {
 		for _, hm := range msg.history {
 			cm := cliMessage{
@@ -870,9 +914,12 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 	// msg.activeProgress (from GetActiveProgress RPC) is the authoritative source:
 	// if the server says the turn is done or gone, any saved state from
 	// restoreSession() is stale and must be discarded.
+	// suPhaseDoneConfirmed: PhaseDone arrived during suLoading (before this
+	// RPC completed). The server confirmed the turn is done — the RPC snapshot
+	// is stale. Skip acceptProgress to avoid restoring a stuck spinner.
 	var cmds []tea.Cmd
 	var acceptProgress bool
-	if msg.activeProgress != nil && msg.activeProgress.Phase != "done" {
+	if !m.suPhaseDoneConfirmed && msg.activeProgress != nil && msg.activeProgress.Phase != "done" {
 		acceptProgress = true
 		// Cross-session guard: activeProgress from GetActiveProgress RPC
 		// should match the current session. If ChatID is set and doesn't
@@ -891,6 +938,13 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 		// has the freshest progress data.
 		if !m.typing {
 			m.startAgentTurn()
+		}
+		// startAgentTurn calls resetProgressState which sets lastSeenIteration=0.
+		// Restore it from the server snapshot to prevent snapshotIterationChange
+		// from creating a spurious "iteration 0" snapshot on the next live
+		// progress event (symptom: #0 and #1 both show the same reasoning).
+		if msg.activeProgress.Iteration > 0 {
+			m.lastSeenIteration = msg.activeProgress.Iteration
 		}
 		m.progress = msg.activeProgress
 
@@ -957,7 +1011,16 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 		// See handleSplashTick for the other half of this guard.
 		if !m.fastTickActive {
 			m.fastTickActive = true
-			cmds = append(cmds, tickCmd())
+			cmds = append(cmds, m.tickCmd())
+		}
+		// If the restored progress has stream or reasoning content, start the
+		// typewriter tick immediately. Without this, the cursor won't blink and
+		// streaming content won't animate until the next handleTickMsg cycle.
+		hasStream := m.progress != nil && m.progress.StreamContent != "" && m.twVisible < len([]rune(m.progress.StreamContent))
+		hasReasoning := m.progress != nil && m.progress.ReasoningStreamContent != "" && m.rwVisible < len([]rune(m.progress.ReasoningStreamContent))
+		if !m.typewriterTickActive && (hasStream || hasReasoning) {
+			m.typewriterTickActive = true
+			cmds = append(cmds, typewriterTickCmd())
 		}
 
 	default:
@@ -974,6 +1037,14 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 		if m.progress != nil {
 			m.progress = nil
 			m.renderCacheValid = false
+		}
+		// Server says session is idle — enable input.
+		m.inputReady = true
+		// If the restored session has queued messages, schedule a flush.
+		// postRestoreSessionSetup clears needFlushQueue for safety; this is the
+		// authoritative re-enable point after the RPC confirms the session is idle.
+		if len(m.messageQueue) > 0 {
+			m.needFlushQueue = true
 		}
 		// Reload history to pick up messages that arrived while we were viewing
 		// another session (e.g. the assistant's final reply was filtered out by
@@ -1055,7 +1126,7 @@ func (m *cliModel) handleSplashTick(msg splashTickMsg) (tea.Model, tea.Cmd) {
 		sessionActive := m.progress != nil && m.progress.Phase != "done"
 		if sessionActive && !m.fastTickActive {
 			m.fastTickActive = true
-			cmds = append(cmds, tickCmd())
+			cmds = append(cmds, m.tickCmd())
 		} else if !sessionActive && !m.typing {
 			cmds = append(cmds, idleTickCmd())
 		}
@@ -1067,7 +1138,7 @@ func (m *cliModel) handleSplashTick(msg splashTickMsg) (tea.Model, tea.Cmd) {
 		sessionActive := m.progress != nil && m.progress.Phase != "done"
 		if sessionActive && !m.fastTickActive {
 			m.fastTickActive = true
-			cmds = append(cmds, tickCmd())
+			cmds = append(cmds, m.tickCmd())
 		} else if !sessionActive && !m.typing {
 			cmds = append(cmds, idleTickCmd())
 		}
@@ -1354,12 +1425,12 @@ func (m *cliModel) handleTickMsg() []tea.Cmd {
 	busy := m.typing || sessionActive
 	if (m.bgTaskCountFn != nil && m.bgTaskCount > 0) || (m.agentCountFn != nil && m.agentCount > 0) || busy {
 		m.fastTickActive = true
-		cmds = append(cmds, tickCmd())
+		cmds = append(cmds, m.tickCmd())
 	} else if m.needFlushQueue && len(m.messageQueue) > 0 {
 		m.fastTickActive = true
 		// Pending queue flush — use fast tick so the queued message
 		// is sent promptly (not waiting 3s for idleTickCmd).
-		cmds = append(cmds, tickCmd())
+		cmds = append(cmds, m.tickCmd())
 	} else {
 		// Transition to idle: start low-frequency tick for placeholder rotation
 		m.fastTickActive = false
@@ -1396,7 +1467,10 @@ func (m *cliModel) handleTickMsg() []tea.Cmd {
 	// the queued message gets sent, producing correct order: msg1, reply1, msg2.
 	// Guard: only flush when NOT typing AND the previous turn's reply has been
 	// received (or the previous turn had no assistant reply — e.g. empty cancel).
-	if m.needFlushQueue && !m.typing && len(m.messageQueue) > 0 {
+	// Also guarded by !suLoading: during session switch in remote mode, typing
+	// and progress are reset to idle but queue flush must wait until the RPC
+	// (handleSuHistoryLoad) reconciles state with the server.
+	if m.needFlushQueue && !m.typing && !m.suLoading && len(m.messageQueue) > 0 {
 		// Check that the previous turn's reply was received before flushing.
 		// The previous turn is the current agentTurnID (endAgentTurn was already
 		// called, but startAgentTurn for the new turn hasn't run yet).
@@ -1433,7 +1507,7 @@ func (m *cliModel) handleTickMsg() []tea.Cmd {
 		// Not safe to flush yet — keep fast tick active so we check again soon.
 		if !m.fastTickActive {
 			m.fastTickActive = true
-			cmds = append(cmds, tickCmd())
+			cmds = append(cmds, m.tickCmd())
 		}
 	}
 
@@ -1456,7 +1530,7 @@ func (m *cliModel) handleIdleTick() []tea.Cmd {
 		// Self-healing: if fast tick chain broke but session is still active,
 		// re-arm fast tick.
 		m.fastTickActive = true
-		cmds = append(cmds, tickCmd())
+		cmds = append(cmds, m.tickCmd())
 	}
 	return cmds
 }
@@ -1491,7 +1565,7 @@ func (m *cliModel) handleSplashDone() []tea.Cmd {
 	sessionActive := m.progress != nil && m.progress.Phase != "done"
 	if sessionActive && !m.fastTickActive {
 		m.fastTickActive = true
-		cmds = append(cmds, tickCmd())
+		cmds = append(cmds, m.tickCmd())
 	} else if !sessionActive && !m.typing {
 		cmds = append(cmds, idleTickCmd())
 	}

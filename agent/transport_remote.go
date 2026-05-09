@@ -76,6 +76,9 @@ type RemoteTransport struct {
 	// Plugin widget push callback (for real-time widget zone updates from server)
 	pluginWidgetsCb func(zones map[string]string, chatID string)
 
+	// TUI control request callback (for server-initiated TUI operations in remote mode)
+	tuiControlReqCb func(action string, params map[string]string) (map[string]string, error)
+
 	// RPC pending calls: requestID → response channel
 	rpcMu      sync.Mutex
 	pending    map[string]chan *rpcResponse
@@ -119,6 +122,7 @@ type wsIncomingMessage struct {
 	Channel         string                     `json:"channel,omitempty"`
 	ChatID          string                     `json:"chat_id,omitempty"`
 	SessionReset    bool                       `json:"session_reset,omitempty"`
+	TUIControl      *channel.TUIControlPayload `json:"tui_control,omitempty"`
 }
 
 // wsOutgoingMessage represents a message sent to the server.
@@ -133,6 +137,8 @@ type wsOutgoingMessage struct {
 	SenderID   string          `json:"sender_id,omitempty"`
 	SenderName string          `json:"sender_name,omitempty"`
 	ChatType   string          `json:"chat_type,omitempty"`
+	// TUI control response (used when Type == "tui_control_resp")
+	TUIControl *channel.TUIControlPayload `json:"tui_control,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +262,13 @@ func (t *RemoteTransport) OnInjectUserMessage(callback func(content string)) {
 // content updates. This is the real-time push path — no polling needed.
 func (t *RemoteTransport) OnPluginWidgets(callback func(zones map[string]string, chatID string)) {
 	t.pluginWidgetsCb = callback
+}
+
+// OnTUIControlRequest registers a callback for server-initiated TUI control requests.
+// The callback receives (action, params) and must return (result, error).
+// Used by remote CLI to handle tui_control tool calls from the server.
+func (t *RemoteTransport) OnTUIControlRequest(callback func(action string, params map[string]string) (map[string]string, error)) {
+	t.tuiControlReqCb = callback
 }
 
 // ConnState returns the current connection state string.
@@ -533,6 +546,36 @@ func (t *RemoteTransport) readPump(ctx context.Context) {
 				if err := json.Unmarshal([]byte(msg.Content), &zones); err == nil {
 					t.pluginWidgetsCb(zones, msg.ChatID)
 				}
+			}
+		case "tui_control_req":
+			// Server-initiated TUI control request. Process in goroutine so
+			// readPump stays responsive — required for RPC calls within handlers.
+			if t.tuiControlReqCb != nil && msg.TUIControl != nil {
+				reqID := msg.ID
+				action := msg.TUIControl.Action
+				params := msg.TUIControl.Params
+				go func() {
+					result, err := t.tuiControlReqCb(action, params)
+					resp := wsOutgoingMessage{
+						Type: "tui_control_resp",
+						ID:   reqID,
+						TUIControl: &channel.TUIControlPayload{
+							Action: action,
+						},
+					}
+					if err != nil {
+						resp.TUIControl.Error = err.Error()
+					} else {
+						resp.TUIControl.Result = result
+					}
+					t.connMu.Lock()
+					if t.conn != nil {
+						if writeErr := t.conn.WriteJSON(resp); writeErr != nil {
+							log.WithError(writeErr).Debug("Failed to send tui_control_resp")
+						}
+					}
+					t.connMu.Unlock()
+				}()
 			}
 		}
 	}

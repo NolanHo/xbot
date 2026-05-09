@@ -319,6 +319,11 @@ type Agent struct {
 	// SettingsService for per-user settings
 	settingsSvc *SettingsService
 
+	// TUI control callbacks (set by CLI channel, nil for other channels)
+	tuiCtrlFn   func(action string, params map[string]string) (map[string]string, error)
+	configGetFn func(key string) (string, error)
+	configSetFn func(key, value string) (string, error)
+
 	// channelFinder looks up a channel instance by name (injected from main.go).
 	channelFinder func(name string) (channel.Channel, bool)
 
@@ -349,6 +354,44 @@ func (a *Agent) SetRegistryManager(rm *RegistryManager) { a.registryManager = rm
 
 // SetSettingsService sets the SettingsService (for external injection or override).
 func (a *Agent) SetSettingsService(svc *SettingsService) { a.settingsSvc = svc }
+
+// SetTUICallbacks sets the TUI control and config callbacks (CLI channel only).
+func (a *Agent) SetTUICallbacks(
+	tuiCtrl func(action string, params map[string]string) (map[string]string, error),
+	configGet func(key string) (string, error),
+	configSet func(key, value string) (string, error),
+) {
+	a.tuiCtrlFn = tuiCtrl
+	a.configGetFn = configGet
+	a.configSetFn = configSet
+}
+
+// buildRemoteTUICtrlFn returns a TUIControl callback for remote CLI mode via WS,
+// or nil if no RemoteCLIChannel is registered.
+func (a *Agent) buildRemoteTUICtrlFn(chanName, chatID string) func(action string, params map[string]string) (map[string]string, error) {
+	if a.channelFinder == nil {
+		log.WithField("chan", chanName).Debug("buildRemoteTUICtrlFn: channelFinder is nil")
+		return nil
+	}
+	if chanName != "cli" {
+		log.WithField("chan", chanName).Debug("buildRemoteTUICtrlFn: channel is not cli")
+		return nil
+	}
+	ch, ok := a.channelFinder("cli")
+	if !ok {
+		log.Debug("buildRemoteTUICtrlFn: channelFinder('cli') returned not found")
+		return nil
+	}
+	rc, ok := ch.(*channel.RemoteCLIChannel)
+	if !ok {
+		log.WithField("type", fmt.Sprintf("%T", ch)).Debug("buildRemoteTUICtrlFn: channel is not RemoteCLIChannel")
+		return nil
+	}
+	log.WithField("chat_id", chatID).Debug("buildRemoteTUICtrlFn: remote TUI control enabled")
+	return func(action string, params map[string]string) (map[string]string, error) {
+		return rc.SendTUIControlRequest(chatID, action, params)
+	}
+}
 
 // LLMFactory returns the Agent's LLMFactory (for external injection of callbacks).
 func (a *Agent) LLMFactory() *LLMFactory { return a.llmFactory }
@@ -756,6 +799,10 @@ func initServices(a *Agent, cfg Config, multiSession *session.MultiTenantSession
 	a.todoManager = todoMgr
 	registry.RegisterCore(&tools.TodoWriteTool{Manager: todoMgr})
 	registry.RegisterCore(&tools.TodoListTool{Manager: todoMgr})
+
+	// Register AI-Native TUI & Config tools as core (always available)
+	registry.RegisterCore(&tools.TuiControlTool{})
+	registry.RegisterCore(&tools.ConfigTool{})
 
 	// Initialize SharedSkillRegistry
 	sharedRegistry := sqlite.NewSharedSkillRegistry(multiSession.DB())
@@ -1813,19 +1860,6 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 		a.sendAck(msg.Channel, msg.ChatID)
 	}
 
-	// Auto worktree detection: if multiple sessions share the same git repo,
-	// automatically create an isolated worktree to prevent file conflicts.
-	if entry := tools.AutoDetectAndInit(a.workDir, sessionKey(msg.Channel, msg.ChatID)); entry != nil {
-		if entry.WorktreeDir != "" {
-			tenantSession.SetCurrentDir(entry.WorktreeDir)
-			log.Ctx(ctx).WithFields(log.Fields{
-				"worktree": entry.WorktreeDir,
-				"branch":   entry.Branch,
-				"role":     entry.Role,
-			}).Info("Auto worktree isolation enabled")
-		}
-	}
-
 	// 构建 LLM 消息（注入长期记忆、skills）
 	messages, err := a.buildPrompt(ctx, msg, tenantSession)
 	if err != nil {
@@ -2059,11 +2093,34 @@ func (a *Agent) buildPrompt(ctx context.Context, msg bus.InboundMessage, tenantS
 		log.Ctx(ctx).WithError(err).Warn("Failed to get history, using empty history")
 		history = nil
 	}
+
+	// Auto worktree detection: if multiple sessions share the same git repo,
+	// automatically create an isolated worktree to prevent file conflicts.
+	// Uses workspaceRoot (per-user/session workspace) not a.workDir (global config),
+	// because in remote TUI mode these are different directories.
+	sessKey := sessionKey(msg.Channel, msg.ChatID)
+	sbUID := sandboxUserID(msg)
+	workspaceRoot := a.workspaceRoot(sbUID)
+	if entry := tools.AutoDetectAndInit(workspaceRoot, sessKey); entry != nil {
+		if entry.WorktreeDir != "" {
+			tenantSession.SetCurrentDir(entry.WorktreeDir)
+			log.Ctx(ctx).WithFields(log.Fields{
+				"worktree": entry.WorktreeDir,
+				"branch":   entry.Branch,
+				"role":     entry.Role,
+			}).Info("Auto worktree isolation enabled")
+		} else if entry.Role == "peer-dirty" {
+			log.Ctx(ctx).WithFields(log.Fields{
+				"repo":    entry.RepoPath,
+				"session": sessKey,
+				"role":    entry.Role,
+			}).Warn("Auto worktree skipped: repo has uncommitted changes, sharing main project")
+		}
+	}
+
 	// Fixup: strip trailing unpaired tool_calls left by a cancelled Run.
 	// Both Anthropic and OpenAI APIs reject requests with unpaired tool_calls.
 	history = llm.SanitizeMessages(history)
-	sbUID := sandboxUserID(msg)
-	workspaceRoot := a.workspaceRoot(sbUID)
 	if err := a.ensureWorkspace(ctx, workspaceRoot, sbUID); err != nil {
 		return nil, fmt.Errorf("create user workspace: %w", err)
 	}

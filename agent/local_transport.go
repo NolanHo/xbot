@@ -74,6 +74,8 @@ func (t *localTransport) OnInjectUserMessage(func(string))                {}
 func (t *localTransport) OnReconnect(func())                              {}
 func (t *localTransport) OnConnStateChange(func(string))                  {}
 func (t *localTransport) OnPluginWidgets(func(map[string]string, string)) {}
+func (t *localTransport) OnTUIControlRequest(cb func(action string, params map[string]string) (map[string]string, error)) {
+}
 
 // ---------------------------------------------------------------------------
 // State

@@ -46,6 +46,12 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 		return m, cmd
 	}
 
+	// AI-triggered TUI session control (from tui_control tool via program.Send — same path as mouse clicks)
+	if sc, ok := msg.(cliSessionControlMsg); ok {
+		retCmd := m.handleSessionControlMsg(sc)
+		return m, retCmd
+	}
+
 	// 主题变更通知：重建样式缓存 + glamour 渲染器
 	select {
 	case <-themeChangeCh:
@@ -214,7 +220,7 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 			// handleKeyPress may call sendMessage→startAgentTurn which sets typing=true,
 			// but the early return below skips the wasTyping guard at the end of Update.
 			if cm, ok := model.(*cliModel); ok && !wasTyping && cm.typing && !cm.fastTickActive {
-				keyCmds = append(keyCmds, tickCmd())
+				keyCmds = append(keyCmds, m.tickCmd())
 			}
 			return model, tea.Batch(keyCmds...)
 		}
@@ -241,7 +247,7 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 		sessionActive := m.progress != nil && m.progress.Phase != "done"
 		if sessionActive && !m.fastTickActive {
 			m.fastTickActive = true
-			cmds = append(cmds, tickCmd())
+			cmds = append(cmds, m.tickCmd())
 		}
 
 	case cliProcessingMsg:
@@ -260,6 +266,9 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 	// Flush is handled in cliTickMsg instead (next tick after typing=false).
 
 	case cliTickMsg:
+		if msg.gen != m.tickGen {
+			return m, tea.Batch(cmds...) // stale tick from previous chain, discard
+		}
 		cmds = append(cmds, m.handleTickMsg()...)
 
 	case idleTickMsg:
@@ -402,7 +411,7 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 	// This is the universal safety net — callers that can return cmds do so
 	// directly, but this catches any missed transitions.
 	if !wasTyping && m.typing && !m.fastTickActive {
-		cmds = append(cmds, tickCmd())
+		cmds = append(cmds, m.tickCmd())
 	}
 
 	// 更新 viewport
@@ -557,11 +566,6 @@ func (m *cliModel) relayoutViewport() {
 	}
 	iw = iw &^ 1
 	m.textarea.SetWidth(iw)
-
-	// Glamour word-wrap matches viewport
-	if cw > 4 {
-		m.renderer = newGlamourRenderer(cw - 4)
-	}
 
 	// Invalidate render caches so content re-wraps at new width
 	m.renderCacheValid = false

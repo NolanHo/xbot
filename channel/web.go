@@ -194,6 +194,8 @@ type Hub struct {
 	subs    map[string]map[string]bool // chatID → set of clientIDs (message routing)
 	offline map[string]*ringBuffer     // chatID → offline message buffer
 	offMu   sync.Mutex
+
+	tuiRespFn func(id string, payload *TUIControlPayload) // set by RemoteCLIChannel
 }
 
 func newHub() *Hub {
@@ -478,6 +480,16 @@ type wsMessage struct {
 	// RPC response fields (used when Type == "rpc_response")
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
+	// TUI control fields (used when Type == "tui_control_req" or "tui_control_resp")
+	TUIControl *TUIControlPayload `json:"tui_control,omitempty"`
+}
+
+// TUIControlPayload carries a TUI control request or response over WS.
+type TUIControlPayload struct {
+	Action string            `json:"action"`           // "switch" | "close" | "layout" | "theme"
+	Params map[string]string `json:"params,omitempty"` // action-specific parameters
+	Result map[string]string `json:"result,omitempty"` // response result
+	Error  string            `json:"error,omitempty"`  // response error
 }
 
 // WsProgressPayload — structured progress data (corresponds to agent.StructuredProgress).
@@ -714,6 +726,11 @@ type wsClientMessage struct {
 	SenderID   string   `json:"sender_id,omitempty"`
 	SenderName string   `json:"sender_name,omitempty"`
 	ChatType   string   `json:"chat_type,omitempty"`
+	// RPC and TUI fields (used when Type == "rpc" or "tui_control_resp")
+	ID         string             `json:"id,omitempty"`
+	Method     string             `json:"method,omitempty"`
+	Params     json.RawMessage    `json:"params,omitempty"`
+	TUIControl *TUIControlPayload `json:"tui_control,omitempty"`
 }
 
 // WsAskUserPayload is the payload for "ask_user" WS messages (agent needs user input).
@@ -1022,6 +1039,59 @@ func (wc *WebChannel) Send(msg bus.OutboundMessage) (string, error) {
 	}
 
 	return msgID, nil
+}
+
+// SendTUIControlRequest sends a TUI control request to a remote CLI client and blocks
+// waiting for the response. Used by the tui_control tool in remote mode.
+func (c *RemoteCLIChannel) SendTUIControlRequest(chatID string, action string, params map[string]string) (map[string]string, error) {
+	id := fmt.Sprintf("tui-%d", time.Now().UnixNano())
+	ch := make(chan *TUIControlPayload, 1)
+
+	c.tuiPendingMu.Lock()
+	c.tuiPending[id] = ch
+	c.tuiPendingMu.Unlock()
+
+	defer func() {
+		c.tuiPendingMu.Lock()
+		delete(c.tuiPending, id)
+		c.tuiPendingMu.Unlock()
+	}()
+
+	wsMsg := wsMessage{
+		Type: "tui_control_req",
+		ID:   id,
+		TUIControl: &TUIControlPayload{
+			Action: action,
+			Params: params,
+		},
+	}
+	if !c.hub.sendToClient(chatID, wsMsg) {
+		return nil, fmt.Errorf("remote CLI client offline for chat %s", chatID)
+	}
+
+	select {
+	case resp := <-ch:
+		if resp.Error != "" {
+			return nil, fmt.Errorf("%s", resp.Error)
+		}
+		return resp.Result, nil
+	case <-time.After(10 * time.Second):
+		return nil, fmt.Errorf("tui_control request %s timed out", id)
+	}
+}
+
+// deliverTUIResponse routes a TUI control response from a remote CLI client
+// to the pending request channel.
+func (c *RemoteCLIChannel) deliverTUIResponse(id string, payload *TUIControlPayload) {
+	c.tuiPendingMu.Lock()
+	ch, ok := c.tuiPending[id]
+	c.tuiPendingMu.Unlock()
+	if ok {
+		select {
+		case ch <- payload:
+		default:
+		}
+	}
 }
 
 // stampAndBuffer assigns a monotonic seq to the message and appends it to the
@@ -1500,6 +1570,11 @@ func (wc *WebChannel) readPump(c *Client, si *sessionInfo) {
 			}
 			wc.hub.subscribe(c.id, subMsg.ChatID)
 			log.WithFields(log.Fields{"client_id": c.id, "chat_id": subMsg.ChatID}).Debug("CLI client subscribed to chatID")
+		case "tui_control_resp":
+			// Remote CLI TUI control response — route to pending request handler
+			if msg.TUIControl != nil && msg.ID != "" && wc.hub.tuiRespFn != nil {
+				wc.hub.tuiRespFn(msg.ID, msg.TUIControl)
+			}
 		case "message":
 			if msg.Content == "" && len(msg.UploadKeys) == 0 {
 				continue
@@ -1824,14 +1899,22 @@ type RemoteCLIChannel struct {
 	hub *Hub
 
 	// Per-chatID widget zone cache for incremental updates.
-	// Keyed by chatID to support per-session rendering.
 	lastWidgetMu    sync.Mutex
 	lastWidgetZones map[string]map[string]string // chatID → zone → content
+
+	// TUI control pending requests (keyed by request ID)
+	tuiPendingMu sync.Mutex
+	tuiPending   map[string]chan *TUIControlPayload
 }
 
 // NewRemoteCLIChannel creates a virtual CLI channel that shares the given hub.
 func NewRemoteCLIChannel(hub *Hub) *RemoteCLIChannel {
-	return &RemoteCLIChannel{hub: hub}
+	rc := &RemoteCLIChannel{
+		hub:        hub,
+		tuiPending: make(map[string]chan *TUIControlPayload),
+	}
+	hub.tuiRespFn = rc.deliverTUIResponse
+	return rc
 }
 
 func (c *RemoteCLIChannel) Name() string { return "cli" }

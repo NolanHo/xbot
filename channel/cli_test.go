@@ -1377,7 +1377,9 @@ func TestCLIModelSendMessageEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTickCmd(t *testing.T) {
-	cmd := tickCmd()
+	model := newCLIModel()
+	model.tickGen = 1
+	cmd := model.tickCmd()
 	if cmd == nil {
 		t.Error("tickCmd() returned nil")
 	}

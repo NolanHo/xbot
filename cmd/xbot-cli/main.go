@@ -59,6 +59,53 @@ const cliSenderID = "cli_user"
 // refreshRemoteValuesCache fetches current settings from the remote server
 // and updates the local cache. Called from a background goroutine — never from
 // the BubbleTea Update loop (which would freeze the TUI on WS disconnect).
+// configLayoutValue reads a single layout setting from the local config.json.
+// Used as fallback when RPC fails on first refreshRemoteValuesCache call.
+// saveLayoutToConfig writes layout settings (sidebar_width, theme, etc.)
+// directly to config.json. These keys are not in the Config struct and
+// are preserved by SaveToFile's deep merge, but we must write them explicitly.
+func saveLayoutToConfig(vals map[string]string) {
+	path := config.ConfigFilePath()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var m map[string]interface{}
+	if json.Unmarshal(raw, &m) != nil {
+		return
+	}
+	for k, v := range vals {
+		if v != "" {
+			m[k] = v
+		}
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0644)
+}
+
+func configLayoutValue(key string) string {
+	raw, err := os.ReadFile(config.ConfigFilePath())
+	if err != nil {
+		return ""
+	}
+	var m map[string]interface{}
+	if json.Unmarshal(raw, &m) != nil {
+		return ""
+	}
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		if n, ok := v.(float64); ok {
+			return strconv.Itoa(int(n))
+		}
+	}
+	return ""
+}
+
 func (app *cliApp) refreshRemoteValuesCache() {
 	if app.backend == nil {
 		return
@@ -148,6 +195,21 @@ func (app *cliApp) refreshRemoteValuesCache() {
 	app.valuesCacheMu.Lock()
 	app.valuesCache = vals
 	app.valuesCacheMu.Unlock()
+
+	// Merge layout keys from local config.json if missing (RPC may fail on first call)
+	layoutKeys := []string{"sidebar_width", "sidebar_enabled", "sidebar_position", "chat_max_width", "chat_center", "layout_mode"}
+	for _, k := range layoutKeys {
+		if _, ok := vals[k]; ok {
+			continue
+		}
+		if v := configLayoutValue(k); v != "" {
+			vals[k] = v
+		}
+	}
+
+	if app.cliCh != nil {
+		app.cliCh.SyncLayoutSettings(vals)
+	}
 
 	// Sync tier model mappings to local LLMFactory so SubAgent model resolution
 	// works in remote mode (tier models are now user-scoped, persisted in DB).
@@ -523,6 +585,8 @@ type cliApp struct {
 
 	// Remote-mode background goroutine cancel
 	valuesCancel context.CancelFunc
+
+	cliCh *channel.CLIChannel // for syncing layout settings after cache refresh
 }
 
 // isFirstRun 检测是否是首次运行（config.json 不存在或 API Key 未配置）
@@ -1153,10 +1217,30 @@ func main() {
 			}
 			applyCLISettingsToBackend(app.backend, "cli_user", values)
 
+			// Update local cache immediately (no waiting for refreshRemoteValuesCache)
+			app.valuesCacheMu.Lock()
+			for k, v := range values {
+				if app.valuesCache == nil {
+					app.valuesCache = make(map[string]string)
+				}
+				app.valuesCache[k] = v
+			}
+			app.valuesCacheMu.Unlock()
+
+			if app.cliCh != nil {
+				app.cliCh.SyncLayoutSettings(values)
+			}
+
+			// Always save layout to config.json (keys not in Config struct, must write directly)
+			saveLayoutToConfig(values)
+			// Always save to local config.json as fallback cache
+			applyCLISettingsToConfig(app.cfg, values)
+			if err := saveCLIConfig(app.cfg); err != nil {
+				log.Warnf("Failed to save CLI config: %v", err)
+			}
+
 			// ── Local-mode extras ──
 			if !app.backend.IsRemote() {
-				applyCLISettingsToConfig(app.cfg, values)
-				// Model tiers (needs explicit check since config-only)
 				if vanguardChanged || balanceChanged || swiftChanged {
 					app.backend.LLMFactory().SetModelTiers(app.cfg.LLM)
 				}
@@ -1164,11 +1248,6 @@ func main() {
 				if v, ok := values["sandbox_mode"]; ok && v != "" {
 					tools.ReinitSandbox(app.cfg.Sandbox, app.workDir)
 					app.backend.SetSandbox(tools.GetSandbox(), v)
-				}
-				applyCLISettingsToBackend(app.backend, cliSenderID, values)
-				loadLLMFromDBSubscription(app.backend, app.cfg)
-				if err := saveCLIConfig(app.cfg); err != nil {
-					log.Warnf("Failed to save config.json: %v", err)
 				}
 				if theme, ok := values["theme"]; ok && theme != "" {
 					if ss := app.backend.SettingsService(); ss != nil {
@@ -1633,6 +1712,9 @@ func main() {
 				refreshAgentCache()
 			}
 		}
+		cliCfg.TrimHistoryFn = func(channelName, chatID string, cutoff time.Time) error {
+			return backend.TrimHistory(channelName, chatID, cutoff)
+		}
 		cliCfg.SetCWDFn = func(channelName, chatID, dir string) error {
 			return backend.SetCWD(channelName, chatID, dir)
 		}
@@ -1684,6 +1766,7 @@ func main() {
 	}
 
 	cliCh := channel.NewCLIChannel(cliCfg, app.msgBus)
+	app.cliCh = cliCh
 	disp.Register(cliCh)
 
 	// Start pprof HTTP server if --pprof flag is set
@@ -1863,6 +1946,21 @@ func main() {
 		}
 	}
 
+	// Wire AI-Native TUI callback (local mode only; config works everywhere via SettingsSvc)
+	if app.backend != nil && !app.backend.IsRemote() {
+		tuiCtrl := func(action string, params map[string]string) (map[string]string, error) {
+			return cliCh.SendTUIControl(action, params)
+		}
+		app.backend.SetTUICallbacks(tuiCtrl, nil, nil)
+	}
+
+	// Wire AI-Native TUI callback for remote mode (server → client via WS)
+	if app.backend != nil && app.backend.IsRemote() {
+		app.backend.OnTUIControlRequest(func(action string, params map[string]string) (map[string]string, error) {
+			return cliCh.SendTUIControl(action, params)
+		})
+	}
+
 	// Apply saved theme at startup.
 	// Local mode can read settings immediately; remote mode must wait until backend.Start()
 	// establishes the WS/RPC connection, otherwise theme fetch races and the UI keeps default
@@ -1873,6 +1971,7 @@ func main() {
 				if t, ok := vals["theme"]; ok && t != "" {
 					channel.ApplyTheme(t)
 				}
+				cliCh.SyncLayoutSettings(vals)
 			}
 		}
 	}
@@ -1945,14 +2044,23 @@ func main() {
 	}
 	clipanic.Go("main.dispatcher.Run", disp.Run)
 
-	// Remote mode: load history from server after WS connection is established.
-	// Use the original CLI tenant key so remote mode can resume the same session
-	// as legacy local mode: channel=cli, chat_id=absWorkDir.
+	// Remote mode: apply layout from local config.json FIRST (instant, no RPC).
 	if app.backend.IsRemote() {
+		layoutVals := map[string]string{}
+		for _, k := range []string{"sidebar_width", "sidebar_enabled", "sidebar_position", "chat_max_width", "chat_center", "layout_mode"} {
+			if v := configLayoutValue(k); v != "" {
+				layoutVals[k] = v
+			}
+		}
+		if len(layoutVals) > 0 {
+			cliCh.SyncLayoutSettings(layoutVals)
+		}
+		// Async: refresh from server when WS is ready
 		if vals, err := app.backend.GetSettings("cli", "cli_user"); err == nil {
 			if t, ok := vals["theme"]; ok && t != "" {
 				channel.ApplyTheme(t)
 			}
+			cliCh.SyncLayoutSettings(vals)
 		}
 		remoteChatID, _ := filepath.Abs(app.workDir)
 

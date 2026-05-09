@@ -90,6 +90,16 @@ type ToolContext struct {
 	GroupID string
 	// GroupMembers lists all agent addresses in this agent's group (for system prompt injection).
 	GroupMembers []string
+
+	// TUIControl triggers TUI operations from tool goroutines (CLI channel only).
+	// Returns result map and error. Actions: "switch", "close", "layout", "theme".
+	TUIControl func(action string, params map[string]string) (map[string]string, error)
+
+	// ConfigGet reads a configuration value by key (for config tool).
+	ConfigGet func(key string) (string, error)
+
+	// ConfigSet writes a configuration value and returns the previous value (for config tool).
+	ConfigSet func(key, value string) (string, error)
 }
 
 // SubAgentManager SubAgent 管理接口，避免循环依赖

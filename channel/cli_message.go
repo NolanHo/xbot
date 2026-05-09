@@ -690,6 +690,12 @@ func (m *cliModel) handleSlashCommand(cmd string) tea.Cmd {
 
 // handleAgentMessage 处理 agent 回复
 func (m *cliModel) handleAgentMessage(msg bus.OutboundMessage) {
+	// suLoading guard: during session switch in remote mode, discard agent replies.
+	// The RPC (handleSuHistoryLoad) will load the authoritative message history.
+	// Accepting stale replies here would create duplicates or render on empty history.
+	if m.suLoading {
+		return
+	}
 	// Filter by session: only process outbound for the currently viewed session.
 	if msg.Channel != "" && msg.ChatID != "" {
 		if msg.Channel != m.channelName || msg.ChatID != m.chatID {
@@ -2537,10 +2543,12 @@ func (m *cliModel) jumpToSearchResult(idx int) {
 	}
 }
 
-// // tickCmd returns a command that periodically refreshes viewport during agent processing.
-func tickCmd() tea.Cmd {
+// tickCmd returns a command that periodically refreshes viewport during agent processing.
+// Captures the current tickGen to detect and discard stale ticks from previous chains.
+func (m *cliModel) tickCmd() tea.Cmd {
+	gen := m.tickGen
 	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
-		return cliTickMsg{}
+		return cliTickMsg{gen: gen}
 	})
 }
 

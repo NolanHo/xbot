@@ -711,6 +711,7 @@ func (b *fakeAgentBackend) MultiSession() *session.MultiTenantSession           
 func (b *fakeAgentBackend) BgTaskManager() *tools.BackgroundTaskManager                  { return nil }
 func (b *fakeAgentBackend) HookManager() *hooks.Manager                                  { return nil }
 func (b *fakeAgentBackend) ApprovalState() *hooks.ApprovalState                          { return nil }
+func (b *fakeAgentBackend) BindChat(_ string) error                                      { return nil }
 func (b *fakeAgentBackend) SetDirectSend(func(bus.OutboundMessage) (string, error))      {}
 func (b *fakeAgentBackend) SetChannelFinder(func(string) (channel.Channel, bool))        {}
 func (b *fakeAgentBackend) SetChannelPromptProviders(...agent.ChannelPromptProvider)     {}

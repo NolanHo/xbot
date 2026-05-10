@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"xbot/agent/hooks"
@@ -15,6 +14,7 @@ import (
 	"xbot/event"
 	llm "xbot/llm"
 	"xbot/plugin"
+	"xbot/protocol"
 	"xbot/session"
 	"xbot/tools"
 
@@ -133,14 +133,13 @@ func (b *Backend) Run(ctx context.Context) error   { return b.transport.Run(ctx)
 // ---------------------------------------------------------------------------
 
 func (b *Backend) SendInbound(msg bus.InboundMessage) error {
-	return b.transport.SendMessage(Message{
+	return b.transport.SendMessage(protocol.InboundMessage{
 		Content:    msg.Content,
 		Channel:    msg.Channel,
 		ChatID:     msg.ChatID,
 		SenderID:   msg.SenderID,
 		SenderName: msg.SenderName,
 		ChatType:   msg.ChatType,
-		Cancel:     strings.TrimSpace(strings.ToLower(msg.Content)) == "/cancel",
 	})
 }
 
@@ -161,9 +160,9 @@ func (b *Backend) OnPluginWidgets(cb func(zones map[string]string, chatID string
 func (b *Backend) OnTUIControlRequest(cb func(action string, params map[string]string) (map[string]string, error)) {
 	b.transport.OnTUIControlRequest(cb)
 }
-func (b *Backend) Subscribe(chatID string) error { return b.transport.Subscribe(chatID) }
-func (b *Backend) ConnState() string             { return b.transport.ConnState() }
-func (b *Backend) ServerURL() string             { return b.transport.ServerURL() }
+func (b *Backend) BindChat(chatID string) error { return b.transport.BindChat(chatID) }
+func (b *Backend) ConnState() string            { return b.transport.ConnState() }
+func (b *Backend) ServerURL() string            { return b.transport.ServerURL() }
 
 // ---------------------------------------------------------------------------
 // Local-only identity & accessors (nil in remote mode)

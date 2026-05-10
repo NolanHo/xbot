@@ -11,6 +11,7 @@ import (
 	"xbot/bus"
 	"xbot/channel"
 	"xbot/config"
+	"xbot/protocol"
 	"xbot/storage/sqlite"
 	"xbot/tools"
 )
@@ -19,6 +20,8 @@ import (
 // Its Call() method dispatches to a handler table that directly operates on *Agent.
 // This eliminates all local/remote branching in Backend — every call is a transport.Call().
 type localTransport struct {
+	baseTransport
+
 	agent         *Agent
 	bus           *bus.MessageBus
 	reconfigureFn func(channel string)
@@ -27,9 +30,10 @@ type localTransport struct {
 
 func newLocalTransport(agent *Agent, bus *bus.MessageBus) *localTransport {
 	t := &localTransport{
-		agent:    agent,
-		bus:      bus,
-		handlers: make(map[string]func(json.RawMessage) (json.RawMessage, error), 64),
+		baseTransport: newBaseTransport(),
+		agent:         agent,
+		bus:           bus,
+		handlers:      make(map[string]func(json.RawMessage) (json.RawMessage, error), 64),
 	}
 	t.registerHandlers()
 	return t
@@ -51,7 +55,7 @@ func (t *localTransport) Run(ctx context.Context) error { return t.agent.Run(ctx
 // Communication
 // ---------------------------------------------------------------------------
 
-func (t *localTransport) SendMessage(msg Message) error {
+func (t *localTransport) SendMessage(msg protocol.InboundMessage) error {
 	select {
 	case t.bus.Inbound <- bus.InboundMessage{
 		Content: msg.Content, Channel: msg.Channel, ChatID: msg.ChatID,
@@ -63,7 +67,7 @@ func (t *localTransport) SendMessage(msg Message) error {
 	}
 }
 
-func (t *localTransport) Subscribe(string) error { return nil }
+func (t *localTransport) BindChat(string) error { return nil }
 
 // ---------------------------------------------------------------------------
 // Callbacks (no-op for local mode — events flow through dispatcher directly)

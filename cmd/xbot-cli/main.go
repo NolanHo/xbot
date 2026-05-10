@@ -38,6 +38,7 @@ import (
 	log "xbot/logger"
 	"xbot/plugin"
 	"xbot/pprof"
+	"xbot/protocol"
 	"xbot/serverapp"
 	"xbot/storage"
 	"xbot/storage/sqlite"
@@ -1907,7 +1908,7 @@ func main() {
 			os.RemoveAll(checkpointDir)
 			if cpStore, err := tools.NewCheckpointStore(checkpointDir); err == nil {
 				if mgr := app.backend.HookManager(); mgr != nil {
-					cpState := hooks.NewCheckpointState(cpStore)
+					cpState := protocol.NewCheckpointState(cpStore)
 					mgr.RegisterBuiltin(hooks.CheckpointCallback(cpState))
 					cliCh.SetCheckpointState(cpState)
 					defer cpStore.Cleanup()
@@ -2105,7 +2106,7 @@ func main() {
 		// (progress, stream, outbound) to this WS connection.
 		// Without this, RPC-only sessions never subscribe and all pushed
 		// events are silently buffered.
-		app.backend.Subscribe(remoteChatID)
+		app.backend.BindChat(remoteChatID)
 
 		// Initialize remote plugin cache for /plugin commands and widget rendering.
 		remoteCache := channel.NewRemotePluginCache(remoteChatID, func(method string, params any) (json.RawMessage, error) {
@@ -2154,7 +2155,7 @@ func main() {
 		app.backend.OnReconnect(func() {
 			defer clipanic.Recover("main.remote.OnReconnect", nil, false)
 			// Re-subscribe to business chatID for new WS connection.
-			_ = app.backend.Subscribe(remoteChatID)
+			_ = app.backend.BindChat(remoteChatID)
 			// Re-sync CWD on reconnect (server may have restarted, losing in-memory cwd)
 			if isLocalServer(app.cfg.CLI.ServerURL) {
 				if cwd, err := os.Getwd(); err == nil {

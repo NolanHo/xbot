@@ -13,6 +13,7 @@ import (
 	"time"
 
 	log "xbot/logger"
+	"xbot/protocol"
 	"xbot/tools"
 )
 
@@ -203,33 +204,18 @@ func TimingCallback(td *TimingData) *CallbackHook {
 
 // ApprovalState holds the mutable state for the approval callback.
 // The handler can be swapped at runtime via SetHandler.
-type ApprovalState struct {
-	mu      sync.RWMutex
-	handler tools.ApprovalHandler
-	timeout time.Duration
-}
+type ApprovalState = protocol.ApprovalState
 
 // NewApprovalState creates an ApprovalState with the given handler.
 // If handler is nil, privileged operations will be denied.
 func NewApprovalState(handler tools.ApprovalHandler) *ApprovalState {
-	return &ApprovalState{
-		handler: handler,
-		timeout: 60 * time.Second,
+	s := &ApprovalState{
+		Timeout: 60 * time.Second,
 	}
-}
-
-// SetHandler replaces the approval handler at runtime.
-func (s *ApprovalState) SetHandler(h tools.ApprovalHandler) {
-	s.mu.Lock()
-	s.handler = h
-	s.mu.Unlock()
-}
-
-// GetHandler returns the current approval handler.
-func (s *ApprovalState) GetHandler() tools.ApprovalHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.handler
+	if handler != nil {
+		s.SetHandler(handler)
+	}
+	return s
 }
 
 // ApprovalCallback returns a CallbackHook that intercepts tool calls targeting
@@ -290,9 +276,7 @@ func ApprovalCallback(state *ApprovalState) *CallbackHook {
 			}
 
 			// Privileged user — request approval.
-			state.mu.RLock()
-			handler := state.handler
-			state.mu.RUnlock()
+			handler := state.GetHandler()
 
 			if handler == nil {
 				return &Result{
@@ -301,7 +285,7 @@ func ApprovalCallback(state *ApprovalState) *CallbackHook {
 				}, nil
 			}
 
-			approvalCtx, cancel := context.WithTimeout(ctx, state.timeout)
+			approvalCtx, cancel := context.WithTimeout(ctx, state.Timeout)
 			defer cancel()
 
 			req := tools.ApprovalRequest{
@@ -423,41 +407,7 @@ func populateApprovalDetails(req *tools.ApprovalRequest, toolName, args string) 
 const maxCheckpointFileSize = 1 << 20
 
 // CheckpointState holds the mutable state for the checkpoint callback.
-type CheckpointState struct {
-	mu      sync.Mutex
-	store   *tools.CheckpointStore
-	turnIdx int
-	// pending stores snapshots between Pre and Post events, keyed by file path.
-	pending map[string]tools.FileSnapshot
-}
-
-// NewCheckpointState creates a CheckpointState backed by the given store.
-func NewCheckpointState(store *tools.CheckpointStore) *CheckpointState {
-	return &CheckpointState{
-		store:   store,
-		pending: make(map[string]tools.FileSnapshot),
-	}
-}
-
-// SetTurnIdx sets the current turn index. Should be called before each agent
-// turn (i.e., before each user message is processed by the agent).
-func (cs *CheckpointState) SetTurnIdx(idx int) {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	cs.turnIdx = idx
-}
-
-// TurnIdx returns the current turn index.
-func (cs *CheckpointState) TurnIdx() int {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	return cs.turnIdx
-}
-
-// Store returns the underlying CheckpointStore.
-func (cs *CheckpointState) Store() *tools.CheckpointStore {
-	return cs.store
-}
+type CheckpointState = protocol.CheckpointState
 
 // CheckpointCallback returns a CallbackHook that snapshots files before
 // FileCreate/FileReplace and persists the snapshots after successful
@@ -517,15 +467,13 @@ func handleCheckpointPre(ctx context.Context, cs *CheckpointState, e *PreToolUse
 		existed = true
 	}
 
-	cs.mu.Lock()
-	cs.pending[filePath] = tools.FileSnapshot{
-		TurnIdx:    cs.turnIdx,
+	cs.SetPending(filePath, tools.FileSnapshot{
+		TurnIdx:    cs.TurnIdx(),
 		ToolName:   toolName,
 		FilePath:   filePath,
 		Existed:    existed,
 		ContentB64: base64.StdEncoding.EncodeToString(content),
-	}
-	cs.mu.Unlock()
+	})
 }
 
 // handleCheckpointPost confirms the snapshot if the tool succeeded, or
@@ -551,12 +499,7 @@ func handleCheckpointPost(ctx context.Context, cs *CheckpointState, e *PostToolU
 		filePath = filepath.Clean(filePath)
 	}
 
-	cs.mu.Lock()
-	snap, found := cs.pending[filePath]
-	if found {
-		delete(cs.pending, filePath)
-	}
-	cs.mu.Unlock()
+	snap, found := cs.GetAndDeletePending(filePath)
 
 	if !found {
 		return
@@ -568,7 +511,7 @@ func handleCheckpointPost(ctx context.Context, cs *CheckpointState, e *PostToolU
 	}
 
 	// Tool succeeded — write snapshot to store.
-	if writeErr := cs.store.Write(snap); writeErr != nil {
+	if writeErr := cs.Store().Write(snap); writeErr != nil {
 		log.WithError(writeErr).Warn("checkpoint hook: failed to write snapshot")
 	} else {
 		log.WithFields(log.Fields{"turn": snap.TurnIdx, "tool": toolName, "file": snap.FilePath, "existed": snap.Existed}).Debug("checkpoint hook: snapshot saved")

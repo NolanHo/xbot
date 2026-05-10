@@ -21,12 +21,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/google/uuid"
-	"xbot/agent/hooks"
 	"xbot/bus"
 	"xbot/clipanic"
 	"xbot/llm"
 	log "xbot/logger"
 	"xbot/plugin"
+	"xbot/protocol"
 	"xbot/tools"
 	"xbot/version"
 )
@@ -461,7 +461,7 @@ func (c *CLIChannel) SendToast(text, icon string) {
 
 // SetApprovalState stores the ApprovalState reference so that Start() can wire
 // the CLIApprovalHandler after the tea.Program is created.
-func (c *CLIChannel) SetApprovalState(state *hooks.ApprovalState) {
+func (c *CLIChannel) SetApprovalState(state *protocol.ApprovalState) {
 	c.approvalState = state
 }
 
@@ -707,7 +707,7 @@ func (c *CLIChannel) SyncLayoutSettings(vals map[string]string) {
 
 // SetCheckpointState sets the file checkpoint state for /rewind file rollback.
 // If the model hasn't been created yet, the state is cached and applied later.
-func (c *CLIChannel) SetCheckpointState(state *hooks.CheckpointState) {
+func (c *CLIChannel) SetCheckpointState(state *protocol.CheckpointState) {
 	c.programMu.Lock()
 	defer c.programMu.Unlock()
 	if c.model != nil {

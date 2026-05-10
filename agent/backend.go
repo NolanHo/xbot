@@ -87,9 +87,9 @@ type AgentBackend interface {
 	// Local: no-op. Remote: called when server sends a tui_control_req WS message.
 	OnTUIControlRequest(callback func(action string, params map[string]string) (map[string]string, error))
 
-	// Subscribe registers this client to receive events for a chatID.
+	// BindChat registers this client to receive events for a chatID.
 	// Local: no-op. Remote: sends subscribe message via WS.
-	Subscribe(chatID string) error
+	BindChat(chatID string) error
 
 	// ConnState returns the current connection state.
 	// Local: always "connected". Remote: "connected"/"disconnected"/"reconnecting".

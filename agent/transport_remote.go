@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"xbot/bus"
 	"xbot/channel"
 	"xbot/clipanic"
+	"xbot/protocol"
 
 	"github.com/gorilla/websocket"
 	log "xbot/logger"
@@ -37,6 +39,8 @@ type rpcResponse struct {
 // It implements the Transport interface: sending messages, RPC calls,
 // and receiving server-pushed events (progress, stream, outbound).
 type RemoteTransport struct {
+	baseTransport
+
 	serverURL string
 	token     string
 
@@ -94,11 +98,12 @@ type RemoteTransportConfig struct {
 // NewRemoteTransport creates a RemoteTransport that connects to the given server URL.
 func NewRemoteTransport(cfg RemoteTransportConfig) *RemoteTransport {
 	return &RemoteTransport{
-		serverURL:   cfg.ServerURL,
-		token:       cfg.Token,
-		done:        make(chan struct{}),
-		reconnectCh: make(chan struct{}, 1),
-		pending:     make(map[string]chan *rpcResponse),
+		baseTransport: newBaseTransport(),
+		serverURL:     cfg.ServerURL,
+		token:         cfg.Token,
+		done:          make(chan struct{}),
+		reconnectCh:   make(chan struct{}, 1),
+		pending:       make(map[string]chan *rpcResponse),
 	}
 }
 
@@ -188,7 +193,7 @@ func (t *RemoteTransport) Stop() {
 // ---------------------------------------------------------------------------
 
 // SendMessage sends a user message to the remote server via WebSocket.
-func (t *RemoteTransport) SendMessage(msg Message) error {
+func (t *RemoteTransport) SendMessage(msg protocol.InboundMessage) error {
 	t.connMu.Lock()
 	defer t.connMu.Unlock()
 	if t.conn == nil {
@@ -199,7 +204,7 @@ func (t *RemoteTransport) SendMessage(msg Message) error {
 	defer t.conn.SetWriteDeadline(time.Time{}) // reset
 
 	msgType := "message"
-	if msg.Cancel {
+	if strings.TrimSpace(strings.ToLower(msg.Content)) == "/cancel" {
 		msgType = "cancel"
 	}
 
@@ -289,6 +294,10 @@ func (t *RemoteTransport) setConnState(state string) {
 	if prev != state && cb != nil {
 		cb(state)
 	}
+	// Emit protocol event for new-style subscribers
+	if prev != state {
+		t.emit(context.Background(), protocol.ConnStateEvent{State: state})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -364,9 +373,9 @@ func (t *RemoteTransport) connect(ctx context.Context) error {
 	return nil
 }
 
-// Subscribe registers this connection to receive events for chatID.
+// BindChat registers this connection to receive events for chatID.
 // Must be called after connect() with the business chatID (e.g. "/home/user").
-func (t *RemoteTransport) Subscribe(chatID string) error {
+func (t *RemoteTransport) BindChat(chatID string) error {
 	t.connMu.Lock()
 	conn := t.conn
 	t.connMu.Unlock()
@@ -466,6 +475,12 @@ func (t *RemoteTransport) readPump(ctx context.Context) {
 			if msg.SessionReset {
 				outMsg.Metadata["session_reset"] = "true"
 			}
+			// Emit protocol event for new-style subscribers
+			t.emit(ctx, protocol.OutboundEvent{
+				ChatID:    msg.ChatID,
+				Content:   msg.Content,
+				IsPartial: false,
+			})
 			t.outboundMu.RLock()
 			cb := t.outboundCb
 			t.outboundMu.RUnlock()
@@ -485,13 +500,39 @@ func (t *RemoteTransport) readPump(ctx context.Context) {
 				log.Warn("Received server reply but no outbound callback registered")
 			}
 		case "progress_structured":
-			t.dispatchProgress(convertWsProgressToCLI(msg.Progress))
+			cliPayload := convertWsProgressToCLI(msg.Progress)
+			t.dispatchProgress(cliPayload)
+			// Emit protocol event
+			if msg.Progress != nil {
+				pe := protocol.ProgressEvent{
+					Iteration: msg.Progress.Iteration,
+				}
+				for _, t := range msg.Progress.ActiveTools {
+					pe.ToolCalls = append(pe.ToolCalls, protocol.ToolCallSnapshot{
+						ID: t.Name, Name: t.Name, Args: t.Args, Status: t.Status, Elapsed: t.Elapsed,
+					})
+				}
+				for _, t := range msg.Progress.CompletedTools {
+					pe.ToolCalls = append(pe.ToolCalls, protocol.ToolCallSnapshot{
+						ID: t.Name, Name: t.Name, Args: t.Args, Status: t.Status, Elapsed: t.Elapsed,
+					})
+				}
+				t.emit(ctx, pe)
+			}
 		case "stream_content":
 			t.dispatchProgress(&channel.CLIProgressPayload{
 				ChatID:                 msg.Progress.ChatID,
 				StreamContent:          msg.Progress.GetStreamContent(),
 				ReasoningStreamContent: msg.Progress.GetReasoningStreamContent(),
 			})
+			// Emit protocol event with stream content
+			if msg.Progress != nil {
+				t.emit(ctx, protocol.ProgressEvent{
+					Iteration: msg.Progress.Iteration,
+					Content:   msg.Progress.GetStreamContent(),
+					Reasoning: msg.Progress.GetReasoningStreamContent(),
+				})
+			}
 		case "ask_user":
 			if msg.Progress != nil {
 				if len(msg.Progress.Questions) > 0 {
@@ -542,6 +583,13 @@ func (t *RemoteTransport) readPump(ctx context.Context) {
 					t.injectUserCb(msg.ChatID, msg.Content)
 				}()
 			}
+			// Emit protocol event
+			if msg.Content != "" {
+				t.emit(ctx, protocol.InjectUserEvent{
+					ChatID:  msg.ChatID,
+					Content: msg.Content,
+				})
+			}
 		case "plugin_widgets":
 			// Server push: widget zone content updated.
 			// Parse and cache directly — no RPC round-trip needed.
@@ -551,6 +599,14 @@ func (t *RemoteTransport) readPump(ctx context.Context) {
 				if err := json.Unmarshal([]byte(msg.Content), &zones); err == nil {
 					t.pluginWidgetsCb(zones, msg.ChatID)
 				}
+			}
+			// Emit protocol event
+			var zones map[string]string
+			if err := json.Unmarshal([]byte(msg.Content), &zones); err == nil {
+				t.emit(ctx, protocol.PluginWidgetEvent{
+					ChatID: msg.ChatID,
+					Zones:  zones,
+				})
 			}
 		case "tui_control_req":
 			// Server-initiated TUI control request. Process in goroutine so
@@ -581,6 +637,13 @@ func (t *RemoteTransport) readPump(ctx context.Context) {
 					}
 					t.connMu.Unlock()
 				}()
+			}
+			// Emit protocol event
+			if msg.TUIControl != nil {
+				t.emit(ctx, protocol.TUIControlEvent{
+					Action: msg.TUIControl.Action,
+					Params: msg.TUIControl.Params,
+				})
 			}
 		}
 	}
@@ -772,6 +835,8 @@ func (t *RemoteTransport) reconnectLoop(ctx context.Context) {
 				}
 				log.Info("Reconnected to server")
 				consecutiveFailures = 0
+				// Emit protocol reconnect event
+				t.emit(ctx, protocol.ReconnectEvent{})
 				// Notify CLI to reload history and re-sync state.
 				// Run in goroutine — callback may make slow RPC calls that
 				// should not block the reconnectLoop.

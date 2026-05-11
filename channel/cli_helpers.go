@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	log "xbot/logger"
 	"xbot/storage/sqlite"
 )
@@ -1862,15 +1863,14 @@ func (m *cliModel) applyScrollbar(content string, contentWidth, totalLines, scro
 
 	var b strings.Builder
 	for i, line := range lines {
-		// Trim line to contentWidth if wider, then pad to exactly contentWidth.
-		// This ensures the scrollbar always appears at the same column.
 		visW := lipgloss.Width(line)
-		if visW > contentWidth {
-			// Line is too wide — truncate visually.
-			// For simplicity, keep the styled string as-is (it will overflow
-			// the scrollbar column, but this is rare and better than panicking).
-			// Remove trailing whitespace to avoid double-scrollbar.
-			line = strings.TrimRight(line, " ")
+		// Truncate lines that reach or exceed contentWidth to leave room for
+		// at least 1 space padding before the scrollbar.  Without truncation,
+		// the scrollbar overflows PanelBox and wraps to the next line; without
+		// the >= check, lines exactly at contentWidth get forced to padding=1
+		// pushing the scrollbar 1 column right vs other lines (misalignment).
+		if visW >= contentWidth {
+			line = ansi.Truncate(line, contentWidth-1, "")
 			visW = lipgloss.Width(line)
 		}
 		padding := contentWidth - visW

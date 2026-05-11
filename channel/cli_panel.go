@@ -2385,7 +2385,13 @@ func (m *cliModel) viewAskUserPanel() string {
 			// minus label width and scrollbar column. Without this, textinput
 			// View() can exceed contentWidth causing applyScrollbar's scrollbar
 			// to wrap to next line — symptom: "▐" rendered below the "其他" row.
-			tiWidth := qWrapWidth - lipgloss.Width(prefix+otherLabel) - 1
+			// Resize textinput to fit within panel content width (qWrapWidth)
+			// minus label width and scrollbar column.  The textinput View()
+			// (specifically placeholderView) always outputs Width()+1 chars
+			// (cursor+placeholder+padding), so we need -2 instead of -1.
+			// Without this, the line reaches exactly contentWidth, and the
+			// scrollbar "▐" wraps to the next line.
+			tiWidth := qWrapWidth - lipgloss.Width(prefix+otherLabel) - 2
 			if tiWidth < 10 {
 				tiWidth = 10
 			}
@@ -2791,7 +2797,14 @@ func (m *cliModel) viewQuickSwitch(width, height int) string {
 	hint := m.styles.PanelHint.Render(" ↑↓ Navigate  Enter Select  E Edit  D Delete  Esc Close")
 
 	// Center vertically
-	listH := len(m.quickSwitchList) + 3 // header + spacer + items + borders(~2)
+	sepLines := 0
+	for _, s := range m.quickSwitchList {
+		if s.ID == "__add__" {
+			sepLines = 1
+			break
+		}
+	}
+	listH := len(m.quickSwitchList) + 3 + sepLines // header + spacer + items + separator + borders(~2)
 	blankLines := max(0, (height-listH)/2)
 	var b strings.Builder
 	for i := 0; i < blankLines; i++ {

@@ -98,10 +98,26 @@ func (a *Agent) buildBaseRunConfig(
 		Messages:     messages,
 
 		// 身份
-		AgentID:      "main",
-		Channel:      channel,
-		ChatID:       chatID,
-		SessionName:  func() string { _, name := channelpkg.ParseChatID(chatID); return name }(),
+		AgentID: "main",
+		Channel: channel,
+		ChatID:  chatID,
+		SessionName: func() string {
+			_, name := channelpkg.ParseChatID(chatID)
+			// Override with DB label if available (e.g. renamed from "Agent-xxx" to a custom name).
+			// This ensures the rename reminder doesn't fire for already-renamed sessions.
+			if a.multiSession != nil {
+				if db := a.multiSession.DB(); db != nil {
+					var label string
+					if err := db.Conn().QueryRow(
+						"SELECT label FROM user_chats WHERE channel = ? AND chat_id = ? AND label != '' LIMIT 1",
+						channel, chatID,
+					).Scan(&label); err == nil && label != "" {
+						name = label
+					}
+				}
+			}
+			return name
+		}(),
 		SenderID:     senderID,      // 直接调用者 = 原始用户（用于消息路由 + settings/usage 存储 key）
 		OriginUserID: sandboxUserID, // 沙箱/工作区用户（飞书身份登录 web 时为飞书 ou_xxx）
 		SenderName:   senderName,

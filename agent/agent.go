@@ -2218,6 +2218,21 @@ func (a *Agent) buildPrompt(ctx context.Context, msg bus.InboundMessage, tenantS
 
 	mc.SetExtra(ExtraKeyTenantID, tenantSession.TenantID())
 
+	// Session name for rename hint (only injected on first user message)
+	_, sessionName := channel.ParseChatID(msg.ChatID)
+	if a.multiSession != nil {
+		if db := a.multiSession.DB(); db != nil {
+			var label string
+			if err := db.Conn().QueryRow(
+				"SELECT label FROM user_chats WHERE channel = ? AND chat_id = ? AND label != '' LIMIT 1",
+				msg.Channel, msg.ChatID,
+			).Scan(&label); err == nil && label != "" {
+				sessionName = label
+			}
+		}
+	}
+	mc.SetExtra(ExtraKeySessionName, sessionName)
+
 	return a.pipeline.Run(mc), nil
 }
 

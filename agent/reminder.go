@@ -97,11 +97,6 @@ func BuildSystemReminder(messages []llm.ChatMessage, roundToolCalls []llm.ToolCa
 	parts = append(parts, "- 修改后运行测试验证")
 	parts = append(parts, "- 错误时先分析根因再修改")
 
-	// If session name is auto-generated (starts with "Agent-"), remind LLM to rename it.
-	if sessionName != "" && strings.HasPrefix(sessionName, "Agent-") {
-		parts = append(parts, fmt.Sprintf("- 当前会话名称为自动生成的 %q，建议根据对话内容用 config 工具设置有意义的名字：config set session_name <新名字>（支持中英文数字连字符，1-64字符）", sessionName))
-	}
-
 	// Detect git commit in Shell tool calls — remind agent to activate post-dev skill
 	gitCommitDetected := false
 	for _, tc := range roundToolCalls {

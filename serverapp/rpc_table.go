@@ -565,6 +565,12 @@ func registerSessionHandlers(t rpcTable, h *rpcContext) {
 		if !isAdmin(rpcAuthID(ctx)) && p.ChatID != bizID && p.Channel != "agent" {
 			return nil, fmt.Errorf("access denied")
 		}
+		// Update last_active_at so we can restore the most recent session on restart.
+		if db := h.backend.MultiSession().DB(); db != nil {
+			if _, err := sqlite.NewTenantService(db).GetOrCreateTenantID(p.Channel, p.ChatID); err != nil {
+				log.WithError(err).Warn("RPC get_history: failed to update last_active_at")
+			}
+		}
 		history, err := backend.GetHistory(p.Channel, p.ChatID)
 		if err != nil {
 			return nil, err

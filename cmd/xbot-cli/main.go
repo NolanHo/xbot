@@ -1076,6 +1076,9 @@ func main() {
 	absWorkDir, _ := filepath.Abs(app.workDir)
 
 	// Restore last active session on startup.
+	// Both local and remote mode use local sessions.json — it's written by
+	// SetLastActiveSession whenever the user switches sessions in the TUI.
+	// RPC is not available here (backend not started yet).
 	initialChatID := absWorkDir
 	if last := channel.GetLastActiveSession(absWorkDir); last != "" {
 		initialChatID = last

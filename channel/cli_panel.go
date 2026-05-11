@@ -977,6 +977,7 @@ func (m *cliModel) updateSessionsPanel(msg tea.KeyPressMsg) (bool, *cliModel, te
 				if entry.ID != m.chatID {
 					m.saveCurrentSession() // save current session state
 					m.chatID = entry.ID
+					SetLastActiveSession(m.defaultChatID, entry.ID)
 					m.channelName = entry.Channel
 					// Update workdir to match the session's workdir.
 					workDir, _ := ParseChatID(entry.ID)
@@ -3364,6 +3365,7 @@ func (m *cliModel) showSessionCreateDialog() tea.Cmd {
 	}
 	m.saveCurrentSession()
 	m.chatID = chatID
+	SetLastActiveSession(m.defaultChatID, chatID)
 	m.sessionName = name
 	m.channelName = "cli"
 	// Update workdir and persist CWD for the new session (same as switchToSession)
@@ -3426,6 +3428,7 @@ func (m *cliModel) deleteLocalSession(entry SessionPanelEntry) {
 	if entry.Active {
 		m.saveCurrentSession()
 		m.chatID = m.defaultChatID
+		SetLastActiveSession(m.defaultChatID, m.defaultChatID)
 		m.sessionName = defaultSessionName
 		// Update workdir and persist CWD for the default session
 		m.workDir = m.defaultChatID
@@ -3465,6 +3468,7 @@ func (m *cliModel) switchToSession(entry SessionPanelEntry) (bool, tea.Cmd) {
 			}
 			m.saveCurrentSession()
 			m.chatID = entry.ID
+			SetLastActiveSession(m.defaultChatID, entry.ID)
 			m.channelName = entry.Channel
 			// Update workdir to match the session's workdir.
 			workDir, _ := ParseChatID(entry.ID)

@@ -328,7 +328,10 @@ func ListLocalDirSessions(workDir string) []SessionPanelEntry {
 }
 
 // SetLastActiveSession persists the last active session for a workDir.
-func SetLastActiveSession(workDir, chatID string) {
+// chatID may be a full chatID (workDir:sessionName) or bare workDir.
+// The workDir is extracted via ParseChatID to ensure correct file lookup.
+func SetLastActiveSession(workDirOrChatID, chatID string) {
+	workDir, _ := ParseChatID(workDirOrChatID)
 	ds, err := LoadDirSessions(workDir)
 	if err != nil {
 		return

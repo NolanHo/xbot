@@ -620,6 +620,7 @@ func (m *cliModel) handleSlashCommand(cmd string) tea.Cmd {
 					return nil
 				}
 				m.chatID = chatID
+				SetLastActiveSession(m.defaultChatID, chatID)
 				// Reset critical state for new session (mirror postRestoreSessionSetup).
 				m.typing = false
 				m.progress = nil
@@ -670,6 +671,7 @@ func (m *cliModel) handleSlashCommand(cmd string) tea.Cmd {
 			// Switch to specific chatID
 			m.saveCurrentSession()
 			m.chatID = arg
+			SetLastActiveSession(m.defaultChatID, arg)
 			// Reset critical state after session switch.
 			m.typing = false
 			m.progress = nil

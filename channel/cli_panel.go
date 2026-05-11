@@ -3349,70 +3349,60 @@ func (m *cliModel) openChannelSettingsPanel(channel string) {
 
 // ── Session management (same-directory multi-session) ──
 
-// showSessionCreateDialog shows an input dialog for creating a new session.
+// showSessionCreateDialog creates a new session with an auto-generated name.
 func (m *cliModel) showSessionCreateDialog() tea.Cmd {
-	schema := []SettingDefinition{
-		{Key: "session_name", Label: "Session Name", Description: "Name for the new session (e.g. debug, experiment)", Type: SettingTypeText, DefaultValue: ""},
-	}
 	m.panelMode = "" // close sessions panel
-	m.openSettingsPanel(schema, map[string]string{}, func(values map[string]string) {
-		name := strings.TrimSpace(values["session_name"])
-		if name == "" {
-			m.showTempStatus("Session name cannot be empty")
-			return
+	ds, err := LoadDirSessions(m.workDir)
+	if err != nil {
+		m.showTempStatus(fmt.Sprintf("Failed: %v", err))
+		return nil
+	}
+	name, chatID, err := ds.addSessionAuto()
+	if err != nil {
+		m.showTempStatus(fmt.Sprintf("Failed: %v", err))
+		return nil
+	}
+	m.saveCurrentSession()
+	m.chatID = chatID
+	m.sessionName = name
+	m.channelName = "cli"
+	// Update workdir and persist CWD for the new session (same as switchToSession)
+	workDir, _ := ParseChatID(chatID)
+	if workDir != "" {
+		m.workDir = workDir
+		if m.channel != nil && m.channel.config.SetCWDFn != nil {
+			_ = m.channel.config.SetCWDFn("cli", chatID, workDir)
 		}
-		ds, err := loadDirSessions(m.workDir)
-		if err != nil {
-			m.showTempStatus(fmt.Sprintf("Failed: %v", err))
-			return
-		}
-		chatID, err := ds.addSession(name)
-		if err != nil {
-			m.showTempStatus(fmt.Sprintf("Failed: %v", err))
-			return
-		}
-		m.saveCurrentSession()
-		m.chatID = chatID
-		m.sessionName = name
-		m.channelName = "cli"
-		// Update workdir and persist CWD for the new session (same as switchToSession)
-		workDir, _ := ParseChatID(chatID)
-		if workDir != "" {
-			m.workDir = workDir
-			if m.channel != nil && m.channel.config.SetCWDFn != nil {
-				_ = m.channel.config.SetCWDFn("cli", chatID, workDir)
-			}
-		}
-		m.messages = nil
-		m.lastTokenUsage = nil
-		m.invalidateAllCache(false)
-		m.todos = nil // clear stale todos from previous session
-		m.todosDoneCleared = false
-		m.restoreSession()
-		// Ensure clean state — restored session may have stale typing=true
-		m.typing = false
-		m.inputReady = true
-		m.progress = nil
-		m.iterationHistory = nil
-		m.invalidateProgressHistoryCache()
-		m.messageQueue = nil
-		m.queueEditing = false
-		// Refresh sessions list cache so sidebar/sessions panel shows the new session
-		if m.sessionsListFn != nil {
-			m.panelSessionItems = m.sessionsListFn()
-		}
-		if m.channel != nil && m.channel.config.SessionsListRefresh != nil {
-			m.channel.config.SessionsListRefresh()
-		}
-		m.showTempStatus(fmt.Sprintf("Created session: %s", name))
-	})
+	}
+	m.messages = nil
+	m.lastTokenUsage = nil
+	m.invalidateAllCache(false)
+	m.todos = nil // clear stale todos from previous session
+	m.todosDoneCleared = false
+	m.restoreSession()
+	// Ensure clean state — restored session may have stale typing=true
+	m.typing = false
+	m.inputReady = true
+	m.progress = nil
+	m.iterationHistory = nil
+	m.invalidateProgressHistoryCache()
+	m.messageQueue = nil
+	m.queueEditing = false
+	// Refresh sessions list cache so sidebar/sessions panel shows the new session
+	if m.sessionsListFn != nil {
+		m.panelSessionItems = m.sessionsListFn()
+	}
+	if m.channel != nil && m.channel.config.SessionsListRefresh != nil {
+		m.channel.config.SessionsListRefresh()
+	}
+	m.showTempStatus(fmt.Sprintf("Created session: %s", name))
 	return nil
 }
 
 // deleteLocalSession deletes the selected session and switches to default if active.
 func (m *cliModel) deleteLocalSession(entry SessionPanelEntry) {
 	// 1. Remove from local JSON file (for local dir sessions).
-	ds, err := loadDirSessions(m.workDir)
+	ds, err := LoadDirSessions(m.workDir)
 	if err != nil {
 		m.showTempStatus(fmt.Sprintf("Failed: %v", err))
 		return

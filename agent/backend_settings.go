@@ -10,4 +10,5 @@ type SettingsManagement interface {
 		configSet func(key, value string) (string, error),
 	)
 	SetTUIControlHandler(callback func(action string, params map[string]string) (map[string]string, error))
+	SetChatRenameFn(chatRename func(chatID, newName string) (oldName string, err error))
 }

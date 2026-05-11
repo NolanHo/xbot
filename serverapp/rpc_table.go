@@ -1136,12 +1136,13 @@ func (h *rpcContext) listTenants(ctx context.Context) (any, error) {
 		ID           int64  `json:"id"`
 		Channel      string `json:"channel"`
 		ChatID       string `json:"chat_id"`
+		Label        string `json:"label,omitempty"`
 		CreatedAt    string `json:"created_at"`
 		LastActiveAt string `json:"last_active_at"`
 	}
 	result := make([]tenantJSON, len(tenants))
 	for i, t := range tenants {
-		result[i] = tenantJSON{t.ID, t.Channel, t.ChatID, t.CreatedAt.Format(time.RFC3339), t.LastActiveAt.Format(time.RFC3339)}
+		result[i] = tenantJSON{t.ID, t.Channel, t.ChatID, t.Label, t.CreatedAt.Format(time.RFC3339), t.LastActiveAt.Format(time.RFC3339)}
 	}
 	return result, nil
 }

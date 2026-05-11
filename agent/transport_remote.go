@@ -370,6 +370,11 @@ func (t *RemoteTransport) readPump(ctx context.Context) {
 				delete(t.pending, id)
 			}
 			t.rpcMu.Unlock()
+			// Clear conn so subsequent Call() returns immediately instead of
+			// blocking for 30s on a dead connection (freezes BubbleTea event loop).
+			t.connMu.Lock()
+			t.conn = nil
+			t.connMu.Unlock()
 			select {
 			case t.reconnectCh <- struct{}{}:
 			default:

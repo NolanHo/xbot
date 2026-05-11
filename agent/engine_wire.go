@@ -101,6 +101,7 @@ func (a *Agent) buildBaseRunConfig(
 		AgentID:      "main",
 		Channel:      channel,
 		ChatID:       chatID,
+		SessionName:  func() string { _, name := channelpkg.ParseChatID(chatID); return name }(),
 		SenderID:     senderID,      // 直接调用者 = 原始用户（用于消息路由 + settings/usage 存储 key）
 		OriginUserID: sandboxUserID, // 沙箱/工作区用户（飞书身份登录 web 时为飞书 ou_xxx）
 		SenderName:   senderName,
@@ -157,9 +158,10 @@ func (a *Agent) buildBaseRunConfig(
 		SettingsSvc: a.settingsSvc,
 
 		// TUI/Config callbacks — inherit from Agent (CLI local mode)
-		TUICtrlFn:   a.tuiCtrlFn,
-		ConfigGetFn: a.configGetFn,
-		ConfigSetFn: a.configSetFn,
+		TUICtrlFn:    a.tuiCtrlFn,
+		ConfigGetFn:  a.configGetFn,
+		ConfigSetFn:  a.configSetFn,
+		ChatRenameFn: a.chatRenameFn,
 
 		// Remote TUI control — detect RemoteCLIChannel and inject WS-based callback
 		RemoteTUICtrlFn: a.buildRemoteTUICtrlFn(channel, chatID),
@@ -712,6 +714,7 @@ func (a *Agent) buildSubAgentRunConfig(
 	// TUI/Config callbacks for tool execution (needed by tui_control/config tools)
 	cfg.TUICtrlFn = a.tuiCtrlFn
 	cfg.RemoteTUICtrlFn = a.buildRemoteTUICtrlFn(parentCtx.Channel, parentCtx.ChatID)
+	cfg.ChatRenameFn = a.chatRenameFn
 	cfg.MessageSender = a.messageSender
 	cfg.RegisterAgentChannel = a.registerAgentChannel
 	cfg.UnregisterAgentChannel = a.unregisterAgentChannel
@@ -810,6 +813,7 @@ func (a *Agent) buildToolExecutor(channel, chatID, senderID, senderName, sandbox
 	// TUI/Config callbacks for tool execution (needed by tui_control/config tools)
 	cfg.TUICtrlFn = a.tuiCtrlFn
 	cfg.RemoteTUICtrlFn = a.buildRemoteTUICtrlFn(channel, chatID)
+	cfg.ChatRenameFn = a.chatRenameFn
 	cfg.ListLLMSubs = a.listLLMSubsFn(channel)
 
 	var sessionOnce sync.Once

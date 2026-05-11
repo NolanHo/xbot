@@ -375,6 +375,8 @@ func (b fakeBackend) SetTUICallbacks(_ func(action string, params map[string]str
 }
 func (b fakeBackend) OnTUIControlRequest(_ func(action string, params map[string]string) (map[string]string, error)) {
 }
+func (b fakeBackend) SetChatRenameFn(_ func(chatID, newName string) (oldName string, err error)) {
+}
 func (b fakeBackend) GetContextMode() string               { return "" }
 func (b fakeBackend) PluginManager() *plugin.PluginManager { return nil }
 

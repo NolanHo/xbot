@@ -808,6 +808,8 @@ func (b *fakeAgentBackend) SetTUICallbacks(_ func(action string, params map[stri
 }
 func (b *fakeAgentBackend) SetTUIControlHandler(_ func(action string, params map[string]string) (map[string]string, error)) {
 }
+func (b *fakeAgentBackend) SetChatRenameFn(_ func(chatID, newName string) (oldName string, err error)) {
+}
 func (b *fakeAgentBackend) GetContextMode() string                                { return "" }
 func (b *fakeAgentBackend) PluginManager() *plugin.PluginManager                  { return nil }
 func (b *fakeAgentBackend) GetSettings(string, string) (map[string]string, error) { return nil, nil }

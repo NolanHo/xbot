@@ -320,9 +320,10 @@ type Agent struct {
 	settingsSvc *SettingsService
 
 	// TUI control callbacks (set by CLI channel, nil for other channels)
-	tuiCtrlFn   func(action string, params map[string]string) (map[string]string, error)
-	configGetFn func(key string) (string, error)
-	configSetFn func(key, value string) (string, error)
+	tuiCtrlFn    func(action string, params map[string]string) (map[string]string, error)
+	configGetFn  func(key string) (string, error)
+	configSetFn  func(key, value string) (string, error)
+	chatRenameFn func(chatID, newName string) (oldName string, err error)
 
 	// channelFinder looks up a channel instance by name (injected from main.go).
 	channelFinder func(name string) (channel.Channel, bool)
@@ -364,6 +365,11 @@ func (a *Agent) SetTUICallbacks(
 	a.tuiCtrlFn = tuiCtrl
 	a.configGetFn = configGet
 	a.configSetFn = configSet
+}
+
+// SetChatRenameFn sets the chat rename callback (CLI channel only).
+func (a *Agent) SetChatRenameFn(chatRename func(chatID, newName string) (oldName string, err error)) {
+	a.chatRenameFn = chatRename
 }
 
 // buildRemoteTUICtrlFn returns a TUIControl callback for remote CLI mode via WS,

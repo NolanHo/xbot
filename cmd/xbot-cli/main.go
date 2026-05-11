@@ -1075,6 +1075,13 @@ func main() {
 	// 用工作目录绝对路径作为 ChatID，不同目录有不同的会话
 	absWorkDir, _ := filepath.Abs(app.workDir)
 
+	// Restore last active session on startup.
+	initialChatID := absWorkDir
+	if last := channel.GetLastActiveSession(absWorkDir); last != "" {
+		initialChatID = last
+		log.WithFields(log.Fields{"chatID": initialChatID}).Info("Restoring last active session")
+	}
+
 	isRemoteBackend := app.backend.IsRemote()
 	remoteServerURL := app.backend.ServerURL()
 	// Pre-declare tenantSvc so SessionsList closure can capture it.
@@ -1083,7 +1090,7 @@ func main() {
 
 	cliCfg := channel.CLIChannelConfig{
 		WorkDir:              absWorkDir,
-		ChatID:               absWorkDir,
+		ChatID:               initialChatID,
 		RemoteMode:           isRemoteBackend,
 		RemoteServerURL:      remoteServerURL,
 		DebugMode:            flagDebug,
@@ -1435,86 +1442,65 @@ func main() {
 				return entries
 			}
 
-			// Local mode: query backend directly (no RPC, no deadlock risk).
+			// Local mode: all sessions from local JSON, sorted by creation time.
+			// No special treatment for "main" session — all sessions are equal.
 			var entries []channel.SessionPanelEntry
-			tenants, err := app.backend.ListTenants()
 			seen := make(map[string]bool) // dedup agent sessions by role:instance
 
-			// Get ALL subagents across all sessions, then filter to only
-			// sessions related to the current workdir (main + local dir).
+			// Get ALL subagents across all sessions.
 			allSubAgents := app.backend.ListInteractiveSessions("cli", "")
 			subsByChatID := make(map[string][]agent.InteractiveSessionInfo)
 			for _, s := range allSubAgents {
 				subsByChatID[s.ChatID] = append(subsByChatID[s.ChatID], s)
 			}
 
-			// Collect all relevant chatIDs: main session + local dir sessions.
-			type sessionInfo struct {
-				chatID string
-				label  string
-			}
-			var sessions []sessionInfo
-
-			// Main session (from tenants).
-			if err == nil && len(tenants) > 0 {
-				for _, t := range tenants {
-					if t.Channel == "agent" {
-						continue
+			// Build DB label map for override.
+			localLabelMap := map[string]string{}
+			if tenantSvc != nil {
+				if tenants, err := tenantSvc.ListTenants(); err == nil {
+					for _, t := range tenants {
+						if t.Channel == "agent" || t.Label == "" {
+							continue
+						}
+						localLabelMap[t.ChatID] = t.Label
 					}
-					if t.ChatID != absWorkDir || t.Channel != "cli" {
-						continue
-					}
-					sessions = append(sessions, sessionInfo{
-						chatID: t.ChatID,
-						label:  "主会话  You ↔ Agent",
-					})
-					break // only one main session
 				}
 			}
-			if len(sessions) == 0 {
-				// Fallback: no tenant found, still show main session.
-				sessions = append(sessions, sessionInfo{
-					chatID: absWorkDir,
-					label:  "主会话  You ↔ Agent",
-				})
-			}
 
-			// Local dir sessions (created from current session).
+			// All local dir sessions (including default), sorted by creation time.
 			for _, s := range channel.ListLocalDirSessions(absWorkDir) {
-				sessions = append(sessions, sessionInfo{
-					chatID: s.ID,
-					label:  s.Label,
-				})
-			}
-
-			// Build entries: each session followed by its subagents.
-			for _, sess := range sessions {
-				isActive := sess.chatID == absWorkDir
-				mainBusy := app.backend.IsProcessing("cli", sess.chatID)
+				mainBusy := app.backend.IsProcessing("cli", s.ID)
+				sessLabel := s.Label
+				if sessLabel == "default" {
+					sessLabel = "默认会话"
+				}
+				if dbLabel, ok := localLabelMap[s.ID]; ok && dbLabel != "" {
+					sessLabel = dbLabel
+				}
 				entries = append(entries, channel.SessionPanelEntry{
-					ID:      sess.chatID,
+					ID:      s.ID,
 					Type:    "main",
 					Channel: "cli",
-					Label:   sess.label,
-					Active:  isActive,
+					Label:   sessLabel,
+					Active:  s.ID == absWorkDir,
 					Busy:    mainBusy,
 				})
-				for _, s := range subsByChatID[sess.chatID] {
-					agentKey := s.Role + ":" + s.Instance
+				for _, sub := range subsByChatID[s.ID] {
+					agentKey := sub.Role + ":" + sub.Instance
 					if seen[agentKey] {
 						continue
 					}
 					seen[agentKey] = true
 					entries = append(entries, channel.SessionPanelEntry{
-						ID:          fmt.Sprintf("agent:%s/%s", s.Role, s.Instance),
+						ID:          fmt.Sprintf("agent:%s/%s", sub.Role, sub.Instance),
 						Type:        "agent",
 						Channel:     "cli",
-						Role:        s.Role,
-						Instance:    s.Instance,
-						ParentID:    sess.chatID,
-						Running:     s.Running,
-						Busy:        s.Running,
-						MessageHint: s.Preview,
+						Role:        sub.Role,
+						Instance:    sub.Instance,
+						ParentID:    s.ID,
+						Running:     sub.Running,
+						Busy:        sub.Running,
+						MessageHint: sub.Preview,
 					})
 				}
 			}
@@ -1619,7 +1605,7 @@ func main() {
 	if !app.backend.IsRemote() && app.db != nil {
 		tenantSvc = sqlite.NewTenantService(app.db)
 		cliSessionSvc = sqlite.NewSessionService(app.db)
-		tenantID, err := tenantSvc.GetOrCreateTenantID("cli", absWorkDir)
+		tenantID, err := tenantSvc.GetOrCreateTenantID("cli", initialChatID)
 		if err == nil {
 			cliTenantID = tenantID
 			cliCfg.HistoryLoader = func() ([]channel.HistoryMessage, error) {
@@ -1684,7 +1670,7 @@ func main() {
 		}
 		// Restore token state from server DB so context bar shows on startup
 		cliCfg.TokenStateLoader = func() (promptTokens, completionTokens int64) {
-			pt, ct, err := backend.GetTokenState("cli", absWorkDir)
+			pt, ct, err := backend.GetTokenState("cli", initialChatID)
 			if err != nil {
 				log.WithError(err).Warn("Failed to load token state from server")
 				return 0, 0
@@ -2010,6 +1996,31 @@ func main() {
 			return cliCh.SendTUIControl(action, params)
 		}
 		app.backend.SetTUICallbacks(tuiCtrl, nil, nil)
+
+		// Wire ChatRenameFn: rename session in local JSON + DB
+		chatRename := func(chatID, newName string) (string, error) {
+			workDir, oldName := channel.ParseChatID(chatID)
+			ds, err := channel.LoadDirSessions(workDir)
+			if err != nil {
+				return "", fmt.Errorf("load sessions: %w", err)
+			}
+			if err := ds.RenameSession(oldName, newName); err != nil {
+				return "", fmt.Errorf("rename local session: %w", err)
+			}
+			// Also update DB label via backend
+			if app.backend != nil {
+				cs := sqlite.NewChatService(app.db.Conn())
+				if err := cs.RenameChat("cli", cliSenderID, chatID, newName); err != nil {
+					log.WithError(err).Warn("Failed to rename chat in DB")
+				}
+			}
+			// Refresh sessions list
+			if cliCfg.SessionsListRefresh != nil {
+				cliCfg.SessionsListRefresh()
+			}
+			return oldName, nil
+		}
+		app.backend.SetChatRenameFn(chatRename)
 	}
 
 	// Wire AI-Native TUI callback for remote mode (server → client via WS)
@@ -2120,7 +2131,7 @@ func main() {
 			}
 			cliCh.SyncLayoutSettings(vals)
 		}
-		remoteChatID, _ := filepath.Abs(app.workDir)
+		remoteChatID := initialChatID
 
 		// Auto-set CWD: if connected to a local server (127.0.0.1/localhost),
 		// sync the CLI's actual cwd to the server session so the agent uses
@@ -2249,75 +2260,54 @@ func main() {
 				subsByChatID[s.ChatID] = append(subsByChatID[s.ChatID], s)
 			}
 
-			// Collect all relevant sessions: main + local dir.
-			type sessionInfo struct {
-				chatID string
-				label  string
-			}
-			var sessions []sessionInfo
-
-			// Main session (from tenants).
-			tenants, err := app.backend.ListTenants()
-			if err == nil && len(tenants) > 0 {
+			// All local dir sessions (including default), sorted by creation time.
+			// Override label from DB (ListTenants RPC) when available.
+			tenantMap := map[string]string{}
+			if tenants, err := app.backend.ListTenants(); err == nil {
 				for _, t := range tenants {
 					if t.Channel == "agent" {
 						continue
 					}
-					if t.ChatID != absWorkDir || t.Channel != "cli" {
-						continue
+					if t.Label != "" {
+						tenantMap[t.ChatID] = t.Label
 					}
-					sessions = append(sessions, sessionInfo{
-						chatID: t.ChatID,
-						label:  "主会话  You ↔ Agent",
-					})
-					break
 				}
 			}
-			if len(sessions) == 0 {
-				sessions = append(sessions, sessionInfo{
-					chatID: absWorkDir,
-					label:  "主会话  You ↔ Agent",
-				})
-			}
-
-			// Local dir sessions.
-			for _, s := range channel.ListLocalDirSessions(absWorkDir) {
-				sessions = append(sessions, sessionInfo{
-					chatID: s.ID,
-					label:  s.Label,
-				})
-			}
-
-			// Build entries: each session followed by its subagents.
 			var sessionEntries []channel.SessionPanelEntry
 			seen := make(map[string]bool)
-			for _, sess := range sessions {
-				isActive := sess.chatID == absWorkDir
-				mainBusy := app.backend.IsProcessing("cli", sess.chatID)
+			for _, s := range channel.ListLocalDirSessions(absWorkDir) {
+				mainBusy := app.backend.IsProcessing("cli", s.ID)
+				sessLabel := s.Label
+				if sessLabel == "default" {
+					sessLabel = "默认会话"
+				}
+				if dbLabel, ok := tenantMap[s.ID]; ok && dbLabel != "" {
+					sessLabel = dbLabel
+				}
 				sessionEntries = append(sessionEntries, channel.SessionPanelEntry{
-					ID:      sess.chatID,
+					ID:      s.ID,
 					Type:    "main",
 					Channel: "cli",
-					Label:   sess.label,
-					Active:  isActive,
+					Label:   sessLabel,
+					Active:  s.ID == absWorkDir,
 					Busy:    mainBusy,
 				})
-				for _, s := range subsByChatID[sess.chatID] {
-					agentKey := s.Role + ":" + s.Instance
+				for _, sub := range subsByChatID[s.ID] {
+					agentKey := sub.Role + ":" + sub.Instance
 					if seen[agentKey] {
 						continue
 					}
 					seen[agentKey] = true
 					sessionEntries = append(sessionEntries, channel.SessionPanelEntry{
-						ID:          fmt.Sprintf("agent:%s/%s", s.Role, s.Instance),
+						ID:          fmt.Sprintf("agent:%s/%s", sub.Role, sub.Instance),
 						Type:        "agent",
 						Channel:     "cli",
-						Role:        s.Role,
-						Instance:    s.Instance,
-						ParentID:    sess.chatID,
-						Running:     s.Running,
-						Busy:        s.Running,
-						MessageHint: s.Preview,
+						Role:        sub.Role,
+						Instance:    sub.Instance,
+						ParentID:    s.ID,
+						Running:     sub.Running,
+						Busy:        sub.Running,
+						MessageHint: sub.Preview,
 					})
 				}
 			}

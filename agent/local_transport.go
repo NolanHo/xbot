@@ -13,7 +13,6 @@ import (
 	"xbot/config"
 	"xbot/protocol"
 	"xbot/storage/sqlite"
-	"xbot/tools"
 )
 
 // localTransport is the in-process "server" for local mode.
@@ -303,19 +302,16 @@ func (t *localTransport) registerHandlers() {
 			return err
 		}
 
-		// Resolve actual directory: prefer persisted worktree CWD
-		sessKey := r.Channel + ":" + r.ChatID
-		actualDir := r.Dir
-		if persisted := tools.GlobalWorktreeRegistry.GetCWD(sessKey); persisted != "" {
-			actualDir = persisted
+		// If session already has a persisted CWD (restored from disk), keep it.
+		// Otherwise use the requested directory.
+		if sess.GetCurrentDir() == "" {
+			sess.SetCurrentDir(r.Dir)
 		}
-
-		// Always update CWD (not just on first set)
-		sess.SetCurrentDir(actualDir)
 
 		// Always refresh plugin contexts so script plugins see the correct workDir
 		if a.pluginMgr != nil {
-			a.pluginMgr.RefreshWorkDir(actualDir, r.Channel, r.ChatID, sess.TenantID())
+			cwd := sess.GetCurrentDir()
+			a.pluginMgr.RefreshWorkDir(cwd, r.Channel, r.ChatID, sess.TenantID())
 			a.pluginMgr.RefreshTenantID(sess.TenantID())
 		}
 		return nil

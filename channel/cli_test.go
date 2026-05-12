@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"xbot/protocol"
 
 	"xbot/bus"
 	"xbot/llm"
@@ -158,7 +159,7 @@ func TestCLIChannelSendProgress(t *testing.T) {
 	ch.SendProgress("test_chat", nil)
 
 	// SendProgress without program should not panic
-	payload := &CLIProgressPayload{
+	payload := &protocol.ProgressEvent{
 		Phase:     "thinking",
 		Iteration: 1,
 	}
@@ -310,9 +311,9 @@ func TestCLIModelHandleResizeMinimum(t *testing.T) {
 
 func TestCLIModelHandleResizeWithProgress(t *testing.T) {
 	model := newCLIModel()
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase: "tool_exec",
-		ActiveTools: []CLIToolProgress{
+		ActiveTools: []protocol.ToolProgress{
 			{Name: "test", Label: "Testing"},
 		},
 	}
@@ -362,7 +363,7 @@ func TestCLIModelViewWithTyping(t *testing.T) {
 func TestCLIModelViewWithProgress(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase:     "thinking",
 		Iteration: 1,
 	}
@@ -574,7 +575,7 @@ func TestCLIModelHandleAgentMessageEmptyContent(t *testing.T) {
 	model.handleResize(80, 24)
 
 	// Simulate active progress state
-	model.progress = &CLIProgressPayload{Phase: "thinking"}
+	model.progress = &protocol.ProgressEvent{Phase: "thinking"}
 	model.typing = true
 
 	msg := bus.OutboundMessage{
@@ -684,7 +685,7 @@ func TestCLIModelUpdateProgressMsg(t *testing.T) {
 
 	// Send progress message
 	progMsg := cliProgressMsg{
-		payload: &CLIProgressPayload{
+		payload: &protocol.ProgressEvent{
 			Phase:     "thinking",
 			Iteration: 1,
 			ChatID:    "cli:/test",
@@ -708,11 +709,11 @@ func TestCLIModelUpdateProgressDone(t *testing.T) {
 	model.chatID = "/test"
 
 	// Set initial progress
-	model.progress = &CLIProgressPayload{Phase: "thinking", ChatID: "cli:/test"}
+	model.progress = &protocol.ProgressEvent{Phase: "thinking", ChatID: "cli:/test"}
 
 	// Send done progress
 	progMsg := cliProgressMsg{
-		payload: &CLIProgressPayload{
+		payload: &protocol.ProgressEvent{
 			Phase:  "done",
 			ChatID: "cli:/test",
 		},
@@ -748,7 +749,7 @@ func TestCLIModelStaleProgressIgnored(t *testing.T) {
 	model.turnCancelled = true
 
 	progMsg := cliProgressMsg{
-		payload: &CLIProgressPayload{
+		payload: &protocol.ProgressEvent{
 			Phase:     "thinking",
 			Iteration: 1,
 			ChatID:    "cli:/test",
@@ -770,7 +771,7 @@ func TestCLIModelStaleProgressIgnored(t *testing.T) {
 	model2.channelName = "cli"
 
 	model2.handleProgressMsg(cliProgressMsg{
-		payload: &CLIProgressPayload{
+		payload: &protocol.ProgressEvent{
 			Phase:     "thinking",
 			Iteration: 1,
 			ChatID:    "cli:/different",
@@ -798,7 +799,7 @@ func TestCLIModelStaleProgressIgnored(t *testing.T) {
 	}
 
 	model3.handleProgressMsg(cliProgressMsg{
-		payload: &CLIProgressPayload{
+		payload: &protocol.ProgressEvent{
 			Phase:     "tool_exec",
 			Iteration: 1,
 			ChatID:    "cli:/test",
@@ -870,7 +871,7 @@ func TestTickChainSelfHealingViaProgressMsg(t *testing.T) {
 	model.typing = true
 	model.fastTickActive = false
 
-	_, cmd := model.Update(cliProgressMsg{payload: &CLIProgressPayload{
+	_, cmd := model.Update(cliProgressMsg{payload: &protocol.ProgressEvent{
 		Iteration: 1,
 		Phase:     "thinking",
 		ChatID:    "cli:/test",
@@ -999,7 +1000,7 @@ func TestCLIModelRenderProgressStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.phase, func(t *testing.T) {
-			model.progress = &CLIProgressPayload{Phase: tt.phase}
+			model.progress = &protocol.ProgressEvent{Phase: tt.phase}
 			result := model.renderProgressStatus()
 			if !strings.Contains(result, tt.expected) {
 				t.Errorf("renderProgressStatus(%s) should contain %q, got %q",
@@ -1022,7 +1023,7 @@ func TestCLIModelRenderProgressStatusNil(t *testing.T) {
 
 func TestCLIModelRenderProgressStatusWithIteration(t *testing.T) {
 	model := newCLIModel()
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase:     "thinking",
 		Iteration: 5,
 	}
@@ -1036,10 +1037,10 @@ func TestCLIModelRenderProgressStatusWithIteration(t *testing.T) {
 
 func TestCLIModelRenderProgressStatusWithActiveTools(t *testing.T) {
 	model := newCLIModel()
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase:       "tool_exec",
 		Iteration:   1,
-		ActiveTools: []CLIToolProgress{{Name: "read", Label: "Reading file", Elapsed: 100}},
+		ActiveTools: []protocol.ToolProgress{{Name: "read", Label: "Reading file", Elapsed: 100}},
 	}
 
 	result := model.renderProgressStatus()
@@ -1053,10 +1054,10 @@ func TestCLIModelRenderProgressStatusWithActiveTools(t *testing.T) {
 
 func TestCLIModelRenderProgressStatusToolWithoutLabel(t *testing.T) {
 	model := newCLIModel()
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase:       "tool_exec",
 		Iteration:   1,
-		ActiveTools: []CLIToolProgress{{Name: "read", Label: "", Elapsed: 0}},
+		ActiveTools: []protocol.ToolProgress{{Name: "read", Label: "", Elapsed: 0}},
 	}
 
 	result := model.renderProgressStatus()
@@ -1069,7 +1070,7 @@ func TestCLIModelRenderProgressStatusToolWithoutLabel(t *testing.T) {
 
 func TestCLIModelRenderProgressStatusWithElapsed(t *testing.T) {
 	model := newCLIModel()
-	model.progress = &CLIProgressPayload{Phase: "thinking"}
+	model.progress = &protocol.ProgressEvent{Phase: "thinking"}
 	model.typingStartTime = time.Now().Add(-5 * time.Second)
 
 	result := model.renderProgressStatus()
@@ -1115,13 +1116,13 @@ func TestCLIModelRenderProgressBlockWithTools(t *testing.T) {
 	model.handleResize(80, 24)
 	model.typing = true
 	model.typingStartTime = time.Now()
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase:     "tool_exec",
 		Iteration: 1,
-		ActiveTools: []CLIToolProgress{
+		ActiveTools: []protocol.ToolProgress{
 			{Name: "read_file", Label: "Reading config.go", Status: "running", Elapsed: 1200},
 		},
-		CompletedTools: []CLIToolProgress{
+		CompletedTools: []protocol.ToolProgress{
 			{Name: "grep", Label: "Searching imports", Status: "done", Elapsed: 300, Iteration: 1},
 		},
 	}
@@ -1147,12 +1148,12 @@ func TestCLIModelRenderProgressBlockWithIterationHistory(t *testing.T) {
 		{
 			Iteration: 0,
 			Thinking:  "Analyzing requirements",
-			Tools: []CLIToolProgress{
+			Tools: []protocol.ToolProgress{
 				{Name: "read", Label: "Reading file", Status: "done", Elapsed: 500},
 			},
 		},
 	}
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase:     "thinking",
 		Iteration: 1,
 	}
@@ -1174,10 +1175,10 @@ func TestCLIModelRenderProgressBlockSubAgents(t *testing.T) {
 	model.handleResize(80, 24)
 	model.typing = true
 	model.typingStartTime = time.Now()
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase:     "tool_exec",
 		Iteration: 0,
-		SubAgents: []CLISubAgent{
+		SubAgents: []protocol.SubAgentInfo{
 			{Role: "code-reviewer", Status: "running", Desc: "Reviewing code"},
 			{Role: "test-runner", Status: "done", Desc: "Tests passed"},
 			{Role: "explore", Status: "error", Desc: "429 rate limited"},
@@ -1206,14 +1207,14 @@ func TestCLIModelRenderProgressBlockSubAgentChildren(t *testing.T) {
 	model.handleResize(80, 24)
 	model.typing = true
 	model.typingStartTime = time.Now()
-	model.progress = &CLIProgressPayload{
+	model.progress = &protocol.ProgressEvent{
 		Phase:     "tool_exec",
 		Iteration: 0,
-		SubAgents: []CLISubAgent{
+		SubAgents: []protocol.SubAgentInfo{
 			{
 				Role:   "reviewer",
 				Status: "running",
-				Children: []CLISubAgent{
+				Children: []protocol.SubAgentInfo{
 					{Role: "child", Status: "done"},
 				},
 			},
@@ -1413,21 +1414,21 @@ func TestCLIMessageFields(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CLIProgressPayload Tests
+// protocol.ProgressEvent Tests
 // ---------------------------------------------------------------------------
 
-func TestCLIProgressPayloadFields(t *testing.T) {
-	payload := CLIProgressPayload{
+func TestProgressEventFields(t *testing.T) {
+	payload := protocol.ProgressEvent{
 		Phase:     "thinking",
 		Iteration: 3,
-		ActiveTools: []CLIToolProgress{
+		ActiveTools: []protocol.ToolProgress{
 			{Name: "read", Label: "Reading", Status: "running", Elapsed: 100},
 		},
-		CompletedTools: []CLIToolProgress{
+		CompletedTools: []protocol.ToolProgress{
 			{Name: "glob", Label: "Globbing", Status: "done", Elapsed: 50},
 		},
 		Thinking: "Analyzing...",
-		SubAgents: []CLISubAgent{
+		SubAgents: []protocol.SubAgentInfo{
 			{Role: "reviewer", Status: "running", Desc: "Code review"},
 		},
 	}
@@ -1443,8 +1444,8 @@ func TestCLIProgressPayloadFields(t *testing.T) {
 	}
 }
 
-func TestCLIToolProgressFields(t *testing.T) {
-	tool := CLIToolProgress{
+func TestToolProgressFields(t *testing.T) {
+	tool := protocol.ToolProgress{
 		Name:    "read",
 		Label:   "Reading file",
 		Status:  "running",
@@ -1459,12 +1460,12 @@ func TestCLIToolProgressFields(t *testing.T) {
 	}
 }
 
-func TestCLISubAgentFields(t *testing.T) {
-	subAgent := CLISubAgent{
+func TestSubAgentInfoFields(t *testing.T) {
+	subAgent := protocol.SubAgentInfo{
 		Role:     "code-reviewer",
 		Status:   "done",
 		Desc:     "Completed review",
-		Children: []CLISubAgent{},
+		Children: []protocol.SubAgentInfo{},
 	}
 
 	if subAgent.Role != "code-reviewer" {
@@ -1481,7 +1482,7 @@ func TestCLISubAgentFields(t *testing.T) {
 
 func TestMergeSubAgentTrees_EmptyPrev(t *testing.T) {
 	t.Parallel()
-	new := []CLISubAgent{{Role: "explore", Status: "running"}}
+	new := []protocol.SubAgentInfo{{Role: "explore", Status: "running"}}
 	result := mergeSubAgentTrees(nil, new)
 	if len(result) != 1 || result[0].Role != "explore" {
 		t.Fatalf("expected 1 agent, got %v", result)
@@ -1491,7 +1492,7 @@ func TestMergeSubAgentTrees_EmptyPrev(t *testing.T) {
 func TestMergeSubAgentTrees_EmptyNew(t *testing.T) {
 	t.Parallel()
 	// When new is empty, server stopped reporting → completed agents are pruned.
-	prev := []CLISubAgent{{Role: "explore", Status: "done"}}
+	prev := []protocol.SubAgentInfo{{Role: "explore", Status: "done"}}
 	result := mergeSubAgentTrees(prev, nil)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 agents (done pruned), got %v", result)
@@ -1508,11 +1509,11 @@ func TestMergeSubAgentTrees_BothEmpty(t *testing.T) {
 
 func TestMergeSubAgentTrees_MergeUpdates(t *testing.T) {
 	t.Parallel()
-	prev := []CLISubAgent{
+	prev := []protocol.SubAgentInfo{
 		{Role: "explore", Status: "running", Desc: "scanning code"},
 		{Role: "reviewer", Status: "done", Desc: "completed"},
 	}
-	new := []CLISubAgent{
+	new := []protocol.SubAgentInfo{
 		{Role: "explore", Status: "done", Desc: "finished scan"},
 	}
 	result := mergeSubAgentTrees(prev, new)
@@ -1538,7 +1539,7 @@ func TestMergeSubAgentTrees_NoZombieDuplicates(t *testing.T) {
 	t.Parallel()
 	// Simulate the exact zombie bug: prev has a completed SubAgent, new is empty.
 	// New behavior: done agents are pruned immediately.
-	prev := []CLISubAgent{
+	prev := []protocol.SubAgentInfo{
 		{Role: "ministry-works", Status: "done", Desc: "completed"},
 	}
 
@@ -1557,21 +1558,21 @@ func TestMergeSubAgentTrees_NoZombieDuplicates(t *testing.T) {
 
 func TestMergeSubAgentTrees_NestedChildren(t *testing.T) {
 	t.Parallel()
-	prev := []CLISubAgent{
+	prev := []protocol.SubAgentInfo{
 		{
 			Role:   "crown-prince",
 			Status: "running",
-			Children: []CLISubAgent{
+			Children: []protocol.SubAgentInfo{
 				{Role: "explore", Status: "done"},
 				{Role: "secretariat", Status: "running"},
 			},
 		},
 	}
-	new := []CLISubAgent{
+	new := []protocol.SubAgentInfo{
 		{
 			Role:   "crown-prince",
 			Status: "running",
-			Children: []CLISubAgent{
+			Children: []protocol.SubAgentInfo{
 				{Role: "secretariat", Status: "done"},
 			},
 		},
@@ -1639,7 +1640,7 @@ func TestCLIModelIterationAccumulation(t *testing.T) {
 	model.typingStartTime = time.Now()
 
 	// Iteration 0: thinking
-	prog0 := cliProgressMsg{payload: &CLIProgressPayload{
+	prog0 := cliProgressMsg{payload: &protocol.ProgressEvent{
 		Phase:     "thinking",
 		Iteration: 0,
 		ChatID:    "cli:/test",
@@ -1650,18 +1651,18 @@ func TestCLIModelIterationAccumulation(t *testing.T) {
 	}
 
 	// Iteration 0: tool_exec with completed tools
-	prog0b := cliProgressMsg{payload: &CLIProgressPayload{
+	prog0b := cliProgressMsg{payload: &protocol.ProgressEvent{
 		Phase:     "tool_exec",
 		Iteration: 0,
 		ChatID:    "cli:/test",
-		CompletedTools: []CLIToolProgress{
+		CompletedTools: []protocol.ToolProgress{
 			{Name: "read", Label: "Reading", Status: "done", Elapsed: 100},
 		},
 	}}
 	model.Update(prog0b)
 
 	// Iteration 1: thinking — should snapshot iteration 0
-	prog1 := cliProgressMsg{payload: &CLIProgressPayload{
+	prog1 := cliProgressMsg{payload: &protocol.ProgressEvent{
 		Phase:     "thinking",
 		Iteration: 1,
 		ChatID:    "cli:/test",
@@ -1681,8 +1682,8 @@ func TestCLIModelIterationAccumulation(t *testing.T) {
 func TestCLIModelCollectAllTools(t *testing.T) {
 	model := newCLIModel()
 	model.iterationHistory = []cliIterationSnapshot{
-		{Iteration: 0, Tools: []CLIToolProgress{{Name: "a"}, {Name: "b"}}},
-		{Iteration: 1, Tools: []CLIToolProgress{{Name: "c"}}},
+		{Iteration: 0, Tools: []protocol.ToolProgress{{Name: "a"}, {Name: "b"}}},
+		{Iteration: 1, Tools: []protocol.ToolProgress{{Name: "c"}}},
 	}
 	all := model.collectAllTools()
 	if len(all) != 3 {

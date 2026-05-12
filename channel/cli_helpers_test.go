@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"xbot/protocol"
 )
 
 // ---------------------------------------------------------------------------
@@ -466,7 +467,7 @@ func TestStartAgentTurn_ResetsProgressState(t *testing.T) {
 	model := newCLIModel()
 	model.handleResize(80, 24)
 	model.iterationHistory = []cliIterationSnapshot{
-		{Iteration: 1, Tools: []CLIToolProgress{{Name: "test"}}},
+		{Iteration: 1, Tools: []protocol.ToolProgress{{Name: "test"}}},
 	}
 	model.lastSeenIteration = 5
 
@@ -703,8 +704,8 @@ func TestEnqueueToast_EmptyValues(t *testing.T) {
 func TestIterToolsFlat_WithIterations(t *testing.T) {
 	msg := &cliMessage{
 		iterations: []cliIterationSnapshot{
-			{Iteration: 0, Tools: []CLIToolProgress{{Name: "read"}, {Name: "write"}}},
-			{Iteration: 1, Tools: []CLIToolProgress{{Name: "exec"}}},
+			{Iteration: 0, Tools: []protocol.ToolProgress{{Name: "read"}, {Name: "write"}}},
+			{Iteration: 1, Tools: []protocol.ToolProgress{{Name: "exec"}}},
 		},
 	}
 
@@ -719,7 +720,7 @@ func TestIterToolsFlat_WithIterations(t *testing.T) {
 
 func TestIterToolsFlat_NoIterations(t *testing.T) {
 	msg := &cliMessage{
-		tools: []CLIToolProgress{{Name: "read"}, {Name: "write"}},
+		tools: []protocol.ToolProgress{{Name: "read"}, {Name: "write"}},
 	}
 
 	tools, iterCount := msg.iterToolsFlat()
@@ -747,7 +748,7 @@ func TestIterToolsFlat_IterationsWithEmptyTools(t *testing.T) {
 	msg := &cliMessage{
 		iterations: []cliIterationSnapshot{
 			{Iteration: 0, Tools: nil},
-			{Iteration: 1, Tools: []CLIToolProgress{{Name: "exec"}}},
+			{Iteration: 1, Tools: []protocol.ToolProgress{{Name: "exec"}}},
 		},
 	}
 
@@ -1168,7 +1169,7 @@ func TestSuHistoryLoad_TypingReconcile_AcceptProgress(t *testing.T) {
 	m.typing = false
 	m.suLoading = true
 
-	payload := &CLIProgressPayload{
+	payload := &protocol.ProgressEvent{
 		ChatID:    "cli:/test",
 		Phase:     "executing",
 		Iteration: 2,
@@ -1308,7 +1309,7 @@ func TestSuHistoryLoad_TypingReconcile_PhaseDoneIsDefault(t *testing.T) {
 	m.typing = true // restored hint says typing
 	m.suLoading = true
 
-	payload := &CLIProgressPayload{
+	payload := &protocol.ProgressEvent{
 		ChatID:    "cli:/test",
 		Phase:     "done", // turn completed on server
 		Iteration: 5,

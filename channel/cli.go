@@ -37,8 +37,8 @@ func NewCLIChannel(cfg *CLIChannelConfig, msgBus *bus.MessageBus) *CLIChannel {
 		msgBus:     msgBus,
 		workDir:    cfg.WorkDir,
 		msgChan:    make(chan bus.OutboundMessage, cliMsgBufSize),
-		progressCh: make(chan *CLIProgressPayload, 1), // buffered-1: latest progress wins
-		asyncCh:    make(chan tea.Msg, 256),           // unified async send: progress + outbound
+		progressCh: make(chan *protocol.ProgressEvent, 1), // buffered-1: latest progress wins
+		asyncCh:    make(chan tea.Msg, 256),               // unified async send: progress + outbound
 		stopCh:     make(chan struct{}),
 	}
 }
@@ -219,7 +219,7 @@ func (c *CLIChannel) Start() error {
 	// bar never shows until the first LLM response of the new session.
 	if c.config.TokenStateLoader != nil {
 		if pt, ct := c.config.TokenStateLoader(); pt > 0 {
-			c.model.lastTokenUsage = &CLITokenUsage{
+			c.model.lastTokenUsage = &protocol.TokenUsage{
 				PromptTokens:     pt,
 				CompletionTokens: ct,
 				TotalTokens:      pt + ct,
@@ -380,7 +380,7 @@ func (c *CLIChannel) Send(msg bus.OutboundMessage) (string, error) {
 // ONE goroutine (handleAsyncDrain) calling program.Send(). This prevents multiple
 // senders from competing on the unbuffered p.msgs channel, which would starve
 // the Bubble Tea readLoop (keyboard events) and cause Ctrl+C freeze.
-func (c *CLIChannel) SendProgress(chatID string, payload *CLIProgressPayload) {
+func (c *CLIChannel) SendProgress(chatID string, payload *protocol.ProgressEvent) {
 	if payload == nil || c.program == nil {
 		return
 	}
@@ -635,7 +635,7 @@ func (c *CLIChannel) LoadHistory(history []HistoryMessage) {
 //
 // Thread-safe: acquires programMu, and only mutates model directly when View()
 // has not been called yet (program == nil).
-func (c *CLIChannel) RestoreInitialProgress(chatID string, payload *CLIProgressPayload) {
+func (c *CLIChannel) RestoreInitialProgress(chatID string, payload *protocol.ProgressEvent) {
 	if payload == nil || payload.Phase == "done" {
 		return
 	}
@@ -669,9 +669,12 @@ func (c *CLIChannel) RestoreInitialProgress(chatID string, payload *CLIProgressP
 		return
 	}
 
-	// Program is running — send through asyncCh.
+	// Program is running — send through asyncCh as a restore message.
+	// Uses isRestore flag to bypass seq dedup in handleProgressMsg,
+	// because this RPC snapshot may have a seq ≤ events already replayed
+	// from the eventStream buffer.
 	select {
-	case c.asyncCh <- cliProgressMsg{payload: payload}:
+	case c.asyncCh <- cliProgressMsg{payload: payload, isRestore: true}:
 	default:
 		log.Warn("RestoreInitialProgress: asyncCh full, progress not applied")
 	}

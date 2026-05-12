@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"xbot/protocol"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -197,7 +198,7 @@ func (m *cliModel) handleKeyPress(msg tea.KeyPressMsg, wasTyping bool) (tea.Mode
 
 // restoreIterationHistory converts IterationHistory from a reconnect snapshot
 // into local iteration history, bootstrapping tool StartedAt timestamps.
-func (m *cliModel) restoreIterationHistory(payload *CLIProgressPayload) {
+func (m *cliModel) restoreIterationHistory(payload *protocol.ProgressEvent) {
 	if payload == nil || len(payload.IterationHistory) == 0 || len(m.iterationHistory) > 0 {
 		return
 	}
@@ -227,7 +228,7 @@ func (m *cliModel) restoreIterationHistory(payload *CLIProgressPayload) {
 
 // carryForwardProgressState preserves transient state across progress updates
 // (StartedAt timers, CompletedTools, Reasoning/Thinking content, SubAgent trees).
-func (m *cliModel) carryForwardProgressState(prev *CLIProgressPayload) {
+func (m *cliModel) carryForwardProgressState(prev *protocol.ProgressEvent) {
 	if m.progress == nil {
 		return
 	}
@@ -339,6 +340,19 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 		if msg.payload.ChatID != currentKey {
 			return
 		}
+	}
+
+	// Restore path: bypass seq dedup and apply full snapshot (including IterationHistory).
+	// This handles RestoreInitialProgress from RPC which carries complete state.
+	if msg.isRestore {
+		m.restoreProgressSnapshot(msg.payload)
+		log.WithFields(log.Fields{
+			"chatID":    msg.payload.ChatID,
+			"phase":     msg.payload.Phase,
+			"iteration": msg.payload.Iteration,
+			"histLen":   len(msg.payload.IterationHistory),
+		}).Info("handleProgressMsg: applied restore snapshot")
+		return
 	}
 
 	turnID := m.agentTurnID // capture before any mutation
@@ -511,7 +525,7 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 		// Accept all completed tools regardless of their Iteration field — they
 		// represent work that finished and should be displayed.
 		if len(msg.payload.CompletedTools) > 0 {
-			m.lastCompletedTools = make([]CLIToolProgress, len(msg.payload.CompletedTools))
+			m.lastCompletedTools = make([]protocol.ToolProgress, len(msg.payload.CompletedTools))
 			copy(m.lastCompletedTools, msg.payload.CompletedTools)
 		}
 		if msg.payload.Phase == "done" {
@@ -522,7 +536,7 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 }
 
 // syncProgressTodos syncs todo items from the progress payload.
-func (m *cliModel) syncProgressTodos(payload *CLIProgressPayload) {
+func (m *cliModel) syncProgressTodos(payload *protocol.ProgressEvent) {
 	if payload == nil {
 		return
 	}
@@ -537,7 +551,7 @@ func (m *cliModel) syncProgressTodos(payload *CLIProgressPayload) {
 		if m.todosDoneCleared && allDone {
 			// Already cleared by user input; don't re-accept stale all-done list
 		} else {
-			m.todos = make([]CLITodoItem, len(payload.Todos))
+			m.todos = make([]protocol.TodoItem, len(payload.Todos))
 			copy(m.todos, payload.Todos)
 			m.todosDoneCleared = false
 			m.relayoutViewport()
@@ -575,7 +589,7 @@ func (m *cliModel) persistTodosToManager() {
 
 // snapshotIterationChange detects iteration changes and snapshots the previous
 // iteration's tools/reasoning into iteration history.
-func (m *cliModel) snapshotIterationChange(payload *CLIProgressPayload, prev *CLIProgressPayload) {
+func (m *cliModel) snapshotIterationChange(payload *protocol.ProgressEvent, prev *protocol.ProgressEvent) {
 	if payload == nil {
 		return
 	}
@@ -627,7 +641,7 @@ func (m *cliModel) snapshotIterationChange(payload *CLIProgressPayload, prev *CL
 
 // handleProgressDone handles the Phase "done" case: snapshots the final iteration,
 // generates tool summary, resets iteration tracking state, and synthesizes agent messages.
-func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPayload, turnID uint64) {
+func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *protocol.ProgressEvent, turnID uint64) {
 	// When turn was cancelled (Ctrl+C), still generate tool_summary from
 	// accumulated iterationHistory so tool records survive rewind operations.
 	// Without this, cancelled turns lose their tool records because iterationHistory
@@ -643,11 +657,11 @@ func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPaylo
 				return s.Iteration == m.lastSeenIteration
 			})
 			if !alreadySnapped {
-				var finalTools []CLIToolProgress
+				var finalTools []protocol.ToolProgress
 				finalTools = append(finalTools, msg.payload.CompletedTools...)
 				for _, t := range msg.payload.ActiveTools {
 					if t.Status == "done" || t.Status == "error" {
-						if !slices.ContainsFunc(finalTools, func(existing CLIToolProgress) bool {
+						if !slices.ContainsFunc(finalTools, func(existing protocol.ToolProgress) bool {
 							return existing.Name == t.Name && existing.Label == t.Label
 						}) {
 							finalTools = append(finalTools, t)
@@ -655,7 +669,7 @@ func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPaylo
 					}
 				}
 				for _, t := range m.lastCompletedTools {
-					if !slices.ContainsFunc(finalTools, func(existing CLIToolProgress) bool {
+					if !slices.ContainsFunc(finalTools, func(existing protocol.ToolProgress) bool {
 						return existing.Name == t.Name && existing.Label == t.Label
 					}) {
 						finalTools = append(finalTools, t)
@@ -712,13 +726,13 @@ func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPaylo
 			return s.Iteration == m.lastSeenIteration
 		})
 		if !alreadySnapped {
-			var finalTools []CLIToolProgress
+			var finalTools []protocol.ToolProgress
 			// Check progress.CompletedTools first (set by progressFinalizer)
 			finalTools = append(finalTools, msg.payload.CompletedTools...)
 			// Also include ActiveTools(done) not yet moved by progressFinalizer
 			for _, t := range msg.payload.ActiveTools {
 				if t.Status == "done" || t.Status == "error" {
-					if !slices.ContainsFunc(finalTools, func(existing CLIToolProgress) bool {
+					if !slices.ContainsFunc(finalTools, func(existing protocol.ToolProgress) bool {
 						return existing.Name == t.Name && existing.Label == t.Label
 					}) {
 						finalTools = append(finalTools, t)
@@ -727,7 +741,7 @@ func (m *cliModel) handleProgressDone(msg cliProgressMsg, prev *CLIProgressPaylo
 			}
 			// Also include any from lastCompletedTools (race safety)
 			for _, t := range m.lastCompletedTools {
-				if !slices.ContainsFunc(finalTools, func(existing CLIToolProgress) bool {
+				if !slices.ContainsFunc(finalTools, func(existing protocol.ToolProgress) bool {
 					return existing.Name == t.Name && existing.Label == t.Label
 				}) {
 					finalTools = append(finalTools, t)
@@ -1121,7 +1135,7 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 		// empty slice means "server has no todos" (clear local cache).
 		if msg.todos != nil {
 			if len(msg.todos) > 0 {
-				m.todos = make([]CLITodoItem, len(msg.todos))
+				m.todos = make([]protocol.TodoItem, len(msg.todos))
 				copy(m.todos, msg.todos)
 				m.todosDoneCleared = false
 				m.persistTodosToManager()
@@ -1165,7 +1179,7 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 	// after startup). Without this, the context bar shows 0 until the
 	// first live progress event of the new session.
 	if m.lastTokenUsage == nil && (msg.tokenPrompt > 0 || msg.tokenCompletion > 0) {
-		m.lastTokenUsage = &CLITokenUsage{
+		m.lastTokenUsage = &protocol.TokenUsage{
 			PromptTokens:     msg.tokenPrompt,
 			CompletionTokens: msg.tokenCompletion,
 			TotalTokens:      msg.tokenPrompt + msg.tokenCompletion,
@@ -1314,7 +1328,7 @@ func (m *cliModel) handleToastClear(msg cliToastClearMsg) []tea.Cmd {
 // it. This is normal — the server only reports actively-running agents. We mark
 // stale running/pending agents as "done" so they don't linger in the progress panel
 // (Issue #29: zombie agents that completed but were never marked done by the server).
-func mergeSubAgentTrees(prev, new []CLISubAgent) []CLISubAgent {
+func mergeSubAgentTrees(prev, new []protocol.SubAgentInfo) []protocol.SubAgentInfo {
 	if len(prev) == 0 {
 		return new
 	}
@@ -1332,7 +1346,7 @@ func mergeSubAgentTrees(prev, new []CLISubAgent) []CLISubAgent {
 		newByKey[key] = i
 	}
 
-	result := make([]CLISubAgent, 0, len(prev)+len(new))
+	result := make([]protocol.SubAgentInfo, 0, len(prev)+len(new))
 
 	// Start with all prev entries, updating those that have new data
 	for _, p := range prev {
@@ -1379,7 +1393,7 @@ func subAgentKey(role, instance string) string {
 // still in running/pending state. This handles the case where the server
 // stops reporting a completed SubAgent — without this, the agent would
 // linger as "running" forever (Issue #29).
-func markDoneIfRunning(sa CLISubAgent) CLISubAgent {
+func markDoneIfRunning(sa protocol.SubAgentInfo) protocol.SubAgentInfo {
 	if sa.Status == "running" || sa.Status == "pending" {
 		sa.Status = "done"
 	}
@@ -1393,8 +1407,8 @@ func markDoneIfRunning(sa CLISubAgent) CLISubAgent {
 // marked "done". This prevents zombie entries from accumulating across
 // iteration boundaries when no new SubAgent data arrives.
 // Agents still "running" or "pending" are kept (they may complete soon).
-func pruneDoneSubAgents(agents []CLISubAgent) []CLISubAgent {
-	var kept []CLISubAgent
+func pruneDoneSubAgents(agents []protocol.SubAgentInfo) []protocol.SubAgentInfo {
+	var kept []protocol.SubAgentInfo
 	for _, a := range agents {
 		a.Children = pruneDoneSubAgents(a.Children)
 		if a.Status != "done" && a.Status != "error" {

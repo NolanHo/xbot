@@ -253,9 +253,9 @@ type splashDoneMsg struct{}
 type suHistoryLoadMsg struct {
 	history        []HistoryMessage
 	err            error
-	channelName    string              // target session at time of request
-	chatID         string              // target session at time of request
-	activeProgress *CLIProgressPayload // non-nil if target session has an active agent turn
+	channelName    string                  // target session at time of request
+	chatID         string                  // target session at time of request
+	activeProgress *protocol.ProgressEvent // non-nil if target session has an active agent turn
 	// tokenState holds the last persisted token counts for the session.
 	// Used as fallback when activeProgress is nil (idle session) so the
 	// context bar still shows the session's last known token usage.
@@ -265,7 +265,7 @@ type suHistoryLoadMsg struct {
 	// Populated by suLoadHistoryCmd via GetTodosFn RPC.
 	// When non-nil, it overwrites the local TodoManager cache so
 	// the first session switch after TUI startup shows fresh data.
-	todos []CLITodoItem
+	todos []protocol.TodoItem
 }
 
 // sessionState holds per-session state that should be preserved when switching sessions.
@@ -274,7 +274,7 @@ type suHistoryLoadMsg struct {
 // agent bus but may not yet be persisted to the DB. This prevents user messages from
 // disappearing when quickly switching sessions before the agent's eager-save completes.
 type sessionState struct {
-	progress             *CLIProgressPayload
+	progress             *protocol.ProgressEvent
 	typing               bool
 	agentTurnID          uint64
 	inputReady           bool
@@ -293,7 +293,7 @@ type sessionState struct {
 	reasoningByIter      map[int]string
 	// Context bar state — preserved across session switches so the
 	// token usage bar doesn't disappear when switching between sessions.
-	lastTokenUsage         *CLITokenUsage
+	lastTokenUsage         *protocol.TokenUsage
 	cachedMaxContextTokens int
 	cachedCompressRatio    float64
 	cachedMaxOutputTokens  int64
@@ -399,9 +399,9 @@ func (m *cliModel) restoreSession() {
 		if m.todoManager != nil {
 			_ = m.todoManager.LoadFromFile(key)
 			if items := m.todoManager.GetTodos(key); len(items) > 0 {
-				m.todos = make([]CLITodoItem, len(items))
+				m.todos = make([]protocol.TodoItem, len(items))
 				for i, t := range items {
-					m.todos[i] = CLITodoItem{ID: t.ID, Text: t.Text, Done: t.Done}
+					m.todos[i] = protocol.TodoItem{ID: t.ID, Text: t.Text, Done: t.Done}
 				}
 				m.todosDoneCleared = false
 			} else {
@@ -444,9 +444,9 @@ func (m *cliModel) restoreSession() {
 		if m.todoManager != nil {
 			_ = m.todoManager.LoadFromFile(key)
 			if items := m.todoManager.GetTodos(key); len(items) > 0 {
-				m.todos = make([]CLITodoItem, len(items))
+				m.todos = make([]protocol.TodoItem, len(items))
 				for i, t := range items {
-					m.todos[i] = CLITodoItem{ID: t.ID, Text: t.Text, Done: t.Done}
+					m.todos[i] = protocol.TodoItem{ID: t.ID, Text: t.Text, Done: t.Done}
 				}
 				m.todosDoneCleared = false
 			} else {
@@ -744,7 +744,7 @@ type cliModel struct {
 	isAdminFn       func() bool
 
 	// --- Progress ---
-	progress               *CLIProgressPayload
+	progress               *protocol.ProgressEvent
 	iterationHistory       []cliIterationSnapshot // 已完成迭代快照
 	lastSeenIteration      int                    // 上次进度事件的迭代号
 	lastProgressSeq        uint64                 // 上次进度事件的序列号（单调递增校验）
@@ -816,10 +816,10 @@ type cliModel struct {
 	cachedThinkingBlockWidth int    // innerWidth when cache was built
 
 	// --- §2 工具可视化 ---
-	lastCompletedTools []CLIToolProgress // 每轮结束时快照，不依赖 m.progress 生命周期
-	lastReasoning      string            // 最后一次迭代的 reasoning_content，在 progress 清除前捕获
-	reasoningByIter    map[int]string    // per-iteration reasoning，snapshot 时用于精确查找
-	lastThinking       string            // 最后一次迭代的 thinking_content，在 progress 清除前捕获
+	lastCompletedTools []protocol.ToolProgress // 每轮结束时快照，不依赖 m.progress 生命周期
+	lastReasoning      string                  // 最后一次迭代的 reasoning_content，在 progress 清除前捕获
+	reasoningByIter    map[int]string          // per-iteration reasoning，snapshot 时用于精确查找
+	lastThinking       string                  // 最后一次迭代的 thinking_content，在 progress 清除前捕获
 
 	// --- §8 Tab 补全 ---
 	completions []string // 当前补全候选项
@@ -838,8 +838,8 @@ type cliModel struct {
 	checkpointState *protocol.CheckpointState // file checkpoint state for rewind file rollback (nil = no file tracking)
 
 	// --- §10 TODO 进度条 ---
-	todos            []CLITodoItem // 从 progress 事件同步的 TODO 列表
-	todosDoneCleared bool          // 全完成后已被用户输入清除，阻止 progress 重填
+	todos            []protocol.TodoItem // 从 progress 事件同步的 TODO 列表
+	todosDoneCleared bool                // 全完成后已被用户输入清除，阻止 progress 重填
 
 	// --- §11 Tool Summary 折叠 ---
 	toolSummaryExpanded bool // Ctrl+O 切换
@@ -1016,10 +1016,10 @@ type cliModel struct {
 	modelCount      int                // cached model list length for View() performance
 
 	// Context usage display (persisted across turns for ready-status bar)
-	lastTokenUsage         *CLITokenUsage // last known token usage from progress events
-	cachedMaxContextTokens int            // max context tokens (from settings/config, cached for View())
-	cachedMaxOutputTokens  int64          // max output tokens (from progress events, cached for View())
-	cachedCompressRatio    float64        // compression threshold ratio, cached for View()
+	lastTokenUsage         *protocol.TokenUsage // last known token usage from progress events
+	cachedMaxContextTokens int                  // max context tokens (from settings/config, cached for View())
+	cachedMaxOutputTokens  int64                // max output tokens (from progress events, cached for View())
+	cachedCompressRatio    float64              // compression threshold ratio, cached for View()
 
 	// === Runner Bridge ===
 	runnerBridge *RunnerBridge
@@ -1057,8 +1057,8 @@ type cliMessage struct {
 	renderWidth int    // 渲染时的终端宽度（用于 resize 失效检测）
 
 	// --- §2 工具可视化 ---
-	tools      []CLIToolProgress      // 扁平化工具列表（兼容旧逻辑）
-	iterations []cliIterationSnapshot // 按迭代分组的快照（优先使用）
+	tools      []protocol.ToolProgress // 扁平化工具列表（兼容旧逻辑）
+	iterations []cliIterationSnapshot  // 按迭代分组的快照（优先使用）
 
 	// --- §19 长消息折叠 ---
 	renderedLines         int  // 渲染后的总行数（每次 dirty 重算）
@@ -1173,7 +1173,8 @@ type cliOutboundMsg struct {
 
 // cliProgressMsg 进度更新消息
 type cliProgressMsg struct {
-	payload *CLIProgressPayload
+	payload   *protocol.ProgressEvent
+	isRestore bool // true when sent from RestoreInitialProgress (skip seq dedup)
 }
 
 // cliProcessingMsg sets the typing/processing state externally (remote reconnect).
@@ -1363,11 +1364,11 @@ func (m *cliModel) suLoadHistoryCmd() tea.Cmd {
 			return func() tea.Msg {
 				history, err := dumpFn(chatID)
 				// Agent sessions don't have GetActiveProgress, but try anyway
-				var activeProgress *CLIProgressPayload
+				var activeProgress *protocol.ProgressEvent
 				if progressFn != nil {
 					activeProgress = progressFn(channelName, chatID)
 				}
-				var todos []CLITodoItem
+				var todos []protocol.TodoItem
 				if todosFn != nil {
 					todos = todosFn(channelName, chatID)
 				}
@@ -1386,12 +1387,12 @@ func (m *cliModel) suLoadHistoryCmd() tea.Cmd {
 	return func() tea.Msg {
 		history, err := loader(channelName, chatID)
 		// Also fetch active progress for seamless session switch recovery.
-		var activeProgress *CLIProgressPayload
+		var activeProgress *protocol.ProgressEvent
 		if progressFn != nil {
 			activeProgress = progressFn(channelName, chatID)
 		}
 		// Fetch server-side TODO list to overwrite local cache on first switch.
-		var todos []CLITodoItem
+		var todos []protocol.TodoItem
 		if todosFn != nil {
 			todos = todosFn(channelName, chatID)
 		}

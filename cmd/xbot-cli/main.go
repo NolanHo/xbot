@@ -1689,13 +1689,13 @@ func main() {
 	var refreshAgentCache func()
 	if app.backend != nil {
 		backend := app.backend
-		cliCfg.GetActiveProgressFn = func(channelName, chatID string) *channel.CLIProgressPayload {
+		cliCfg.GetActiveProgressFn = func(channelName, chatID string) *protocol.ProgressEvent {
 			return backend.GetActiveProgress(channelName, chatID)
 		}
 		cliCfg.BindChatFn = func(chatID string) error {
 			return backend.BindChat(chatID)
 		}
-		cliCfg.GetTodosFn = func(channelName, chatID string) []channel.CLITodoItem {
+		cliCfg.GetTodosFn = func(channelName, chatID string) []protocol.TodoItem {
 			return backend.GetTodos(channelName, chatID)
 		}
 		cliCfg.GetTokenStateFn = func(channelName, chatID string) (int64, int64) {
@@ -1749,9 +1749,9 @@ func main() {
 				if len(dump.IterationHistory) > 0 {
 					var iters []channel.HistoryIteration
 					for _, snap := range dump.IterationHistory {
-						var tools []channel.CLIToolProgress
+						var tools []protocol.ToolProgress
 						for _, t := range snap.Tools {
-							tools = append(tools, channel.CLIToolProgress{
+							tools = append(tools, protocol.ToolProgress{
 								Name:      t.Name,
 								Label:     t.Label,
 								Status:    t.Status,
@@ -1851,7 +1851,7 @@ func main() {
 			})
 			// Register progress handler via Subscribe for streaming progress from server
 			app.backend.Subscribe(protocol.EventPattern{Type: "progress"}, func(env protocol.EventEnvelope) {
-				var p channel.CLIProgressPayload
+				var p protocol.ProgressEvent
 				if err := json.Unmarshal(env.Payload, &p); err != nil {
 					return
 				}

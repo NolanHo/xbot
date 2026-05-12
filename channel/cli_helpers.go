@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"xbot/protocol"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -227,7 +228,7 @@ func (m *cliModel) startAgentTurn() {
 	// immediate feedback (progress bubble) without waiting for the server's
 	// first progress_structured event (which has network round-trip latency).
 	if m.remoteMode && m.progress == nil {
-		m.progress = &CLIProgressPayload{
+		m.progress = &protocol.ProgressEvent{
 			Phase:     "thinking",
 			Iteration: 0,
 		}
@@ -251,7 +252,7 @@ func (m *cliModel) startAgentTurn() {
 // reconnect/session-switch. Used when CLI reconnects to a running agent turn.
 // Sets the model into typing state with the full iteration history restored.
 // Safe to call before BubbleTea program starts (no channel sends).
-func (m *cliModel) restoreProgressSnapshot(payload *CLIProgressPayload) {
+func (m *cliModel) restoreProgressSnapshot(payload *protocol.ProgressEvent) {
 	if payload == nil || payload.Phase == "done" {
 		return
 	}
@@ -414,9 +415,9 @@ func (m *cliModel) endAgentTurn(turnID uint64) {
 				}
 			}
 			if !allDone {
-				m.todos = make([]CLITodoItem, len(items))
+				m.todos = make([]protocol.TodoItem, len(items))
 				for i, t := range items {
-					m.todos[i] = CLITodoItem{ID: t.ID, Text: t.Text, Done: t.Done}
+					m.todos[i] = protocol.TodoItem{ID: t.ID, Text: t.Text, Done: t.Done}
 				}
 				m.todosDoneCleared = false
 			} else {
@@ -917,7 +918,7 @@ func (m *cliModel) closePanelAndResume() (bool, tea.Model, tea.Cmd) {
 // iterToolsFlat returns a flat slice of all tools from either msg.iterations
 // or msg.tools, handling the dual-source pattern used in tool_summary rendering.
 // If iterations are present, it also counts them. Returns (tools, iterationCount).
-func (msg *cliMessage) iterToolsFlat() (tools []CLIToolProgress, iterCount int) {
+func (msg *cliMessage) iterToolsFlat() (tools []protocol.ToolProgress, iterCount int) {
 	if len(msg.iterations) > 0 {
 		iterCount = len(msg.iterations)
 		for _, it := range msg.iterations {
@@ -1291,7 +1292,7 @@ func (m *cliModel) handleUserList() {
 
 // cacheTokenUsage caches token usage data for the context bar display.
 // Called from all progress paths to avoid duplication.
-func (m *cliModel) cacheTokenUsage(tu *CLITokenUsage) {
+func (m *cliModel) cacheTokenUsage(tu *protocol.TokenUsage) {
 	if tu != nil && tu.PromptTokens > 0 {
 		m.lastTokenUsage = tu
 		if tu.MaxOutputTokens > 0 {

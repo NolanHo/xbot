@@ -1365,14 +1365,14 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus
 	return out.OutboundMessage, nil
 }
 
-// convertWsSubAgentTree 将 agent.SubAgentNode 转换为 channelpkg.WsSubAgent 树。
-func convertWsSubAgentTree(nodes []SubAgentNode) []channelpkg.WsSubAgent {
+// convertWsSubAgentTree 将 agent.SubAgentNode 转换为 protocol.SubAgentInfo 树。
+func convertWsSubAgentTree(nodes []SubAgentNode) []protocol.SubAgentInfo {
 	if len(nodes) == 0 {
 		return nil
 	}
-	result := make([]channelpkg.WsSubAgent, len(nodes))
+	result := make([]protocol.SubAgentInfo, len(nodes))
 	for i, n := range nodes {
-		result[i] = channelpkg.WsSubAgent{
+		result[i] = protocol.SubAgentInfo{
 			Role:     n.Role,
 			Instance: n.Instance,
 			Status:   n.Status,
@@ -1403,7 +1403,7 @@ func resolveSubAgents(event *ProgressEvent) []protocol.SubAgentInfo {
 }
 
 // resolveWsSubAgents is the WsSubAgent variant of resolveSubAgents.
-func resolveWsSubAgents(event *ProgressEvent) []channelpkg.WsSubAgent {
+func resolveWsSubAgents(event *ProgressEvent) []protocol.SubAgentInfo {
 	if event.Structured != nil && len(event.Structured.SubAgents) > 0 {
 		return convertWsSubAgentTree(event.Structured.SubAgents)
 	}
@@ -1533,7 +1533,7 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 			a.lastProgressSnapshot.Store(progressKey, payload)
 		}
 		if remoteCLICh != nil {
-			payload := &channelpkg.WsProgressPayload{
+			payload := &protocol.ProgressEvent{
 				ChatID:           progressKey,
 				Seq:              s.Seq,
 				Phase:            string(s.Phase),
@@ -1544,7 +1544,7 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 				CWD:              s.CWD,
 			}
 			for _, t := range s.ActiveTools {
-				payload.ActiveTools = append(payload.ActiveTools, channelpkg.WsToolProgress{
+				payload.ActiveTools = append(payload.ActiveTools, protocol.ToolProgress{
 					Name:      t.Name,
 					Label:     t.Label,
 					Status:    string(t.Status),
@@ -1557,7 +1557,7 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 				})
 			}
 			for _, t := range s.CompletedTools {
-				payload.CompletedTools = append(payload.CompletedTools, channelpkg.WsToolProgress{
+				payload.CompletedTools = append(payload.CompletedTools, protocol.ToolProgress{
 					Name:      t.Name,
 					Label:     t.Label,
 					Status:    string(t.Status),
@@ -1573,13 +1573,13 @@ func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*Progr
 				payload.SubAgents = wsSubAgents
 			}
 			if len(s.Todos) > 0 {
-				payload.Todos = make([]channelpkg.WsTodoItem, len(s.Todos))
+				payload.Todos = make([]protocol.TodoItem, len(s.Todos))
 				for i, td := range s.Todos {
-					payload.Todos[i] = channelpkg.WsTodoItem{ID: td.ID, Text: td.Text, Done: td.Done}
+					payload.Todos[i] = protocol.TodoItem{ID: td.ID, Text: td.Text, Done: td.Done}
 				}
 			}
 			if s.TokenUsage != nil {
-				payload.TokenUsage = &channelpkg.WsTokenUsage{
+				payload.TokenUsage = &protocol.TokenUsage{
 					PromptTokens:     s.TokenUsage.PromptTokens,
 					CompletionTokens: s.TokenUsage.CompletionTokens,
 					TotalTokens:      s.TokenUsage.TotalTokens,
@@ -1667,7 +1667,7 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 			return
 		}
 		s := event.Structured
-		payload := &channelpkg.WsProgressPayload{
+		payload := &protocol.ProgressEvent{
 			ChatID:           progressKey,
 			Phase:            string(s.Phase),
 			Seq:              s.Seq,
@@ -1678,7 +1678,7 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 			CWD:              s.CWD,
 		}
 		for _, t := range s.ActiveTools {
-			payload.ActiveTools = append(payload.ActiveTools, channelpkg.WsToolProgress{
+			payload.ActiveTools = append(payload.ActiveTools, protocol.ToolProgress{
 				Name:      t.Name,
 				Label:     t.Label,
 				Status:    string(t.Status),
@@ -1691,7 +1691,7 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 			})
 		}
 		for _, t := range s.CompletedTools {
-			payload.CompletedTools = append(payload.CompletedTools, channelpkg.WsToolProgress{
+			payload.CompletedTools = append(payload.CompletedTools, protocol.ToolProgress{
 				Name:      t.Name,
 				Label:     t.Label,
 				Status:    string(t.Status),
@@ -1709,9 +1709,9 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 		}
 		// Copy todo items for web display
 		if len(s.Todos) > 0 {
-			payload.Todos = make([]channelpkg.WsTodoItem, len(s.Todos))
+			payload.Todos = make([]protocol.TodoItem, len(s.Todos))
 			for i, td := range s.Todos {
-				payload.Todos[i] = channelpkg.WsTodoItem{
+				payload.Todos[i] = protocol.TodoItem{
 					ID:   td.ID,
 					Text: td.Text,
 					Done: td.Done,
@@ -1720,7 +1720,7 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 		}
 		// Pass token usage snapshot
 		if s.TokenUsage != nil {
-			payload.TokenUsage = &channelpkg.WsTokenUsage{
+			payload.TokenUsage = &protocol.TokenUsage{
 				PromptTokens:     s.TokenUsage.PromptTokens,
 				CompletionTokens: s.TokenUsage.CompletionTokens,
 				TotalTokens:      s.TokenUsage.TotalTokens,
@@ -1734,12 +1734,11 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 
 		// Track iteration history: when iteration advances, snapshot the
 		// PREVIOUS iteration into the history list for mid-session reconnect.
-		cliSnapshot := payload.ToCLIProgressPayload()
 		a.recordIterationSnapshot(progressKey, func(prev *protocol.ProgressEvent) bool {
 			return s.Iteration > prev.Iteration && prev.Iteration >= 0
 		})
 		// Save current iteration snapshot
-		a.lastProgressSnapshot.Store(progressKey, cliSnapshot)
+		a.lastProgressSnapshot.Store(progressKey, payload)
 	}
 }
 

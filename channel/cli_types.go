@@ -243,27 +243,12 @@ const (
 // CLI Progress Payload (for structured progress events)
 // ---------------------------------------------------------------------------
 
-// CLIProgressPayload 结构化进度消息负载（对应 agent.StructuredProgress）。
-type CLIProgressPayload = protocol.ProgressEvent
-
-// CLITokenUsage Token 使用量（对应 agent.TokenUsageSnapshot）
-type CLITokenUsage = protocol.TokenUsage
-
-// CLITodoItem represents a TODO item for CLI display.
-type CLITodoItem = protocol.TodoItem
-
-// CLIToolProgress 单个工具的执行进度。
-type CLIToolProgress = protocol.ToolProgress
-
-// CLISubAgent 子 Agent 的结构化进度状态。
-type CLISubAgent = protocol.SubAgentInfo
-
 // cliIterationSnapshot captures a completed iteration for the progress panel.
 type cliIterationSnapshot struct {
 	Iteration   int
 	Thinking    string
 	Reasoning   string // model's reasoning/thinking chain (reasoning_content)
-	Tools       []CLIToolProgress
+	Tools       []protocol.ToolProgress
 	ElapsedWall int64 // wall-clock duration of the iteration (ms)
 }
 
@@ -399,7 +384,7 @@ func formatToolLabel(name, argsJSON string) string {
 func ConvertMessagesToHistory(msgs []llm.ChatMessage) []HistoryMessage {
 	var history []HistoryMessage
 	var pendingIters []HistoryIteration
-	var curIterTools []CLIToolProgress
+	var curIterTools []protocol.ToolProgress
 	var curIterIdx int
 	var curIterThinking string
 	var curIterReasoning string
@@ -444,13 +429,13 @@ func ConvertMessagesToHistory(msgs []llm.ChatMessage) []HistoryMessage {
 				if jsonErr := json.Unmarshal([]byte(m.Detail), &snaps); jsonErr == nil {
 					iters := make([]HistoryIteration, 0, len(snaps))
 					for _, snap := range snaps {
-						toolList := make([]CLIToolProgress, len(snap.Tools))
+						toolList := make([]protocol.ToolProgress, len(snap.Tools))
 						for i, t := range snap.Tools {
 							label := t.Label
 							if label == "" {
 								label = t.Name
 							}
-							toolList[i] = CLIToolProgress{
+							toolList[i] = protocol.ToolProgress{
 								Name:      t.Name,
 								Label:     label,
 								Status:    t.Status,
@@ -489,7 +474,7 @@ func ConvertMessagesToHistory(msgs []llm.ChatMessage) []HistoryMessage {
 				curIterThinking = m.Content
 				curIterReasoning = m.ReasoningContent
 				for _, tc := range m.ToolCalls {
-					curIterTools = append(curIterTools, CLIToolProgress{
+					curIterTools = append(curIterTools, protocol.ToolProgress{
 						Name:      tc.Name,
 						Label:     formatToolLabel(tc.Name, tc.Arguments),
 						Status:    "done",
@@ -549,8 +534,8 @@ type CLIChannelConfig struct {
 	SessionsDeleteFn     func(channelName, chatID string) error                                                                         // 删除 session（本地 JSON + 服务端 DB 级联）
 	SessionsListRefresh  func()                                                                                                         // 侧边栏刷新：session 创建/删除后立即调用，确保 sidebar 不显示过期数据
 	SessionsList         func() []SessionPanelEntry                                                                                     // 列出所有 session（main + subagent）
-	GetActiveProgressFn  func(channelName, chatID string) *CLIProgressPayload                                                           // 获取目标 session 的活跃进度（session switch 恢复用）
-	GetTodosFn           func(channelName, chatID string) []CLITodoItem                                                                 // 获取目标 session 的服务端 TODO 列表（session switch 覆盖本地缓存用）
+	GetActiveProgressFn  func(channelName, chatID string) *protocol.ProgressEvent                                                       // 获取目标 session 的活跃进度（session switch 恢复用）
+	GetTodosFn           func(channelName, chatID string) []protocol.TodoItem                                                           // 获取目标 session 的服务端 TODO 列表（session switch 覆盖本地缓存用）
 	GetTokenStateFn      func(channelName, chatID string) (promptTokens, completionTokens int64)                                        // 获取目标 session 的最后 token 状态（session switch 恢复 context bar 用）
 	TrimHistoryFn        func(channelName, chatID string, cutoff time.Time) error                                                       // rewind 回退时删除 DB 消息（channel+chatID 动态传入，支持多 session）
 	ChannelConfigGetFn   func() (map[string]map[string]string, error)                                                                   // 获取频道配置（用于 /channel 面板）
@@ -626,7 +611,7 @@ type CLIChannel struct {
 	// 3+ senders, key events get ~25% scheduling probability. By consolidating
 	// ALL non-critical sends through one channel + one goroutine, we reduce
 	// concurrent senders to 2 (readLoop + drain), giving keys ~50% chance.
-	progressCh chan *CLIProgressPayload
+	progressCh chan *protocol.ProgressEvent
 	asyncCh    chan tea.Msg // unified async send channel (buffered)
 
 	// Services (injected by Agent or main)
@@ -657,8 +642,8 @@ type CLIChannel struct {
 	// Pending injections (set before model exists, applied in Start)
 	pendingTrimHistoryFn     func(time.Time) error
 	pendingResetTokenStateFn func()
-	pendingHistory           []HistoryMessage    // remote mode: cached history before model is ready
-	pendingProgress          *CLIProgressPayload // remote mode: cached progress before model is ready
+	pendingHistory           []HistoryMessage        // remote mode: cached history before model is ready
+	pendingProgress          *protocol.ProgressEvent // remote mode: cached progress before model is ready
 	pendingCheckpointState   *protocol.CheckpointState
 	pendingSendInboundFn     func(bus.InboundMessage) bool
 	// Pending remote bg task callbacks (set before model exists in remote mode)

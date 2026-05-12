@@ -15,6 +15,7 @@ import (
 	"time"
 	"xbot/bus"
 	log "xbot/logger"
+	"xbot/protocol"
 	"xbot/version"
 
 	"charm.land/bubbles/v2/textinput"
@@ -396,8 +397,8 @@ func (m *cliModel) resetProgressState() {
 }
 
 // collectAllTools gathers all tools from iteration history into a flat slice.
-func (m *cliModel) collectAllTools() []CLIToolProgress {
-	var all []CLIToolProgress
+func (m *cliModel) collectAllTools() []protocol.ToolProgress {
+	var all []protocol.ToolProgress
 	for _, snap := range m.iterationHistory {
 		all = append(all, snap.Tools...)
 	}
@@ -970,7 +971,7 @@ func (m *cliModel) handleAgentMessage(msg bus.OutboundMessage) {
 						timestamp:  time.Now(),
 						dirty:      true,
 						iterations: nil,
-						tools: []CLIToolProgress{
+						tools: []protocol.ToolProgress{
 							{
 								Name:    "AskUser",
 								Label:   fmt.Sprintf("asked %d question(s)", len(items)),
@@ -1014,7 +1015,7 @@ func (m *cliModel) handleAgentMessage(msg bus.OutboundMessage) {
 			}
 			if !alreadySnapped {
 				// Filter tools by Iteration field to ensure correct attribution
-				var finalTools []CLIToolProgress
+				var finalTools []protocol.ToolProgress
 				for _, t := range m.lastCompletedTools {
 					if t.Iteration == m.lastSeenIteration {
 						finalTools = append(finalTools, t)
@@ -1670,7 +1671,7 @@ func (m *cliModel) renderCurrentIteration(
 // Uses a prefix-based approach instead of depth-based: each level appends
 // "┊   " or "    " to the prefix depending on whether the parent was the last
 // sibling. This avoids spurious vertical lines after a └── branch.
-func (m *cliModel) renderSubAgentTree(sb *strings.Builder, agents []CLISubAgent, prefix string, maxWidth int) {
+func (m *cliModel) renderSubAgentTree(sb *strings.Builder, agents []protocol.SubAgentInfo, prefix string, maxWidth int) {
 	for i, sa := range agents {
 		if sa.Status == "done" || sa.Status == "error" {
 			continue
@@ -1761,7 +1762,7 @@ func (m *cliModel) renderHelpPanel() string {
 // dimmed controls whether the content is dimmed (for history iterations).
 // maxLines caps diff rendering (0 = unlimited). Passed through to renderToolHint.
 // Caches the result on the tool struct to avoid re-running chroma/lipgloss on every tick.
-func (m *cliModel) renderToolContentBelow(tool *CLIToolProgress, guide string, bodyW int, dimmed bool, maxLines int) string {
+func (m *cliModel) renderToolContentBelow(tool *protocol.ToolProgress, guide string, bodyW int, dimmed bool, maxLines int) string {
 	var sb strings.Builder
 	guideFn := func(s string) string { return s }
 	if dimmed {
@@ -1817,7 +1818,7 @@ func (m *cliModel) renderToolContentBelow(tool *CLIToolProgress, guide string, b
 	return result
 }
 
-func toolDisplayInfo(tool CLIToolProgress, okStyle, errStyle lipgloss.Style) (label, icon string, sty lipgloss.Style) {
+func toolDisplayInfo(tool protocol.ToolProgress, okStyle, errStyle lipgloss.Style) (label, icon string, sty lipgloss.Style) {
 	if tool.Label == "" {
 		label = tool.Name
 	} else {
@@ -2699,7 +2700,7 @@ func (m *cliModel) renderToolHint(md string, maxW, maxLines int) (string, error)
 // renderToolBody renders tool-specific body content below the tool line.
 // Dispatches to specialized renderers based on tool name (crush-style per-tool rendering).
 // Returns empty string if no body content should be shown.
-func (m *cliModel) renderToolBody(tool CLIToolProgress, maxW int) string {
+func (m *cliModel) renderToolBody(tool protocol.ToolProgress, maxW int) string {
 	if tool.Status == "error" {
 		return "" // errors shown in the tool line itself
 	}
@@ -2790,7 +2791,7 @@ func highlightCode(content string, filePath string) []string {
 // renderReadBody renders Read tool output as code with line numbers and syntax highlighting.
 // The Read tool output (Detail/Summary) already has line numbers in format "%*d\t<code>".
 // We parse those to extract pure code, highlight it with Chroma, then render with our own line numbers.
-func (m *cliModel) renderReadBody(tool CLIToolProgress, maxW int, t cliTheme) string {
+func (m *cliModel) renderReadBody(tool protocol.ToolProgress, maxW int, t cliTheme) string {
 	content := tool.Detail
 	if content == "" {
 		content = tool.Summary
@@ -2887,7 +2888,7 @@ func (m *cliModel) renderReadBody(tool CLIToolProgress, maxW int, t cliTheme) st
 }
 
 // renderShellBody renders Shell tool output with command indicator.
-func (m *cliModel) renderShellBody(tool CLIToolProgress, maxW int, t cliTheme) string {
+func (m *cliModel) renderShellBody(tool protocol.ToolProgress, maxW int, t cliTheme) string {
 	content := tool.Detail
 	if content == "" {
 		content = tool.Summary
@@ -2937,7 +2938,7 @@ func (m *cliModel) renderShellBody(tool CLIToolProgress, maxW int, t cliTheme) s
 }
 
 // renderGrepBody renders Grep tool output with highlighted matches.
-func (m *cliModel) renderGrepBody(tool CLIToolProgress, maxW int, t cliTheme) string {
+func (m *cliModel) renderGrepBody(tool protocol.ToolProgress, maxW int, t cliTheme) string {
 	content := tool.Detail
 	if content == "" {
 		content = tool.Summary
@@ -2970,7 +2971,7 @@ func (m *cliModel) renderGrepBody(tool CLIToolProgress, maxW int, t cliTheme) st
 }
 
 // renderGlobBody renders Glob tool output as a file list.
-func (m *cliModel) renderGlobBody(tool CLIToolProgress, maxW int, t cliTheme) string {
+func (m *cliModel) renderGlobBody(tool protocol.ToolProgress, maxW int, t cliTheme) string {
 	content := tool.Detail
 	if content == "" {
 		content = tool.Summary

@@ -1328,7 +1328,7 @@ func TestSuHistoryLoad_TypingReconcile_PhaseDoneIsDefault(t *testing.T) {
 	}
 }
 
-// TestRemoveLastToolSummary verifies that removeLastToolSummary only removes the
+// TestRemoveLastToolSummary verifies that removeActiveTurnToolSummaries only removes the
 // LAST tool_summary message, preserving tool_summaries from previous completed turns.
 // Regression: removeAllToolSummaries removed ALL tool_summaries, causing tools blocks
 // from previous completed turns to disappear on session switch while a turn is active.
@@ -1347,7 +1347,7 @@ func TestRemoveLastToolSummary(t *testing.T) {
 		t.Fatalf("expected 5 messages, got %d", len(m.messages))
 	}
 
-	m.removeLastToolSummary()
+	m.removeActiveTurnToolSummaries()
 
 	// After: 4 messages (only last tool_summary removed)
 	if len(m.messages) != 4 {
@@ -1375,7 +1375,7 @@ func TestRemoveLastToolSummary(t *testing.T) {
 	}
 }
 
-// TestRemoveLastToolSummary_NoToolSummary verifies that removeLastToolSummary is
+// TestRemoveLastToolSummary_NoToolSummary verifies that removeActiveTurnToolSummaries is
 // a no-op when there are no tool_summary messages.
 func TestRemoveLastToolSummary_NoToolSummary(t *testing.T) {
 	m := newCLIModel()
@@ -1384,32 +1384,34 @@ func TestRemoveLastToolSummary_NoToolSummary(t *testing.T) {
 		{role: "assistant", content: "result"},
 	}
 
-	m.removeLastToolSummary()
+	m.removeActiveTurnToolSummaries()
 
 	if len(m.messages) != 2 {
 		t.Fatalf("expected 2 messages unchanged, got %d", len(m.messages))
 	}
 }
 
-// TestRemoveLastToolSummary_OnlyPreservesFirst verifies that with two tool_summaries,
-// only the last one is removed and the first is preserved.
+// TestRemoveLastToolSummary_OnlyPreservesFirst verifies that tool_summaries
+// before the last user message are preserved, while those after are removed.
 func TestRemoveLastToolSummary_OnlyPreservesFirst(t *testing.T) {
 	m := newCLIModel()
 	m.messages = []cliMessage{
-		{role: "tool_summary", content: ""}, // first — PRESERVED
+		{role: "user", content: "q1"},
+		{role: "tool_summary", content: ""}, // before last user — PRESERVED
 		{role: "assistant", content: "a"},
-		{role: "tool_summary", content: ""}, // last — REMOVED
+		{role: "user", content: "q2"},
+		{role: "tool_summary", content: ""}, // after last user — REMOVED
 	}
 
-	m.removeLastToolSummary()
+	m.removeActiveTurnToolSummaries()
 
-	if len(m.messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(m.messages))
+	if len(m.messages) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(m.messages))
 	}
-	if m.messages[0].role != "tool_summary" {
-		t.Error("first tool_summary should be preserved")
+	if m.messages[1].role != "tool_summary" {
+		t.Error("tool_summary before last user should be preserved")
 	}
-	if m.messages[1].role != "assistant" {
-		t.Error("assistant should be at position 1")
+	if m.messages[3].role != "user" {
+		t.Errorf("last message should be user, got %q", m.messages[3].role)
 	}
 }

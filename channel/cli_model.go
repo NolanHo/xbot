@@ -1171,10 +1171,19 @@ type cliOutboundMsg struct {
 	msg bus.OutboundMessage
 }
 
-// cliProgressMsg 进度更新消息
+// cliProgressMsg 实时进度更新消息（来自 WS eventStream 或本地 Transport）。
+// 经过 seq 去重、turnID 守卫等实时处理。
 type cliProgressMsg struct {
-	payload   *protocol.ProgressEvent
-	isRestore bool // true when sent from RestoreInitialProgress (skip seq dedup)
+	payload *protocol.ProgressEvent
+}
+
+// cliProgressRestoreMsg 快照恢复消息（来自 GetActiveProgress RPC）。
+// 不走 seq 去重——它的语义是"合并迭代历史到已有 progress"，
+// 而不是"新的实时事件"。只在以下场景产生：
+//   - 首次连接恢复 active progress
+//   - reconnect 合并 IterationHistory
+type cliProgressRestoreMsg struct {
+	payload *protocol.ProgressEvent
 }
 
 // cliProcessingMsg sets the typing/processing state externally (remote reconnect).

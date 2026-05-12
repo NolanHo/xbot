@@ -669,12 +669,11 @@ func (c *CLIChannel) RestoreInitialProgress(chatID string, payload *protocol.Pro
 		return
 	}
 
-	// Program is running — send through asyncCh as a restore message.
-	// Uses isRestore flag to bypass seq dedup in handleProgressMsg,
-	// because this RPC snapshot may have a seq ≤ events already replayed
-	// from the eventStream buffer.
+	// Program is running — send as dedicated restore message through asyncCh.
+	// Uses cliProgressRestoreMsg (not cliProgressMsg) to bypass seq dedup:
+	// this is a snapshot merge from GetActiveProgress RPC, not a live event.
 	select {
-	case c.asyncCh <- cliProgressMsg{payload: payload, isRestore: true}:
+	case c.asyncCh <- cliProgressRestoreMsg{payload: payload}:
 	default:
 		log.Warn("RestoreInitialProgress: asyncCh full, progress not applied")
 	}

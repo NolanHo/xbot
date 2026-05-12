@@ -223,7 +223,7 @@ func (m *cliModel) restoreIterationHistory(payload *protocol.ProgressEvent) {
 			m.lastSeenIteration = lastIter
 		}
 	}
-	m.removeLastToolSummary()
+	m.removeActiveTurnToolSummaries()
 }
 
 // carryForwardProgressState preserves transient state across progress updates
@@ -340,19 +340,6 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 		if msg.payload.ChatID != currentKey {
 			return
 		}
-	}
-
-	// Restore path: bypass seq dedup and apply full snapshot (including IterationHistory).
-	// This handles RestoreInitialProgress from RPC which carries complete state.
-	if msg.isRestore {
-		m.restoreProgressSnapshot(msg.payload)
-		log.WithFields(log.Fields{
-			"chatID":    msg.payload.ChatID,
-			"phase":     msg.payload.Phase,
-			"iteration": msg.payload.Iteration,
-			"histLen":   len(msg.payload.IterationHistory),
-		}).Info("handleProgressMsg: applied restore snapshot")
-		return
 	}
 
 	turnID := m.agentTurnID // capture before any mutation
@@ -891,17 +878,24 @@ func (m *cliModel) handleInjectedUserMsg(msg cliInjectedUserMsg) []tea.Cmd {
 // handleUpdateCheck processes update check results.
 func (m *cliModel) handleUpdateCheck(msg cliUpdateCheckMsg) {
 	m.checkingUpdate = false
-	if msg.info != nil {
-		m.updateNotice = msg.info
-		if msg.info.HasUpdate {
-			content := fmt.Sprintf(m.locale.UpdateFound, msg.info.Current, msg.info.Latest, msg.info.URL)
-			m.showSystemMsg(content, feedbackInfo)
-		} else {
-			content := fmt.Sprintf(m.locale.UpdateCurrent, msg.info.Current)
-			m.showSystemMsg(content, feedbackInfo)
-		}
-	} else {
+	if msg.info == nil {
 		m.showSystemMsg(m.locale.UpdateFailed, feedbackError)
+		return
+	}
+	m.updateNotice = msg.info
+	// Suppress update notice when an agent turn is active (progress running).
+	// The notice would corrupt the progress panel layout and distract from
+	// the active iteration history the user needs to see.
+	// The notice is still stored in m.updateNotice for manual /update check.
+	if m.typing || (m.progress != nil && m.progress.Phase != "done" && m.progress.Phase != "") {
+		return
+	}
+	if msg.info.HasUpdate {
+		content := fmt.Sprintf(m.locale.UpdateFound, msg.info.Current, msg.info.Latest, msg.info.URL)
+		m.showSystemMsg(content, feedbackInfo)
+	} else {
+		content := fmt.Sprintf(m.locale.UpdateCurrent, msg.info.Current)
+		m.showSystemMsg(content, feedbackInfo)
 	}
 }
 
@@ -1079,9 +1073,9 @@ func (m *cliModel) handleSuHistoryLoad(msg suHistoryLoadMsg) []tea.Cmd {
 		// intermediate DB messages with globally-cumulative iteration numbers
 		// that don't match the progress block's per-turn iteration numbers.
 		// The active progress block owns iteration display entirely — any
-		// static tool_summary would duplicate content with mismatched numbers.
-		// Only remove the LAST tool_summary (active turn's); preserve previous turns'.
-		m.removeLastToolSummary()
+		// static tool_summary from the active turn would duplicate content.
+		// Remove all tool_summaries after the last user message.
+		m.removeActiveTurnToolSummaries()
 
 		// Fallback: if server returned Iteration=0 but iteration history
 		// has entries, derive the current iteration from history max.

@@ -239,11 +239,18 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 	case cliProgressMsg:
 		m.handleProgressMsg(msg)
 		// Ensure fast tick chain is running when session is active.
-		// Use server-provided progress state (authoritative) rather than
-		// client-maintained m.typing which can be stale after session switches.
-		// Without this, stream-only updates (isStreamOnly path) accumulate
-		// content but never render because the tick chain isn't driving
-		// updateViewportContent.
+		sessionActive := m.progress != nil && m.progress.Phase != "done"
+		if sessionActive && !m.fastTickActive {
+			m.fastTickActive = true
+			cmds = append(cmds, m.tickCmd())
+		}
+
+	case cliProgressRestoreMsg:
+		// Restore snapshot from GetActiveProgress RPC — merges IterationHistory
+		// into existing progress without seq dedup. Only overwrites progress
+		// if replay hasn't set a newer one (checked by seq comparison inside
+		// restoreProgressSnapshot).
+		m.restoreProgressSnapshot(msg.payload)
 		sessionActive := m.progress != nil && m.progress.Phase != "done"
 		if sessionActive && !m.fastTickActive {
 			m.fastTickActive = true

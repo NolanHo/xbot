@@ -295,7 +295,7 @@ func (m *cliModel) restoreProgressSnapshot(payload *protocol.ProgressEvent) {
 				}
 			}
 		}
-		m.removeLastToolSummary()
+		m.removeActiveTurnToolSummaries()
 		m.invalidateAllCache(false)
 		return
 	}
@@ -362,7 +362,7 @@ func (m *cliModel) restoreProgressSnapshot(payload *protocol.ProgressEvent) {
 	// restart or iterationHistories not yet populated), any tool_summary from
 	// loaded DB history must be removed — otherwise completed iterations show as
 	// a static "Tools" block alongside the live progress block.
-	m.removeLastToolSummary()
+	m.removeActiveTurnToolSummaries()
 
 	// Restore todos from the progress snapshot so the sidebar/todo bar
 	// shows them immediately without waiting for the next live progress event.
@@ -375,29 +375,50 @@ func (m *cliModel) restoreProgressSnapshot(payload *protocol.ProgressEvent) {
 	m.viewport.GotoBottom()
 }
 
-// removeLastToolSummary removes only the LAST tool_summary message from m.messages.
+// removeActiveTurnToolSummaries removes tool_summary messages that belong to
+// the currently active agent turn. When progress is active (typing or m.progress
+// exists with phase != done), the progress panel owns iteration display — any
+// tool_summary from the active turn would render as a static "Tools" block
+// alongside the live progress block, duplicating content.
 //
-// When the agent turn is active, ConvertMessagesToHistory produces a tool_summary
-// from intermediate assistant messages of the in-progress turn. The progress
-// block (m.progress + m.iterationHistory) owns iteration display for the active
-// turn — the static tool_summary from ConvertMessagesToHistory would duplicate
-// content with mismatched (globally-cumulative vs per-turn) iteration numbers.
+// Active-turn tool_summaries are identified as: all tool_summary messages after
+// the last user message. This covers the case where DB history was loaded on
+// reconnect with tool_summaries from an in-progress turn that should be rendered
+// by the progress panel, not as static message blocks.
 //
-// Previously removeAllToolSummaries removed ALL tool_summary messages, which
-// also deleted tool blocks from previous completed turns — those have no
-// progress block to replace them. Only the LAST tool_summary (the active turn's)
-// should be removed; previous turns' tool_summaries must be preserved.
-func (m *cliModel) removeLastToolSummary() {
-	// Find the last tool_summary message (closest to end of messages).
-	lastIdx := -1
+// Previous completed turns' tool_summaries (before the last user message) are
+// preserved — those have no live progress panel to replace them.
+func (m *cliModel) removeActiveTurnToolSummaries() {
+	if len(m.messages) == 0 {
+		return
+	}
+	// Find the index of the last user message.
+	lastUserIdx := -1
 	for i := len(m.messages) - 1; i >= 0; i-- {
-		if m.messages[i].role == "tool_summary" {
-			lastIdx = i
+		if m.messages[i].role == "user" {
+			lastUserIdx = i
 			break
 		}
 	}
-	if lastIdx >= 0 {
-		m.messages = append(m.messages[:lastIdx], m.messages[lastIdx+1:]...)
+	// If no user message found, scan all messages (edge case: turn started
+	// without a visible user message, e.g. bg notification injection).
+	scanFrom := 0
+	if lastUserIdx >= 0 {
+		scanFrom = lastUserIdx + 1
+	}
+	// Remove all tool_summary messages after the last user message.
+	// Build a new slice without them (preserve order, avoid index shifting).
+	filtered := m.messages[:0] // reuse backing array
+	removed := false
+	for i, msg := range m.messages {
+		if i >= scanFrom && msg.role == "tool_summary" {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, msg)
+	}
+	if removed {
+		m.messages = filtered
 		m.renderCacheValid = false
 	}
 }

@@ -3417,23 +3417,25 @@ func (m *cliModel) showSessionCreateDialog() tea.Cmd {
 // deleteLocalSession deletes the selected session and switches to default if active.
 func (m *cliModel) deleteLocalSession(entry SessionPanelEntry) {
 	// 1. Remove from local JSON file (for local dir sessions).
-	ds, err := LoadDirSessions(m.workDir)
-	if err != nil {
-		m.showTempStatus(fmt.Sprintf("Failed: %v", err))
-		return
-	}
 	localRemoved := false
-	if err := ds.removeSession(entry.Label); err == nil {
-		localRemoved = true
-	}
-	// 2. Notify backend to clean up DB (tenant, messages, etc.).
-	if m.channel != nil && m.channel.config.SessionsDeleteFn != nil {
-		if err := m.channel.config.SessionsDeleteFn("cli", entry.ID); err != nil {
-			log.WithError(err).WithField("chatID", entry.ID).Warn("Backend session cleanup failed")
+	ds, err := LoadDirSessions(m.workDir)
+	if err == nil {
+		if err := ds.removeSession(entry.Label); err == nil {
+			localRemoved = true
 		}
 	}
-	// 3. If backend removed but local JSON didn't have it, still show success.
-	if !localRemoved && (m.channel == nil || m.channel.config.SessionsDeleteFn == nil) {
+	// 2. Notify backend to clean up DB (tenant, messages, etc.).
+	backendRemoved := false
+	if m.channel != nil && m.channel.config.SessionsDeleteFn != nil {
+		if err := m.channel.config.SessionsDeleteFn("cli", entry.ID); err != nil {
+			log.WithError(err).WithField("chatID", entry.ID).Warn("Backend session delete failed")
+			m.showTempStatus(fmt.Sprintf("Delete failed: %v", err))
+			return
+		}
+		backendRemoved = true
+	}
+	// 3. Neither local nor backend succeeded.
+	if !localRemoved && !backendRemoved {
 		m.showTempStatus(fmt.Sprintf("Not found: %s", entry.Label))
 		return
 	}

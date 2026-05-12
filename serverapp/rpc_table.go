@@ -578,6 +578,32 @@ func registerSessionHandlers(t rpcTable, h *rpcContext) {
 		log.WithFields(log.Fields{"channel": p.Channel, "chat_id": p.ChatID, "count": len(history)}).Info("RPC get_history")
 		return history, nil
 	})
+	t["delete_chat"] = rpc1(func(ctx context.Context, p struct {
+		Channel string `json:"channel"`
+		ChatID  string `json:"chat_id"`
+	}) (any, error) {
+		bizID := rpcBizID(ctx)
+		senderID := rpcAuthID(ctx)
+		if p.Channel == "" {
+			p.Channel = "cli"
+		}
+		if p.ChatID == "" {
+			p.ChatID = bizID
+		}
+		if !isAdmin(senderID) && p.ChatID != bizID {
+			return nil, fmt.Errorf("access denied")
+		}
+		if db := h.backend.MultiSession().DB(); db != nil {
+			cs := sqlite.NewChatService(db.Conn())
+			if err := cs.DeleteChat(p.Channel, senderID, p.ChatID); err != nil {
+				return nil, fmt.Errorf("delete chat: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("database not available")
+		}
+		log.WithFields(log.Fields{"channel": p.Channel, "chat_id": p.ChatID}).Info("RPC delete_chat")
+		return map[string]string{"status": "ok"}, nil
+	})
 	t["get_token_state"] = rpc1(func(ctx context.Context, p struct {
 		Channel string `json:"channel"`
 		ChatID  string `json:"chat_id"`

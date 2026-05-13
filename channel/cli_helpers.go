@@ -83,11 +83,10 @@ func (m *cliModel) mergeCLISettingsValues() map[string]string {
 			}
 		}
 	}
-	// Per-session max context tokens: load from session file (highest priority for this key).
-	if m.chatID != "" && m.workDir != "" {
-		if mc := LoadSessionMaxContext(m.workDir, m.chatID); mc > 0 {
-			values["max_context_tokens"] = strconv.Itoa(mc)
-		}
+	// max_context_tokens: derived from session JSON or subscription's PerModelConfig.
+	// NOT from GetCurrentValues (which may return stale global config values).
+	if mc := m.resolveMaxContextTokens(); mc > 0 {
+		values["max_context_tokens"] = strconv.Itoa(mc)
 	}
 	return values
 }
@@ -1237,24 +1236,24 @@ func (m *cliModel) cacheTokenUsage(tu *protocol.TokenUsage) {
 	}
 }
 
-// resolveMaxContextTokens returns the max context tokens from settings values.
-// Falls back to 0 if unavailable (context usage display will be hidden).
-// Checks per-session override first, then falls back to global cached values.
+// resolveMaxContextTokens returns the max context tokens for the current session.
+// Priority (strict, no ambiguity):
+//  1. Session JSON file (user manually set, or inherited from parent session)
+//  2. Current subscription's PerModelConfigs[model].MaxContext
+//  3. 0 → caller falls back to DefaultValue from schema
 func (m *cliModel) resolveMaxContextTokens() int {
-	// Per-session override (from session file)
+	// 1. Per-session override (from session file)
 	if m.chatID != "" && m.workDir != "" {
 		if mc := LoadSessionMaxContext(m.workDir, m.chatID); mc > 0 {
 			return mc
 		}
 	}
-	// Global cached value (from GetCurrentValues)
-	if m.channel == nil || m.channel.config.GetCurrentValues == nil {
-		return 0
-	}
-	values := m.channel.config.GetCurrentValues()
-	if v, ok := values["max_context_tokens"]; ok && v != "" {
-		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
-			return n
+	// 2. Subscription's per-model config
+	if m.subscriptionMgr != nil && m.cachedModelName != "" {
+		if sub, err := m.subscriptionMgr.GetDefault(m.senderID); err == nil && sub != nil {
+			if pmc, ok := sub.PerModelConfigs[m.cachedModelName]; ok && pmc.MaxContext > 0 {
+				return pmc.MaxContext
+			}
 		}
 	}
 	return 0

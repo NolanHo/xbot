@@ -1449,13 +1449,15 @@ func (m *cliModel) handleSwitchLLMDoneMsg(done cliSwitchLLMDoneMsg) (tea.Model, 
 			// Persist per-session subscription choice so it survives restarts
 			SaveSessionLLM(m.workDir, m.chatID, done.subID, done.subModel)
 			// Update max context/output from the new subscription's per-model config.
-			// This is the authoritative value — write it to both cache and session JSON.
-			m.cachedMaxContextTokens = done.maxCtx
-			m.cachedMaxOutputTokens = int64(done.maxOutTok)
+			// If the new subscription has an explicit per-model MaxContext, use it.
+			// Otherwise, KEEP the current value — don't destroy user's manual setting.
 			if done.maxCtx > 0 {
+				m.cachedMaxContextTokens = done.maxCtx
 				SaveSessionMaxContext(m.workDir, m.chatID, done.maxCtx)
-			} else {
-				SaveSessionMaxContext(m.workDir, m.chatID, 0)
+			}
+			// max_output_tokens: subscription-level value always applies
+			if done.maxOutTok > 0 {
+				m.cachedMaxOutputTokens = int64(done.maxOutTok)
 			}
 			// Refresh values cache so GetCurrentValues() reflects the new subscription.
 			if m.channel != nil && m.channel.config.RefreshValuesCache != nil {

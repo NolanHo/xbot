@@ -97,9 +97,9 @@ var cliSettingHandlers = map[string]cliSettingHandler{
 		},
 	},
 	"max_context_tokens": {
-		ApplyConfig: func(cfg *config.Config, value string) {
-			cfg.Agent.MaxContextTokens = channel.ParseSettingInt(value, cfg.Agent.MaxContextTokens)
-		},
+		// max_context is subscription-scoped, stored in PerModelConfigs.
+		// Do NOT write to cfg.Agent.MaxContextTokens (global fallback only).
+		ApplyConfig: nil,
 		ApplyBackend: func(backend agent.AgentBackend, senderID, chatID, value string) {
 			if n, err := strconv.Atoi(value); err == nil && n >= 0 {
 				if chatID != "" {

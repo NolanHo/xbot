@@ -204,6 +204,15 @@ func registerSettingsHandlers(t rpcTable, h *rpcContext) {
 			}
 			return nil
 		}
+		// Subscription-scoped keys (max_context_tokens) are stored in the
+		// subscription's PerModelConfigs, NOT in user_settings DB.
+		// The CLI's saveSettings() handles the write via subscriptionMgr.Update().
+		if channel.IsSubscriptionScopedSettingKey(p.Key) {
+			if isAdmin(rpcAuthID(ctx)) {
+				applyRuntimeSetting(h.cfg, h.backend, bizID, p.Key, p.Value)
+			}
+			return nil
+		}
 		if h.backend.SettingsService() == nil {
 			return errSettingsUnavailable
 		}
@@ -1045,14 +1054,15 @@ func (h *rpcContext) getDefaultSubscription(ctx context.Context) (*channel.Subsc
 func (h *rpcContext) updateSubscription(ctx context.Context, p struct {
 	ID  string `json:"id"`
 	Sub struct {
-		Name            string `json:"name"`
-		Provider        string `json:"provider"`
-		BaseURL         string `json:"base_url"`
-		APIKey          string `json:"api_key"`
-		Model           string `json:"model"`
-		Active          bool   `json:"active"`
-		MaxOutputTokens int    `json:"max_output_tokens"`
-		ThinkingMode    string `json:"thinking_mode"`
+		Name            string                           `json:"name"`
+		Provider        string                           `json:"provider"`
+		BaseURL         string                           `json:"base_url"`
+		APIKey          string                           `json:"api_key"`
+		Model           string                           `json:"model"`
+		Active          bool                             `json:"active"`
+		MaxOutputTokens int                              `json:"max_output_tokens"`
+		ThinkingMode    string                           `json:"thinking_mode"`
+		PerModelConfigs map[string]sqlite.PerModelConfig `json:"per_model_configs"`
 	} `json:"sub"`
 }) error {
 	bizID := rpcBizID(ctx)
@@ -1071,8 +1081,10 @@ func (h *rpcContext) updateSubscription(ctx context.Context, p struct {
 		ID: p.ID, SenderID: existing.SenderID,
 		Name: p.Sub.Name, Provider: p.Sub.Provider, BaseURL: p.Sub.BaseURL,
 		APIKey: p.Sub.APIKey, Model: p.Sub.Model,
-		MaxContext: existing.MaxContext, MaxOutputTokens: p.Sub.MaxOutputTokens,
-		ThinkingMode: p.Sub.ThinkingMode, IsDefault: existing.IsDefault,
+		MaxOutputTokens: p.Sub.MaxOutputTokens,
+		MaxContext:      existing.MaxContext, // top-level MaxContext preserved from DB
+		ThinkingMode:    p.Sub.ThinkingMode, IsDefault: existing.IsDefault,
+		PerModelConfigs: p.Sub.PerModelConfigs,
 	}
 	// Never overwrite with a masked key from server RPC transport.
 	if strings.HasSuffix(dbSub.APIKey, "****") && len(dbSub.APIKey) <= 20 {

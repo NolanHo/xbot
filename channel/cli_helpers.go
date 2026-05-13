@@ -95,7 +95,10 @@ func (m *cliModel) mergeCLISettingsValues() map[string]string {
 // when changed from a session (chatID non-empty). They are not written to global
 // config/DB, preserving other sessions' independent values.
 var perSessionSettingKeys = map[string]bool{
-	"max_context_tokens": true,
+	// max_context_tokens removed from per-session — it's a global user setting
+	// stored in DB like max_iterations. All sessions share the same value.
+	// When user changes it in /settings, it writes to DB immediately.
+	// resolveMaxContextTokens reads from DB via mergeCLISettingsValues.
 }
 
 // IsPerSessionSettingKey returns true if the key is a per-session setting.
@@ -113,30 +116,6 @@ func (m *cliModel) persistCLISettingsValues(values map[string]string) {
 				// so the change only affects the current session's runtime.
 				// Instead, persist to the session file for UI recovery across restarts.
 				if perSessionSettingKeys[k] && m.chatID != "" {
-					if k == "max_context_tokens" {
-						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-							m.cachedMaxContextTokens = n
-							// Write back to subscription's PerModelConfigs so ALL sessions
-							// using this (subscription + model) get the same value.
-							// max_context is a property of (subscription+model), not per-session.
-							if m.activeSubID != "" && m.cachedModelName != "" && m.subscriptionMgr != nil {
-								if subs, err := m.subscriptionMgr.List(""); err == nil {
-									for _, sub := range subs {
-										if sub.ID == m.activeSubID {
-											if sub.PerModelConfigs == nil {
-												sub.PerModelConfigs = make(map[string]PerModelConfig)
-											}
-											pmc := sub.PerModelConfigs[m.cachedModelName]
-											pmc.MaxContext = n
-											sub.PerModelConfigs[m.cachedModelName] = pmc
-											_ = m.subscriptionMgr.Update(sub.ID, &sub)
-											break
-										}
-									}
-								}
-							}
-						}
-					}
 					continue
 				}
 				if err := m.channel.settingsSvc.SetSetting(m.channelName, m.senderID, k, v); err != nil {

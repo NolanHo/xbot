@@ -233,6 +233,36 @@ func (f *LLMFactory) GetLLMForChat(senderID, chatID string) (llm.LLM, string, in
 		f.mu.RUnlock()
 		return client, model, maxCtx, thinkingMode
 	}
+	// Per-chat cache miss: check if there's a subscription for this chat
+	// (set by SetSessionLLM but client was lazily cleared by SwitchModel).
+	// If so, create a new client inline to avoid falling back to user-level.
+	if sub, subOK := f.subscriptions[key]; subOK && sub != nil {
+		model := f.models[key]
+		maxCtx := f.resolveEffectiveModelContext(model, sub)
+		if pcCtx, ok := f.perChatMaxCtx[chatID]; ok && pcCtx > 0 {
+			maxCtx = pcCtx
+		}
+		thinkingMode := f.thinkingModes[key]
+		f.mu.RUnlock()
+
+		// Lazily create client for this per-chat subscription
+		cfg := &sqlite.UserLLMConfig{
+			Provider:        sub.Provider,
+			BaseURL:         sub.BaseURL,
+			APIKey:          sub.APIKey,
+			Model:           sub.Model,
+			MaxContext:      sub.MaxContext,
+			MaxOutputTokens: sub.MaxOutputTokens,
+			ThinkingMode:    sub.ThinkingMode,
+		}
+		client, _ := f.createClient(cfg)
+		if client != nil {
+			f.mu.Lock()
+			f.clients[key] = client
+			f.mu.Unlock()
+		}
+		return client, model, maxCtx, thinkingMode
+	}
 	// Even without per-chat LLM client, there may be a per-chat max_context override
 	if pcCtx, ok := f.perChatMaxCtx[chatID]; ok && pcCtx > 0 {
 		f.mu.RUnlock()
@@ -407,6 +437,7 @@ func (f *LLMFactory) SetSessionLLM(senderID, chatID string, sub *sqlite.LLMSubsc
 	f.models[chatK] = model
 	f.maxOutputTokens[chatK] = sub.MaxOutputTokens
 	f.thinkingModes[chatK] = sub.ThinkingMode
+	f.subscriptions[chatK] = sub
 	f.mu.Unlock()
 
 	return nil

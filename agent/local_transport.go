@@ -557,7 +557,7 @@ func (t *localTransport) registerHandlers() {
 		if r.ChatID != "" {
 			// Per-session switch: only update per-chat cache, do NOT modify
 			// the global default subscription or invalidate other sessions.
-			return a.llmFactory.SwitchSubscription(sub.SenderID, sub, r.ChatID)
+			return a.llmFactory.SetSessionLLM(sub.SenderID, r.ChatID, sub)
 		}
 		// Global switch: update DB default + invalidate all caches + set per-user LLM
 		if err := svc.SetDefault(r.ID); err != nil {

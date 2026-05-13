@@ -1105,11 +1105,17 @@ func (h *rpcContext) setDefaultSubscription(ctx context.Context, p struct {
 	if !isAdmin(rpcAuthID(ctx)) && sub.SenderID != bizID {
 		return fmt.Errorf("subscription not found")
 	}
+	if p.ChatID != "" {
+		// Per-session switch: only update per-chat cache, do NOT modify
+		// the global default subscription or invalidate other sessions.
+		return h.backend.LLMFactory().SetSessionLLM(bizID, p.ChatID, sub)
+	}
+	// Global switch: update DB default + invalidate all caches + set per-user LLM
 	if err := svc.SetDefault(p.ID); err != nil {
 		return err
 	}
 	h.backend.LLMFactory().Invalidate(bizID)
-	return h.backend.LLMFactory().SwitchSubscription(bizID, sub, p.ChatID)
+	return h.backend.LLMFactory().SwitchSubscription(bizID, sub, "")
 }
 
 func (h *rpcContext) setSubscriptionModel(ctx context.Context, p struct {

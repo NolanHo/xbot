@@ -855,16 +855,16 @@ func (b *fakeAgentBackend) CallRPC(string, any) (json.RawMessage, error) {
 func (b *fakeAgentBackend) Run(context.Context) error { return nil }
 
 func TestCLISettingHandlersCoversAllRuntimeKeys(t *testing.T) {
-	missing := missingCLIHandlerKeys()
+	missing := agent.MissingSettingHandlerKeys()
 	if len(missing) > 0 {
-		t.Errorf("cliSettingHandlers is missing handlers for keys in channel.CLIRuntimeSettingKeys: %v\n"+
-			"Add entries to cliSettingHandlers in setting_handlers.go for each missing key.", missing)
+		t.Errorf("SettingHandlerRegistry is missing handlers for keys in channel.CLIRuntimeSettingKeys: %v\n"+
+			"Add entries in agent/setting_runtime.go for each missing key.", missing)
 	}
 }
 
-func TestApplyCLISettingsToConfig(t *testing.T) {
+func TestApplyRuntimeSettings(t *testing.T) {
 	cfg := &config.Config{}
-	handled := applyCLISettingsToConfig(cfg, map[string]string{
+	agent.ApplyRuntimeSettings(cfg, nil, "cli_user", map[string]string{
 		"max_iterations": "50",
 		"context_mode":   "auto",
 	})
@@ -873,12 +873,6 @@ func TestApplyCLISettingsToConfig(t *testing.T) {
 	}
 	if cfg.Agent.ContextMode != "auto" {
 		t.Errorf("context_mode = %q, want %q", cfg.Agent.ContextMode, "auto")
-	}
-	// All keys should be handled
-	for _, k := range []string{"max_iterations", "context_mode"} {
-		if !handled[k] {
-			t.Errorf("expected %q to be handled", k)
-		}
 	}
 }
 

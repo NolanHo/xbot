@@ -1322,7 +1322,8 @@ func main() {
 				}
 				_ = app.backend.SetSetting("cli", "cli_user", k, v)
 			}
-			applyCLISettingsToBackend(app.backend, "cli_user", chatID, values)
+			agent.ApplyRuntimeSettings(app.cfg, app.backend, "cli_user", values)
+			// Persist non-subscription settings to config.json
 
 			// Update local cache immediately (no waiting for refreshRemoteValuesCache)
 			app.valuesCacheMu.Lock()
@@ -1344,18 +1345,6 @@ func main() {
 
 			// Always save layout to config.json (keys not in Config struct, must write directly)
 			saveLayoutToConfig(values)
-			// Always save to local config.json as fallback cache
-			// (skip per-session keys when in a session — they're runtime-only)
-			globalValues := values
-			if chatID != "" {
-				globalValues = make(map[string]string, len(values))
-				for k, v := range values {
-					if !channel.IsPerSessionSettingKey(k) {
-						globalValues[k] = v
-					}
-				}
-			}
-			applyCLISettingsToConfig(app.cfg, globalValues)
 			if err := saveCLIConfig(app.cfg); err != nil {
 				log.Warnf("Failed to save CLI config: %v", err)
 			}

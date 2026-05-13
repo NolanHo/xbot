@@ -3,7 +3,6 @@ package channel
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -24,30 +23,24 @@ const defaultSessionName = "default"
 // sessionNameRe validates session names: alphanumeric, hyphens, underscores, CJK.
 var sessionNameRe = regexp.MustCompile(`^[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_-]{1,64}$`)
 
-// SessionChatID builds a chatID from workDir and session UID.
-// When uid is empty, returns just workDir (backward compat for default session).
-// Format: workDir:~uid — the "~" prefix distinguishes UID-based chatIDs from
-// legacy name-based chatIDs, ensuring uniqueness even with duplicate display names.
-func SessionChatID(workDir, uid string) string {
-	if uid == "" {
+// SessionChatID builds a chatID from workDir and session name.
+// When sessionName is "default" or empty, returns just workDir (backward compat).
+func SessionChatID(workDir, sessionName string) string {
+	if sessionName == "" || sessionName == defaultSessionName {
 		return workDir
 	}
-	return workDir + ":~" + uid
+	return workDir + ":" + sessionName
 }
 
-// ParseChatID extracts the workDir from a chatID.
-// The second return value is the raw suffix after the last ":" (UID or legacy name).
-// Callers that need the display name should look up dirSession.Name instead.
-func ParseChatID(chatID string) (workDir, suffix string) {
+// ParseChatID extracts the workDir and sessionName from a chatID.
+// Returns (workDir, sessionName). If there's no ":" separator, sessionName is "default".
+func ParseChatID(chatID string) (workDir, sessionName string) {
 	idx := strings.LastIndex(chatID, ":")
 	if idx <= 0 || idx == len(chatID)-1 {
 		return chatID, defaultSessionName
 	}
 	workDir = chatID[:idx]
-	suffix = chatID[idx+1:]
-	// Strip "~" prefix from UID-based chatIDs for backward compat callers
-	// that expect a "name" (but they should migrate to dirSession.Name).
-	suffix = strings.TrimPrefix(suffix, "~")
+	sessionName = chatID[idx+1:]
 	// Validate: workDir should look like an absolute or relative path
 	if !strings.HasPrefix(workDir, "/") && !strings.HasPrefix(workDir, ".") && !strings.HasPrefix(workDir, "~") {
 		return chatID, defaultSessionName
@@ -58,16 +51,7 @@ func ParseChatID(chatID string) (workDir, suffix string) {
 			workDir = abs
 		}
 	}
-	return workDir, suffix
-}
-
-// generateSessionUID creates a random 6-hex-char session UID.
-func generateSessionUID() (string, error) {
-	b := make([]byte, 3) // 3 bytes = 6 hex chars
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
+	return workDir, sessionName
 }
 
 // ValidateSessionName checks if a name is valid for a session.
@@ -96,7 +80,6 @@ type dirSessions struct {
 
 type dirSession struct {
 	Name             string    `json:"name"`
-	UID              string    `json:"uid,omitempty"` // unique ID (6 hex chars), immutable after creation
 	ChatID           string    `json:"chat_id"`
 	CreatedAt        time.Time `json:"created_at"`
 	CWD              string    `json:"cwd,omitempty"`                // per-session working directory (worktree path, etc.)
@@ -156,22 +139,6 @@ func LoadDirSessions(workDir string) (*dirSessions, error) {
 		return nil, fmt.Errorf("parse sessions file: %w", err)
 	}
 	ds.Dir = workDir
-	// Migrate legacy sessions: assign UID and rebuild chatID for sessions without UID.
-	migrated := false
-	for i := range ds.Sessions {
-		if ds.Sessions[i].UID == "" && ds.Sessions[i].Name != defaultSessionName {
-			uid, _ := generateSessionUID()
-			if uid == "" {
-				uid = fmt.Sprintf("%x", time.Now().UnixNano()%0xffffff)
-			}
-			ds.Sessions[i].UID = uid
-			ds.Sessions[i].ChatID = SessionChatID(workDir, uid)
-			migrated = true
-		}
-	}
-	if migrated {
-		_ = ds.save()
-	}
 	if !ds.hasSession(defaultSessionName) {
 		ds.Sessions = append([]dirSession{{
 			Name:      defaultSessionName,
@@ -252,14 +219,9 @@ func (ds *dirSessions) addSession(name string) (string, error) {
 	if ds.hasSession(name) {
 		return "", fmt.Errorf("session %q already exists", name)
 	}
-	uid, err := generateSessionUID()
-	if err != nil {
-		return "", fmt.Errorf("generate session UID: %w", err)
-	}
-	chatID := SessionChatID(ds.Dir, uid)
+	chatID := SessionChatID(ds.Dir, name)
 	ds.Sessions = append(ds.Sessions, dirSession{
 		Name:      name,
-		UID:       uid,
 		ChatID:    chatID,
 		CreatedAt: time.Now(),
 	})
@@ -322,7 +284,7 @@ func (ds *dirSessions) RenameSession(oldName, newName string) error {
 	for i, s := range ds.Sessions {
 		if s.Name == oldName {
 			ds.Sessions[i].Name = newName
-			// ChatID is immutable (based on UID, not name)
+			ds.Sessions[i].ChatID = SessionChatID(ds.Dir, newName)
 			return ds.save()
 		}
 	}

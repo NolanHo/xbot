@@ -2674,37 +2674,35 @@ func (m *cliModel) editQuickSwitchEntry() {
 		}},
 		{Key: "__pm_header__", Label: "─── Model-Specific Overrides ───", Description: "Override max tokens and context per model. Set 0 to use subscription default.", Type: SettingTypeText, DefaultValue: ""},
 	}
-	// Inject model list into combo for model field
-	if m.channel.modelLister != nil {
-		models := m.channel.modelLister.ListAllModels()
-		if len(models) > 0 {
-			opts := make([]SettingOption, len(models))
-			for j, mdl := range models {
-				opts[j] = SettingOption{Label: mdl, Value: mdl}
-			}
-			editSchema[2].Options = opts
-			// Add per-model override rows for known models
-			for _, mdl := range models {
-				pmOut := 0
-				pmCtx := 0
-				if target.PerModelConfigs != nil {
-					if cfg, ok := target.PerModelConfigs[mdl]; ok {
-						pmOut = cfg.MaxOutputTokens
-						pmCtx = cfg.MaxContext
-					}
-				}
-				editSchema = append(editSchema, SettingDefinition{
-					Key: "pm_" + mdl + "_max_output", Label: mdl + " Max Tokens",
-					Description: "Max output tokens for " + mdl + " (0 = use default)",
-					Type:        SettingTypeNumber, DefaultValue: strconv.Itoa(pmOut),
-				})
-				editSchema = append(editSchema, SettingDefinition{
-					Key: "pm_" + mdl + "_max_context", Label: mdl + " Max Context",
-					Description: "Max context tokens for " + mdl + " (0 = use default)",
-					Type:        SettingTypeNumber, DefaultValue: strconv.Itoa(pmCtx),
-				})
+	// Build per-model override rows: only models that belong to THIS subscription.
+	// Use target.Model + keys from existing PerModelConfigs (not ListAllModels which
+	// returns models from ALL subscriptions).
+	subModels := make(map[string]bool)
+	if target.Model != "" {
+		subModels[target.Model] = true
+	}
+	for mdl := range target.PerModelConfigs {
+		subModels[mdl] = true
+	}
+	for mdl := range subModels {
+		pmOut := 0
+		pmCtx := 0
+		if target.PerModelConfigs != nil {
+			if cfg, ok := target.PerModelConfigs[mdl]; ok {
+				pmOut = cfg.MaxOutputTokens
+				pmCtx = cfg.MaxContext
 			}
 		}
+		editSchema = append(editSchema, SettingDefinition{
+			Key: "pm_" + mdl + "_max_output", Label: mdl + " Max Tokens",
+			Description: "Max output tokens for " + mdl + " (0 = use default)",
+			Type:        SettingTypeNumber, DefaultValue: strconv.Itoa(pmOut),
+		})
+		editSchema = append(editSchema, SettingDefinition{
+			Key: "pm_" + mdl + "_max_context", Label: mdl + " Max Context",
+			Description: "Max context tokens for " + mdl + " (0 = use default)",
+			Type:        SettingTypeNumber, DefaultValue: strconv.Itoa(pmCtx),
+		})
 	}
 	editValues := map[string]string{
 		"sub_name":              target.Name,
@@ -2726,15 +2724,21 @@ func (m *cliModel) editQuickSwitchEntry() {
 			apiKey = target.APIKey
 		}
 		maxOut, _ := strconv.Atoi(values["sub_max_output_tokens"])
-		// Collect per-model overrides from the form values
+		// Collect per-model overrides: only models belonging to THIS subscription
 		perModelConfigs := make(map[string]PerModelConfig)
-		if m.channel.modelLister != nil {
-			for _, mdl := range m.channel.modelLister.ListAllModels() {
-				pmOut, _ := strconv.Atoi(values["pm_"+mdl+"_max_output"])
-				pmCtx, _ := strconv.Atoi(values["pm_"+mdl+"_max_context"])
-				if pmOut > 0 || pmCtx > 0 {
-					perModelConfigs[mdl] = PerModelConfig{MaxOutputTokens: pmOut, MaxContext: pmCtx}
-				}
+		for mdl := range target.PerModelConfigs {
+			pmOut, _ := strconv.Atoi(values["pm_"+mdl+"_max_output"])
+			pmCtx, _ := strconv.Atoi(values["pm_"+mdl+"_max_context"])
+			if pmOut > 0 || pmCtx > 0 {
+				perModelConfigs[mdl] = PerModelConfig{MaxOutputTokens: pmOut, MaxContext: pmCtx}
+			}
+		}
+		// Also check the current model (may have been newly added)
+		if modelFromCombo := values["sub_model"]; modelFromCombo != "" {
+			pmOut, _ := strconv.Atoi(values["pm_"+modelFromCombo+"_max_output"])
+			pmCtx, _ := strconv.Atoi(values["pm_"+modelFromCombo+"_max_context"])
+			if pmOut > 0 || pmCtx > 0 {
+				perModelConfigs[modelFromCombo] = PerModelConfig{MaxOutputTokens: pmOut, MaxContext: pmCtx}
 			}
 		}
 		updated := &Subscription{

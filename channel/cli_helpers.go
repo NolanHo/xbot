@@ -115,11 +115,26 @@ func (m *cliModel) persistCLISettingsValues(values map[string]string) {
 				if perSessionSettingKeys[k] && m.chatID != "" {
 					if k == "max_context_tokens" {
 						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-							// Update max_context in session JSON atomically (preserves sub/model)
-							state := LoadSessionLLMState(m.workDir, m.chatID)
-							state.MaxContextTokens = n
-							SaveSessionLLMState(m.workDir, m.chatID, state)
 							m.cachedMaxContextTokens = n
+							// Write back to subscription's PerModelConfigs so ALL sessions
+							// using this (subscription + model) get the same value.
+							// max_context is a property of (subscription+model), not per-session.
+							if m.activeSubID != "" && m.cachedModelName != "" && m.subscriptionMgr != nil {
+								if subs, err := m.subscriptionMgr.List(""); err == nil {
+									for _, sub := range subs {
+										if sub.ID == m.activeSubID {
+											if sub.PerModelConfigs == nil {
+												sub.PerModelConfigs = make(map[string]PerModelConfig)
+											}
+											pmc := sub.PerModelConfigs[m.cachedModelName]
+											pmc.MaxContext = n
+											sub.PerModelConfigs[m.cachedModelName] = pmc
+											_ = m.subscriptionMgr.Update(sub.ID, &sub)
+											break
+										}
+									}
+								}
+							}
 						}
 					}
 					continue
@@ -1240,14 +1255,22 @@ func (m *cliModel) cacheTokenUsage(tu *protocol.TokenUsage) {
 }
 
 // resolveMaxContextTokens returns the max context tokens for the current session.
-// Delegates to ResolveEffectiveMaxContext — the single source of truth.
-// Priority: session JSON MaxContextTokens → subscription PerModelConfig → 0
+// max_context is a property of (subscription + model), stored in PerModelConfigs.
+// It is NOT a per-session setting — all sessions using the same (sub+model) see the same value.
 func (m *cliModel) resolveMaxContextTokens() int {
-	if m.chatID == "" || m.workDir == "" {
-		return 0
+	if m.activeSubID != "" && m.cachedModelName != "" && m.subscriptionMgr != nil {
+		if subs, err := m.subscriptionMgr.List(""); err == nil {
+			for _, sub := range subs {
+				if sub.ID == m.activeSubID {
+					if pmc, ok := sub.PerModelConfigs[m.cachedModelName]; ok && pmc.MaxContext > 0 {
+						return pmc.MaxContext
+					}
+					break
+				}
+			}
+		}
 	}
-	state := LoadSessionLLMState(m.workDir, m.chatID)
-	return ResolveEffectiveMaxContext(state, m.subscriptionMgr)
+	return 0
 }
 
 // applySessionLLMState applies a session's LLM state to the in-memory caches.

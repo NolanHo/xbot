@@ -1446,10 +1446,15 @@ func (m *cliModel) handleSwitchLLMDoneMsg(done cliSwitchLLMDoneMsg) (tea.Model, 
 			m.subGeneration++ // subscription actually changed
 			m.showTempStatus(fmt.Sprintf("Switched to: %s (%s)", done.subName, done.subModel))
 			// Build complete session LLM state and persist atomically.
-			// maxContext: use per-model config if available, else keep user's manual setting.
+			// maxContext resolution order:
+			//   1. Subscription's per-model config (done.maxCtx) — the subscription knows best
+			//   2. Existing session JSON value — user manually set this before switching
+			//   3. 0 — let schema DefaultValue (200000) apply
 			maxCtx := done.maxCtx
 			if maxCtx == 0 {
-				maxCtx = m.cachedMaxContextTokens // preserve user's manual setting
+				// Subscription has no per-model config. Check if session JSON has a user-set value.
+				existing := LoadSessionLLMState(m.workDir, m.chatID)
+				maxCtx = existing.MaxContextTokens
 			}
 			state := SessionLLMState{
 				SubscriptionID:   done.subID,

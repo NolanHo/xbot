@@ -2109,13 +2109,14 @@ func main() {
 			if oldName == "" {
 				return "", fmt.Errorf("session not found for chatID %q", chatID)
 			}
-			if err := ds.RenameSession(oldName, newName); err != nil {
+			actualName, err := ds.RenameSession(oldName, newName)
+			if err != nil {
 				return "", fmt.Errorf("rename local session: %w", err)
 			}
-			// Also update DB label via backend
+			// Also update DB label via backend (use actualName after dedup)
 			if app.backend != nil {
 				cs := sqlite.NewChatService(app.db.Conn())
-				if err := cs.RenameChat("cli", cliSenderID, chatID, newName); err != nil {
+				if err := cs.RenameChat("cli", cliSenderID, chatID, actualName); err != nil {
 					log.WithError(err).Warn("Failed to rename chat in DB")
 				}
 			}

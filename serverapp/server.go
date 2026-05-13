@@ -662,11 +662,27 @@ func Run(args []string) error {
 			if oldName == "" {
 				_, oldName = channel.ParseChatID(chatID)
 			}
+			// Deduplicate against all other CLI session labels in DB
+			finalName := channel.DeduplicateSessionName(newName, chatID, func() []channel.NameEntry {
+				rows, err := conn.Query(`SELECT chat_id, label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND label != ''`, cliSenderID)
+				if err != nil {
+					return nil
+				}
+				defer rows.Close()
+				var entries []channel.NameEntry
+				for rows.Next() {
+					var cid, lbl string
+					if err := rows.Scan(&cid, &lbl); err == nil {
+						entries = append(entries, channel.NameEntry{Name: lbl, ChatID: cid})
+					}
+				}
+				return entries
+			})
 			_, err := conn.Exec(`
 				INSERT INTO user_chats (channel, sender_id, chat_id, label)
 				VALUES ('cli', ?, ?, ?)
 				ON CONFLICT(channel, sender_id, chat_id) DO UPDATE SET label = ?`,
-				cliSenderID, chatID, newName, newName,
+				cliSenderID, chatID, finalName, finalName,
 			)
 			if err != nil {
 				return "", fmt.Errorf("rename chat in DB: %w", err)

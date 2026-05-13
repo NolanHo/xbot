@@ -460,7 +460,8 @@ func (b *Backend) AddSubscription(senderID string, sub protocol.Subscription) er
 			BaseURL: sub.BaseURL, APIKey: sub.APIKey,
 			Model: sub.Model, Active: sub.Active,
 			MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode,
-			PerModelConfigs: protocolToJSONPerModels(sub.PerModelConfigs),
+			// PerModelConfigs is now protocol.PerModelConfig alias — use directly.
+			PerModelConfigs: sub.PerModelConfigs,
 		},
 	}, nil)
 }
@@ -481,21 +482,10 @@ func (b *Backend) UpdateSubscription(id string, sub protocol.Subscription) error
 			BaseURL: sub.BaseURL, APIKey: sub.APIKey,
 			Model: sub.Model, Active: sub.Active,
 			MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode,
-			PerModelConfigs: protocolToJSONPerModels(sub.PerModelConfigs),
+			// PerModelConfigs is now protocol.PerModelConfig alias — use directly.
+			PerModelConfigs: sub.PerModelConfigs,
 		},
 	}, nil)
-}
-
-// protocolToJSONPerModels converts protocol.PerModelConfigs to perModelConfigJSON for RPC transport.
-func protocolToJSONPerModels(src map[string]protocol.PerModelConfig) map[string]perModelConfigJSON {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[string]perModelConfigJSON, len(src))
-	for k, v := range src {
-		dst[k] = perModelConfigJSON{MaxOutputTokens: v.MaxOutputTokens, MaxContext: v.MaxContext}
-	}
-	return dst
 }
 
 func (b *Backend) SetSubscriptionModel(id, model string) error {

@@ -186,15 +186,12 @@ func applyCLISettingsToBackend(backend agent.AgentBackend, senderID, chatID stri
 // isKnownNonRuntimeKey returns true for keys that don't need runtime handling
 // (UI-only, persistence-only, or action keys).
 func isKnownNonRuntimeKey(key string) bool {
-	switch key {
-	case "theme", "language", "runner_server", "runner_token", "runner_workspace",
-		"enable_stream", "enable_masking", "default_user", "privileged_user",
-		"subscription_manage", "runner_panel", "danger_zone",
-		"llm_provider", "llm_api_key", "llm_model", "llm_base_url",
-		"memory_window":
-		return true
+	// Keys not in AllSettingDefs are known non-runtime — use shared function.
+	isKnown := channel.IsKnownNonRuntimeKey(key)
+	if !isKnown {
+		log.WithField("key", key).Warn("setting key has no CLI handler and is not a known non-runtime key")
 	}
-	return false
+	return isKnown
 }
 
 // missingCLIHandlerKeys returns keys from channel.CLIRuntimeSettingKeys

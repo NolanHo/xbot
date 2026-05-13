@@ -973,16 +973,8 @@ func configSubToLLMSubscription(cs config.SubscriptionConfig) *sqlite.LLMSubscri
 		MaxOutputTokens: cs.MaxOutputTokens,
 		ThinkingMode:    cs.ThinkingMode,
 	}
-	// Convert config.PerModelConfig to sqlite.PerModelConfig
-	if len(cs.PerModelConfigs) > 0 {
-		sub.PerModelConfigs = make(map[string]sqlite.PerModelConfig, len(cs.PerModelConfigs))
-		for k, v := range cs.PerModelConfigs {
-			sub.PerModelConfigs[k] = sqlite.PerModelConfig{
-				MaxOutputTokens: v.MaxOutputTokens,
-				MaxContext:      v.MaxContext,
-			}
-		}
-	}
+	// PerModelConfigs are type-aliased — direct assignment.
+	sub.PerModelConfigs = cs.PerModelConfigs
 	return sub
 }
 

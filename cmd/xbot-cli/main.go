@@ -435,15 +435,8 @@ func currentActiveSubscription(backend agent.AgentBackend, cfg *config.Config) *
 	sourceSubs := localSeedSourceSubscriptions(cfg)
 	for i, sub := range sourceSubs {
 		if sub.Active || (i == 0 && !hasActiveSeedSubscription(sourceSubs)) {
-			return &channel.Subscription{
-				ID:       sub.ID,
-				Name:     sub.Name,
-				Provider: sub.Provider,
-				BaseURL:  sub.BaseURL,
-				APIKey:   sub.APIKey,
-				Model:    sub.Model,
-				Active:   true,
-			}
+			sub.Active = true
+			return &sub
 		}
 	}
 	return nil
@@ -2689,86 +2682,28 @@ type configSubscriptionManager struct {
 	tierSync func(config.LLMConfig) // called after subscription switch to re-sync tier models
 }
 
-// configToProtocolPerModels converts config.PerModelConfigs to protocol.PerModelConfigs.
-func configToProtocolPerModels(src map[string]config.PerModelConfig) map[string]protocol.PerModelConfig {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[string]protocol.PerModelConfig, len(src))
-	for k, v := range src {
-		dst[k] = protocol.PerModelConfig{MaxOutputTokens: v.MaxOutputTokens, MaxContext: v.MaxContext}
-	}
-	return dst
-}
-
-// protocolToConfigPerModels converts protocol.PerModelConfigs to config.PerModelConfigs.
-func protocolToConfigPerModels(src map[string]protocol.PerModelConfig) map[string]config.PerModelConfig {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[string]config.PerModelConfig, len(src))
-	for k, v := range src {
-		dst[k] = config.PerModelConfig{MaxOutputTokens: v.MaxOutputTokens, MaxContext: v.MaxContext}
-	}
-	return dst
-}
-
 func newConfigSubscriptionManager(cfg *config.Config, saveFn func() error, tierSync func(config.LLMConfig)) *configSubscriptionManager {
 	return &configSubscriptionManager{cfg: cfg, saveFn: saveFn, tierSync: tierSync}
 }
 
 func (m *configSubscriptionManager) List(_ string) ([]channel.Subscription, error) {
 	result := make([]channel.Subscription, len(m.cfg.Subscriptions))
-	for i, s := range m.cfg.Subscriptions {
-		result[i] = channel.Subscription{
-			ID:              s.ID,
-			Name:            s.Name,
-			Provider:        s.Provider,
-			BaseURL:         s.BaseURL,
-			APIKey:          s.APIKey,
-			Model:           s.Model,
-			MaxOutputTokens: s.MaxOutputTokens,
-			ThinkingMode:    s.ThinkingMode,
-			PerModelConfigs: configToProtocolPerModels(s.PerModelConfigs),
-			Active:          s.Active,
-		}
-	}
+	copy(result, m.cfg.Subscriptions)
 	return result, nil
 }
 
 func (m *configSubscriptionManager) GetDefault(_ string) (*channel.Subscription, error) {
 	for _, s := range m.cfg.Subscriptions {
 		if s.Active {
-			return &channel.Subscription{
-				ID:              s.ID,
-				Name:            s.Name,
-				Provider:        s.Provider,
-				BaseURL:         s.BaseURL,
-				APIKey:          s.APIKey,
-				Model:           s.Model,
-				MaxOutputTokens: s.MaxOutputTokens,
-				ThinkingMode:    s.ThinkingMode,
-				PerModelConfigs: configToProtocolPerModels(s.PerModelConfigs),
-				Active:          true,
-			}, nil
+			cp := s // return a copy
+			return &cp, nil
 		}
 	}
 	return nil, nil
 }
 
 func (m *configSubscriptionManager) Add(sub *channel.Subscription) error {
-	m.cfg.Subscriptions = append(m.cfg.Subscriptions, config.SubscriptionConfig{
-		ID:              sub.ID,
-		Name:            sub.Name,
-		Provider:        sub.Provider,
-		BaseURL:         sub.BaseURL,
-		APIKey:          sub.APIKey,
-		Model:           sub.Model,
-		MaxOutputTokens: sub.MaxOutputTokens,
-		ThinkingMode:    sub.ThinkingMode,
-		PerModelConfigs: protocolToConfigPerModels(sub.PerModelConfigs),
-		Active:          sub.Active,
-	})
+	m.cfg.Subscriptions = append(m.cfg.Subscriptions, *sub)
 	return m.saveFn()
 }
 
@@ -2838,17 +2773,12 @@ func (m *configSubscriptionManager) Rename(id, name string) error {
 func (m *configSubscriptionManager) Update(id string, sub *channel.Subscription) error {
 	for i := range m.cfg.Subscriptions {
 		if m.cfg.Subscriptions[i].ID == id {
-			m.cfg.Subscriptions[i].Name = sub.Name
-			m.cfg.Subscriptions[i].Provider = sub.Provider
-			m.cfg.Subscriptions[i].BaseURL = sub.BaseURL
-			// Never overwrite with a masked API key from server RPC.
-			if !strings.HasSuffix(sub.APIKey, "****") || len(sub.APIKey) > 20 {
-				m.cfg.Subscriptions[i].APIKey = sub.APIKey
+			// Preserve existing API key if the update contains a masked value.
+			savedKey := m.cfg.Subscriptions[i].APIKey
+			m.cfg.Subscriptions[i] = *sub
+			if strings.HasSuffix(sub.APIKey, "****") && len(sub.APIKey) <= 20 {
+				m.cfg.Subscriptions[i].APIKey = savedKey
 			}
-			m.cfg.Subscriptions[i].Model = sub.Model
-			m.cfg.Subscriptions[i].MaxOutputTokens = sub.MaxOutputTokens
-			m.cfg.Subscriptions[i].ThinkingMode = sub.ThinkingMode
-			m.cfg.Subscriptions[i].PerModelConfigs = protocolToConfigPerModels(sub.PerModelConfigs)
 			// If modifying active subscription, sync cfg.LLM
 			if m.cfg.Subscriptions[i].Active {
 				syncLLMFromActiveSub(m.cfg)

@@ -1,5 +1,7 @@
 package agent
 
+import "xbot/protocol"
+
 // RPC method name constants. Used by both Backend (client) and rpc_table (server)
 // to ensure method name consistency. Any typo is caught at compile time.
 const (
@@ -246,10 +248,7 @@ type channelSubscriptionJSON struct {
 	PerModelConfigs map[string]perModelConfigJSON `json:"per_model_configs,omitempty"`
 }
 
-type perModelConfigJSON struct {
-	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
-	MaxContext      int `json:"max_context,omitempty"`
-}
+type perModelConfigJSON = protocol.PerModelConfig
 
 // --- History ---
 

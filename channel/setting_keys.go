@@ -181,6 +181,15 @@ func IsUserScopedSettingKey(key string) bool {
 	return ok
 }
 
+// IsKnownNonRuntimeKey returns true for keys that don't need runtime handling
+// (UI-only, persistence-only, or action keys). These are keys NOT registered
+// in AllSettingDefs. Both CLI and Server use this to avoid warning logs for
+// known harmless keys.
+func IsKnownNonRuntimeKey(key string) bool {
+	_, inDefs := allSettingDefsMap[key]
+	return !inDefs
+}
+
 // IsGlobalScopedSettingKey returns true if the key has ScopeGlobal.
 func IsGlobalScopedSettingKey(key string) bool {
 	_, ok := scopeIndex[ScopeGlobal][key]

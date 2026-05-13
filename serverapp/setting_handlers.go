@@ -154,24 +154,13 @@ var settingHandlerRegistry = map[string]settingHandler{
 	"chat_center":      {},
 }
 
-// serverKnownNonRuntimeKeys are keys that may appear in DB settings but don't need
-// runtime handling. They should not trigger warning logs.
-var serverKnownNonRuntimeKeys = map[string]bool{
-	"theme": true, "language": true,
-	"runner_server": true, "runner_token": true, "runner_workspace": true,
-	"enable_stream": true, "enable_masking": true,
-	"default_user": true, "privileged_user": true,
-	// Legacy keys removed in v0.0.32+ — may still exist in DB from older versions.
-	"memory_window": true,
-}
-
 // applyRuntimeSetting applies a single setting change to the in-memory config and backend.
 // Used by admin RPC handler after the setting is persisted to DB.
 // For batch operations (startup sync), use applyRuntimeSettings instead.
 func applyRuntimeSetting(cfg *config.Config, backend agent.AgentBackend, senderID, key, value string) {
 	handler, ok := settingHandlerRegistry[key]
 	if !ok {
-		if !serverKnownNonRuntimeKeys[key] {
+		if !channel.IsKnownNonRuntimeKey(key) {
 			log.WithField("key", key).WithField("value", value).
 				Warn("applyRuntimeSetting: unhandled setting key, ignoring")
 		}
@@ -204,7 +193,7 @@ func applyRuntimeSettings(cfg *config.Config, backend agent.AgentBackend, sender
 		}
 		handler, ok := settingHandlerRegistry[k]
 		if !ok {
-			if !serverKnownNonRuntimeKeys[k] {
+			if !channel.IsKnownNonRuntimeKey(k) {
 				log.WithField("key", k).WithField("value", v).
 					Warn("applyRuntimeSettings: unhandled setting key, ignoring")
 			}

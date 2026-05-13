@@ -15,17 +15,14 @@ import (
 	"xbot/storage/sqlite"
 )
 
+// PerModelConfigs are already protocol.PerModelConfig (type alias), use directly.
 // sqliteSubToProtocol converts a sqlite.LLMSubscription to protocol.Subscription.
 func sqliteSubToProtocol(s *sqlite.LLMSubscription) protocol.Subscription {
-	pmc := make(map[string]protocol.PerModelConfig, len(s.PerModelConfigs))
-	for k, v := range s.PerModelConfigs {
-		pmc[k] = protocol.PerModelConfig{MaxOutputTokens: v.MaxOutputTokens, MaxContext: v.MaxContext}
-	}
 	return protocol.Subscription{
 		ID: s.ID, Name: s.Name, Provider: s.Provider,
 		BaseURL: s.BaseURL, APIKey: s.APIKey, Model: s.Model, Active: s.IsDefault,
 		MaxOutputTokens: s.MaxOutputTokens, ThinkingMode: s.ThinkingMode,
-		PerModelConfigs: pmc,
+		PerModelConfigs: s.PerModelConfigs,
 	}
 }
 
@@ -586,13 +583,8 @@ func (t *localTransport) registerHandlers() {
 			MaxContext: existing.MaxContext, MaxOutputTokens: r.Sub.MaxOutputTokens,
 			ThinkingMode: r.Sub.ThinkingMode, IsDefault: r.Sub.Active,
 		}
-		// Convert per-model configs from RPC JSON type to sqlite types
-		if len(r.Sub.PerModelConfigs) > 0 {
-			dbSub.PerModelConfigs = make(map[string]sqlite.PerModelConfig, len(r.Sub.PerModelConfigs))
-			for k, v := range r.Sub.PerModelConfigs {
-				dbSub.PerModelConfigs[k] = sqlite.PerModelConfig{MaxOutputTokens: v.MaxOutputTokens, MaxContext: v.MaxContext}
-			}
-		}
+		// PerModelConfigs is now type-aliased — direct assignment.
+		dbSub.PerModelConfigs = r.Sub.PerModelConfigs
 		// Never overwrite with a masked key from server RPC transport.
 		if strings.HasSuffix(dbSub.APIKey, "****") && len(dbSub.APIKey) <= 20 {
 			dbSub.APIKey = existing.APIKey

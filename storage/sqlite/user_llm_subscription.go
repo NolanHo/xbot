@@ -9,14 +9,12 @@ import (
 
 	"xbot/crypto"
 	log "xbot/logger"
+	"xbot/protocol"
 )
 
 // PerModelConfig stores per-model token overrides within a subscription.
-// When set, these values take priority over the subscription-level defaults.
-type PerModelConfig struct {
-	MaxOutputTokens int `json:"max_output_tokens,omitempty"` // 0 = use subscription default
-	MaxContext      int `json:"max_context,omitempty"`       // 0 = use subscription default
-}
+// Alias to protocol.PerModelConfig — the canonical definition used across all packages.
+type PerModelConfig = protocol.PerModelConfig
 
 // LLMSubscription represents a user's LLM provider subscription.
 type LLMSubscription struct {

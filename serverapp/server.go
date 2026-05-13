@@ -22,6 +22,7 @@ import (
 	log "xbot/logger"
 	"xbot/oauth"
 	"xbot/oauth/providers"
+	"xbot/protocol"
 	"xbot/storage"
 	"xbot/storage/sqlite"
 	"xbot/tools"
@@ -691,6 +692,16 @@ func Run(args []string) error {
 		})
 	}
 	backend.Agent().SetMessageSender(disp)
+	// Inject sessionStateHandler so server-side agent can push busy/idle
+	// and SubAgent lifecycle events to remote CLI clients via WS.
+	// One-time channel resolution (same pattern as buildCLIProgressEventHandler).
+	if ch, ok := disp.GetChannel("cli"); ok {
+		if remoteCLICh, ok := ch.(*channel.RemoteCLIChannel); ok {
+			backend.Agent().SetSessionStateHandler(func(ev protocol.SessionEvent) {
+				remoteCLICh.SendSessionState(ev)
+			})
+		}
+	}
 	backend.Agent().SetAgentChannelRegistry(
 		func(name string, runFn bus.RunFn) error {
 			ac := channel.NewAgentChannel(name, runFn)

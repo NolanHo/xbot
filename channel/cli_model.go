@@ -407,6 +407,7 @@ func (m *cliModel) restoreSession() {
 			m.todos = nil
 			m.todosDoneCleared = false
 		}
+		m.updatePlaceholder()
 		delete(m.savedSessions, key) // clean up
 	} else {
 		// No saved state — reset to idle (NOT cancelled)
@@ -462,6 +463,7 @@ func (m *cliModel) restoreSession() {
 			m.todos = nil
 			m.todosDoneCleared = false
 		}
+		m.updatePlaceholder()
 	}
 }
 

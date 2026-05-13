@@ -2531,19 +2531,9 @@ func main() {
 		}(), app.cfg.LLM.Provider)
 	}
 
-	// Multi-subscription support
-	if app.backend.IsRemote() {
-		// Remote mode: use RPC-backed subscription manager
-		cliCh.SetSubscriptionManager(newRemoteSubscriptionManager(app.backend))
-		cliCh.SetLLMSubscriber(newRemoteLLMSubscriber(app.backend))
-	} else {
-		if err := seedLocalDBSubscriptions(app.backend, app.cfg); err != nil {
-			log.WithError(err).Warn("Failed to seed local DB subscriptions")
-		}
-		loadLLMFromDBSubscription(app.backend, app.cfg)
-		cliCh.SetSubscriptionManager(newLocalSubscriptionManager(app.backend))
-		cliCh.SetLLMSubscriber(newLocalLLMSubscriber(app.backend))
-	}
+	// Multi-subscription support (unified for both local and remote modes)
+	cliCh.SetSubscriptionManager(newBackendSubscriptionManager(app.backend))
+	cliCh.SetLLMSubscriber(newBackendLLMSubscriber(app.backend))
 
 	// --share flag: auto-connect as runner after TUI starts
 	if flagShare != "" {
@@ -2616,213 +2606,7 @@ func (l *cliModelLister) ListAllModels() []string {
 	return result
 }
 
-type localSubscriptionManager struct {
-	backend agent.AgentBackend
-}
-
-func newLocalSubscriptionManager(backend agent.AgentBackend) *localSubscriptionManager {
-	return &localSubscriptionManager{backend: backend}
-}
-
-func (m *localSubscriptionManager) List(senderID string) ([]channel.Subscription, error) {
-	if senderID == "" {
-		senderID = cliSenderID
-	}
-	return m.backend.ListSubscriptions(senderID)
-}
-
-func (m *localSubscriptionManager) GetDefault(senderID string) (*channel.Subscription, error) {
-	if senderID == "" {
-		senderID = cliSenderID
-	}
-	return m.backend.GetDefaultSubscription(senderID)
-}
-
-func (m *localSubscriptionManager) Add(sub *channel.Subscription) error {
-	return m.backend.AddSubscription(cliSenderID, *sub)
-}
-
-func (m *localSubscriptionManager) Remove(id string) error {
-	return m.backend.RemoveSubscription(id)
-}
-
-func (m *localSubscriptionManager) SetDefault(id, chatID string) error {
-	return m.backend.SetDefaultSubscription(id, chatID)
-}
-
-func (m *localSubscriptionManager) SetModel(id, model string) error {
-	return m.backend.SetSubscriptionModel(id, model)
-}
-
-func (m *localSubscriptionManager) Rename(id, name string) error {
-	return m.backend.RenameSubscription(id, name)
-}
-
-func (m *localSubscriptionManager) Update(id string, sub *channel.Subscription) error {
-	return m.backend.UpdateSubscription(id, *sub)
-}
-
-type localLLMSubscriber struct {
-	backend agent.AgentBackend
-}
-
-func newLocalLLMSubscriber(backend agent.AgentBackend) *localLLMSubscriber {
-	return &localLLMSubscriber{backend: backend}
-}
-
-func (s *localLLMSubscriber) SwitchSubscription(senderID string, sub *channel.Subscription, chatID string) error {
-	if sub == nil {
-		return nil
-	}
-	return s.backend.SetDefaultSubscription(sub.ID, chatID)
-}
-
-func (s *localLLMSubscriber) SwitchModel(senderID, model, chatID string) {
-	if senderID == "" {
-		senderID = cliSenderID
-	}
-	if err := s.backend.SwitchModel(senderID, model, chatID); err != nil {
-		log.WithError(err).Warn("localLLMSubscriber: SwitchModel failed")
-	}
-}
-
-func (s *localLLMSubscriber) GetDefaultModel() string {
-	return s.backend.GetDefaultModel()
-}
-
-// configSubscriptionManager manages CLI subscriptions in config.json (no database).
-type configSubscriptionManager struct {
-	cfg      *config.Config
-	saveFn   func() error           // persists config to disk
-	tierSync func(config.LLMConfig) // called after subscription switch to re-sync tier models
-}
-
-func newConfigSubscriptionManager(cfg *config.Config, saveFn func() error, tierSync func(config.LLMConfig)) *configSubscriptionManager {
-	return &configSubscriptionManager{cfg: cfg, saveFn: saveFn, tierSync: tierSync}
-}
-
-func (m *configSubscriptionManager) List(_ string) ([]channel.Subscription, error) {
-	result := make([]channel.Subscription, len(m.cfg.Subscriptions))
-	copy(result, m.cfg.Subscriptions)
-	return result, nil
-}
-
-func (m *configSubscriptionManager) GetDefault(_ string) (*channel.Subscription, error) {
-	for _, s := range m.cfg.Subscriptions {
-		if s.Active {
-			cp := s // return a copy
-			return &cp, nil
-		}
-	}
-	return nil, nil
-}
-
-func (m *configSubscriptionManager) Add(sub *channel.Subscription) error {
-	m.cfg.Subscriptions = append(m.cfg.Subscriptions, *sub)
-	return m.saveFn()
-}
-
-func (m *configSubscriptionManager) Remove(id string) error {
-	filtered := m.cfg.Subscriptions[:0]
-	for _, s := range m.cfg.Subscriptions {
-		if s.ID != id {
-			filtered = append(filtered, s)
-		}
-	}
-	if len(filtered) == len(m.cfg.Subscriptions) {
-		return fmt.Errorf("subscription %s not found", id)
-	}
-	m.cfg.Subscriptions = filtered
-	return m.saveFn()
-}
-
-func (m *configSubscriptionManager) SetDefault(id, chatID string) error {
-	found := false
-	for i := range m.cfg.Subscriptions {
-		if m.cfg.Subscriptions[i].ID == id {
-			m.cfg.Subscriptions[i].Active = true
-			found = true
-		} else {
-			m.cfg.Subscriptions[i].Active = false
-		}
-	}
-	if !found {
-		return fmt.Errorf("subscription %s not found", id)
-	}
-	// Derive cfg.LLM from new active subscription
-	syncLLMFromActiveSub(m.cfg)
-	// Re-sync model tiers (tier fields are global, not per-subscription)
-	if m.tierSync != nil {
-		m.tierSync(m.cfg.LLM)
-	}
-	return m.saveFn()
-}
-
-func (m *configSubscriptionManager) SetModel(id, model string) error {
-	for i := range m.cfg.Subscriptions {
-		if m.cfg.Subscriptions[i].ID == id {
-			m.cfg.Subscriptions[i].Model = model
-			// If modifying active subscription, sync cfg.LLM
-			if m.cfg.Subscriptions[i].Active {
-				syncLLMFromActiveSub(m.cfg)
-				if m.tierSync != nil {
-					m.tierSync(m.cfg.LLM)
-				}
-			}
-			return m.saveFn()
-		}
-	}
-	return fmt.Errorf("subscription %s not found", id)
-}
-
-func (m *configSubscriptionManager) Rename(id, name string) error {
-	for i := range m.cfg.Subscriptions {
-		if m.cfg.Subscriptions[i].ID == id {
-			m.cfg.Subscriptions[i].Name = name
-			return m.saveFn()
-		}
-	}
-	return fmt.Errorf("subscription %s not found", id)
-}
-
-func (m *configSubscriptionManager) Update(id string, sub *channel.Subscription) error {
-	for i := range m.cfg.Subscriptions {
-		if m.cfg.Subscriptions[i].ID == id {
-			existing := m.cfg.Subscriptions[i]
-			// Preserve credentials: only accept real (non-masked) values from client.
-			if sub.APIKey != "" && !strings.HasSuffix(sub.APIKey, "****") {
-				existing.APIKey = sub.APIKey
-			}
-			if strings.TrimSpace(sub.Provider) != "" && !strings.Contains(sub.Provider, "****") {
-				existing.Provider = sub.Provider
-			}
-			if strings.TrimSpace(sub.BaseURL) != "" && !strings.Contains(sub.BaseURL, "****") {
-				existing.BaseURL = sub.BaseURL
-			}
-			if strings.TrimSpace(sub.Name) != "" {
-				existing.Name = sub.Name
-			}
-			if strings.TrimSpace(sub.Model) != "" {
-				existing.Model = sub.Model
-			}
-			existing.MaxOutputTokens = sub.MaxOutputTokens
-			existing.ThinkingMode = sub.ThinkingMode
-			if sub.PerModelConfigs != nil {
-				existing.PerModelConfigs = sub.PerModelConfigs
-			}
-			m.cfg.Subscriptions[i] = existing
-			// If modifying active subscription, sync cfg.LLM
-			if m.cfg.Subscriptions[i].Active {
-				syncLLMFromActiveSub(m.cfg)
-				if m.tierSync != nil {
-					m.tierSync(m.cfg.LLM)
-				}
-			}
-			return m.saveFn()
-		}
-	}
-	return fmt.Errorf("subscription %s not found", id)
-}
+// backendSubscriptionManager / backendLLMSubscriber defined in init_backend.go
 
 // syncLLMFromActiveSub derives cfg.LLM.* from the active config subscription.
 // It is still used by legacy config-backed helper paths and migration logic.
@@ -2970,73 +2754,80 @@ func (l *remoteModelLister) ListAllModels() []string {
 	return l.backend.ListAllModels()
 }
 
-// remoteSubscriptionManager implements channel.SubscriptionManager via RPC.
-type remoteSubscriptionManager struct {
+// backendSubscriptionManager implements channel.SubscriptionManager via Backend interface.
+// Works identically for both local (localTransport → DB) and remote (WS RPC → server DB) modes.
+type backendSubscriptionManager struct {
 	backend agent.AgentBackend
 }
 
-func newRemoteSubscriptionManager(backend agent.AgentBackend) *remoteSubscriptionManager {
-	return &remoteSubscriptionManager{backend: backend}
+func newBackendSubscriptionManager(backend agent.AgentBackend) *backendSubscriptionManager {
+	return &backendSubscriptionManager{backend: backend}
 }
 
-func (m *remoteSubscriptionManager) List(senderID string) ([]channel.Subscription, error) {
+func (m *backendSubscriptionManager) List(senderID string) ([]channel.Subscription, error) {
+	if senderID == "" {
+		senderID = cliSenderID
+	}
 	return m.backend.ListSubscriptions(senderID)
 }
 
-func (m *remoteSubscriptionManager) GetDefault(senderID string) (*channel.Subscription, error) {
+func (m *backendSubscriptionManager) GetDefault(senderID string) (*channel.Subscription, error) {
+	if senderID == "" {
+		senderID = cliSenderID
+	}
 	return m.backend.GetDefaultSubscription(senderID)
 }
 
-func (m *remoteSubscriptionManager) Add(sub *channel.Subscription) error {
-	return m.backend.AddSubscription("cli_user", *sub)
+func (m *backendSubscriptionManager) Add(sub *channel.Subscription) error {
+	return m.backend.AddSubscription(cliSenderID, *sub)
 }
 
-func (m *remoteSubscriptionManager) Remove(id string) error {
+func (m *backendSubscriptionManager) Remove(id string) error {
 	return m.backend.RemoveSubscription(id)
 }
 
-func (m *remoteSubscriptionManager) SetDefault(id, chatID string) error {
+func (m *backendSubscriptionManager) SetDefault(id, chatID string) error {
 	return m.backend.SetDefaultSubscription(id, chatID)
 }
 
-func (m *remoteSubscriptionManager) SetModel(id, model string) error {
+func (m *backendSubscriptionManager) SetModel(id, model string) error {
 	return m.backend.SetSubscriptionModel(id, model)
 }
 
-func (m *remoteSubscriptionManager) Rename(id, name string) error {
+func (m *backendSubscriptionManager) Rename(id, name string) error {
 	return m.backend.RenameSubscription(id, name)
 }
 
-func (m *remoteSubscriptionManager) Update(id string, sub *channel.Subscription) error {
+func (m *backendSubscriptionManager) Update(id string, sub *channel.Subscription) error {
 	return m.backend.UpdateSubscription(id, *sub)
 }
 
-// remoteLLMSubscriber implements channel.LLMSubscriber via RPC.
-type remoteLLMSubscriber struct {
+// backendLLMSubscriber implements channel.LLMSubscriber via Backend interface.
+// Works identically for both local and remote modes.
+type backendLLMSubscriber struct {
 	backend agent.AgentBackend
 }
 
-func newRemoteLLMSubscriber(backend agent.AgentBackend) *remoteLLMSubscriber {
-	return &remoteLLMSubscriber{backend: backend}
+func newBackendLLMSubscriber(backend agent.AgentBackend) *backendLLMSubscriber {
+	return &backendLLMSubscriber{backend: backend}
 }
 
-func (s *remoteLLMSubscriber) SwitchSubscription(senderID string, sub *channel.Subscription, chatID string) error {
+func (s *backendLLMSubscriber) SwitchSubscription(senderID string, sub *channel.Subscription, chatID string) error {
 	if sub == nil {
 		return nil
 	}
-	// Server-side set_default_subscription invalidates the LLM cache so
-	// the next GetLLM call picks up the new subscription's provider/model/credentials.
-	// Do NOT call SetUserModel here — it would create a conflicting LLMConfig
-	// that overrides the subscription's model.
 	return s.backend.SetDefaultSubscription(sub.ID, chatID)
 }
 
-func (s *remoteLLMSubscriber) SwitchModel(senderID, model, chatID string) {
+func (s *backendLLMSubscriber) SwitchModel(senderID, model, chatID string) {
+	if senderID == "" {
+		senderID = cliSenderID
+	}
 	if err := s.backend.SwitchModel(senderID, model, chatID); err != nil {
-		log.WithError(err).Warn("remoteLLMSubscriber: SwitchModel RPC failed")
+		log.WithError(err).Warn("backendLLMSubscriber: SwitchModel failed")
 	}
 }
 
-func (s *remoteLLMSubscriber) GetDefaultModel() string {
+func (s *backendLLMSubscriber) GetDefaultModel() string {
 	return s.backend.GetDefaultModel()
 }

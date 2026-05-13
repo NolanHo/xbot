@@ -95,10 +95,13 @@ func TestSubscriptionPersistence(t *testing.T) {
 		t.Errorf("expected active subscription 'copilot', got %q", activeName)
 	}
 
-	// Simulate SetDefault to switch to "default"
-	mgr := newConfigSubscriptionManager(cfg, saveFn, nil)
-	if err := mgr.SetDefault("default", ""); err != nil {
-		t.Fatalf("SetDefault: %v", err)
+	// Simulate SetDefault to switch to "default" — directly toggle Active flag
+	// (configSubscriptionManager has been removed; this is the same logic)
+	for i := range cfg.Subscriptions {
+		cfg.Subscriptions[i].Active = cfg.Subscriptions[i].ID == "default"
+	}
+	if err := saveFn(); err != nil {
+		t.Fatalf("save after SetDefault: %v", err)
 	}
 
 	// Reload and verify

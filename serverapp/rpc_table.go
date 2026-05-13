@@ -1221,6 +1221,7 @@ func subToChannel(s *sqlite.LLMSubscription) channel.Subscription {
 		BaseURL: s.BaseURL, APIKey: maskAPIKey(s.APIKey),
 		Model: s.Model, Active: s.IsDefault,
 		MaxOutputTokens: s.MaxOutputTokens, ThinkingMode: s.ThinkingMode,
+		PerModelConfigs: s.PerModelConfigs,
 	}
 }
 

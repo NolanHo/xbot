@@ -563,6 +563,12 @@ func updateActiveSubscription(backend agent.AgentBackend, cfg *config.Config, va
 		sub.ThinkingMode = v
 	}
 
+	// Preserve PerModelConfigs — never overwrite with nil (would destroy per-model overrides
+	// written by saveSettings or sub panel). Merge existing values on top.
+	if sub.PerModelConfigs == nil {
+		sub.PerModelConfigs = make(map[string]channel.PerModelConfig)
+	}
+
 	log.Debugf("[Settings] UpdateSubscription: id=%s max_output_tokens=%d thinking_mode=%q", sub.ID, sub.MaxOutputTokens, sub.ThinkingMode)
 	return backend.UpdateSubscription(sub.ID, *sub)
 }

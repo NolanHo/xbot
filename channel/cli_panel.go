@@ -3477,19 +3477,20 @@ func (m *cliModel) showSessionCreateDialog() tea.Cmd {
 
 // deleteLocalSession deletes the selected session and switches to default if active.
 func (m *cliModel) deleteLocalSession(entry SessionPanelEntry) tea.Cmd {
-	// 1. Delete from backend DB FIRST. If this fails, local JSON stays intact
-	// so the user can retry — preventing the inconsistent state where local
-	// JSON is cleaned but DB tenant persists.
+	// 1. Try to delete from backend DB. Ignore "not found" errors — the session
+	// may be local-only (created in CLI JSON but never synced to server/runner).
 	if m.channel != nil && m.channel.config.SessionsDeleteFn != nil {
 		if err := m.channel.config.SessionsDeleteFn("cli", entry.ID); err != nil {
-			log.WithError(err).WithField("chatID", entry.ID).Warn("Backend session delete failed")
-			m.showTempStatus(fmt.Sprintf("Delete failed: %v", err))
-			return nil
+			errMsg := err.Error()
+			if !strings.Contains(errMsg, "not found") {
+				log.WithError(err).WithField("chatID", entry.ID).Warn("Backend session delete failed")
+				m.showTempStatus(fmt.Sprintf("Delete failed: %v", err))
+				return nil
+			}
+			// "not found" is fine — session is local-only, proceed to clean local JSON
 		}
 	}
-	// 2. Remove from local JSON file (only after DB delete succeeded).
-	// Use entry.ID (chatID) for matching, not entry.Label — the display label
-	// may have been renamed in DB but local JSON still has the original auto-name.
+	// 2. Remove from local JSON file (always, regardless of backend result).
 	ds, err := LoadDirSessions(m.workDir)
 	if err == nil {
 		if err := ds.removeSessionByChatID(entry.ID); err != nil {

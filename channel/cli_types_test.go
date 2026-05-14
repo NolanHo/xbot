@@ -6,6 +6,7 @@
 package channel
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -194,6 +195,46 @@ func TestHardWrapRunes_DoubleWidthAtBoundary(t *testing.T) {
 	}
 	if lines[1] != "好" {
 		t.Errorf("line 2: expected %q, got %q", "好", lines[1])
+	}
+}
+
+func TestHardWrapRunes_CJKEnglishMix(t *testing.T) {
+	// "阿道夫·希特勒（Adolf Hitler）" mixed CJK + English.
+	// At width 10, should break at CJK boundaries, not mid-English-word.
+	input := "阿道夫·希特勒（Adolf Hitler）"
+	got := hardWrapRunes(input, 10)
+	lines := splitLines(got)
+	for i, line := range lines {
+		w := ansi.StringWidth(line)
+		if w > 10 {
+			t.Errorf("line %d: width %d exceeds 10: %q", i, w, line)
+		}
+	}
+	// Verify no English word is split across lines (e.g. "Adolf\nHitler")
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, " ")
+		if strings.HasSuffix(trimmed, "Adol") || strings.HasSuffix(trimmed, "Hitle") {
+			t.Errorf("English word split across lines: %q", line)
+		}
+	}
+}
+
+func TestHardWrapRunes_SpaceBreak(t *testing.T) {
+	// "hello world foo" at width 8 → break at space after "hello"
+	got := hardWrapRunes("hello world foo", 8)
+	lines := splitLines(got)
+	if len(lines) < 2 {
+		t.Fatalf("expected >= 2 lines, got %d: %v", len(lines), lines)
+	}
+	// First line should be "hello " (break at space, space stays on line 1)
+	if !strings.HasPrefix(lines[0], "hello") {
+		t.Errorf("line 1: expected to start with 'hello', got %q", lines[0])
+	}
+	// "world" should not be split
+	for _, line := range lines {
+		if strings.Contains(line, "wor") && !strings.Contains(line, "world") && !strings.Contains(line, "world ") {
+			t.Errorf("word 'world' was split: %q", line)
+		}
 	}
 }
 

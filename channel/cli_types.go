@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 	"xbot/bus"
 	"xbot/llm"
 	"xbot/plugin"
@@ -74,6 +75,11 @@ func truncateToWidth(s string, maxWidth int) string {
 // hardWrapRunes wraps a line at maxW columns, breaking at character boundaries.
 // ANSI escape sequences are preserved across wrapped segments.
 // Returns the original line if it fits within maxW.
+//
+// Break rules:
+//   - Break after any space (space stays on current line, next line starts clean).
+//   - Break after any CJK character (CJK chars can wrap at any boundary).
+//   - Otherwise break at the exact column boundary.
 func hardWrapRunes(line string, maxW int) string {
 	if maxW <= 0 {
 		return line
@@ -85,6 +91,8 @@ func hardWrapRunes(line string, maxW int) string {
 	var buf strings.Builder
 	w := 0
 	inEscape := false
+	lastBreakable := -1 // byte offset in buf of last position where we can break after
+
 	for _, r := range line {
 		if r == '\x1b' {
 			inEscape = true
@@ -99,18 +107,34 @@ func hardWrapRunes(line string, maxW int) string {
 			continue
 		}
 		rw := ansi.StringWidth(string(r))
-		// Safety: if a rune has zero display width (combining chars, control
-		// chars, zero-width joiners), still emit it but don't let it block
-		// line wrapping.  Without this, a run of zero-width runes causes
-		// w to never reach maxW → infinite loop → CPU 100% freeze.
+		// Safety: zero-width runes don't block wrapping.
 		if rw == 0 {
 			buf.WriteRune(r)
 			continue
 		}
+
+		// Mark breakable positions: after space or after CJK character
+		if r == ' ' || isCJK(r) {
+			lastBreakable = buf.Len() + utf8.RuneLen(r)
+		}
+
 		if w+rw > maxW {
-			lines = append(lines, buf.String())
-			buf.Reset()
-			w = 0
+			if lastBreakable > 0 && lastBreakable < buf.Len() {
+				// Break at last breakable position
+				keep := buf.String()[:lastBreakable]
+				rest := buf.String()[lastBreakable:]
+				lines = append(lines, keep)
+				buf.Reset()
+				buf.WriteString(rest)
+				w = lipgloss.Width(rest)
+				lastBreakable = -1
+			} else {
+				// No breakable position found, hard break here
+				lines = append(lines, buf.String())
+				buf.Reset()
+				w = 0
+				lastBreakable = -1
+			}
 		}
 		buf.WriteRune(r)
 		w += rw

@@ -768,7 +768,11 @@ func (m *cliModel) handleAgentMessage(msg bus.OutboundMessage) {
 
 	// Empty content with no waiting user: end turn and flush queue,
 	// but don't append a blank message.
-	if content == "" && !msg.WaitingUser && len(msg.ToolsUsed) == 0 {
+	// Guard: when AskUser panel is open, the turn is paused (not ended).
+	// A late-arriving empty-content outbound (e.g. from engine cleanup) must
+	// not trigger endAgentTurn, which clears iterationHistory and makes all
+	// previous iterations disappear from the viewport.
+	if content == "" && !msg.WaitingUser && len(msg.ToolsUsed) == 0 && m.panelMode != "askuser" {
 		// Persist token usage before clearing progress
 		if m.progress != nil {
 			m.cacheTokenUsage(m.progress.TokenUsage)
@@ -958,6 +962,19 @@ func (m *cliModel) handleAgentMessage(msg bus.OutboundMessage) {
 						answerParts = append(answerParts, fmt.Sprintf("  %s → %s", item.Question, ans))
 					}
 					m.showSystemMsg(strings.Join(answerParts, "\n"), feedbackInfo)
+					// Persist pre-AskUser iteration history before startAgentTurn clears it.
+					// Without this, iterations 1..N from the first run disappear when
+					// resetProgressState sets m.iterationHistory = nil.
+					if len(m.iterationHistory) > 0 {
+						m.upsertMessageByTurn(turnID, "tool_summary", cliMessage{
+							role:       "tool_summary",
+							content:    "",
+							timestamp:  time.Now(),
+							iterations: append([]cliIterationSnapshot{}, m.iterationHistory...),
+							dirty:      true,
+							turnID:     turnID,
+						})
+					}
 					m.startAgentTurn()
 					m.updateViewportContent()
 				}, func() {

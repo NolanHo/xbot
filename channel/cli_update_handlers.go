@@ -377,7 +377,11 @@ func (m *cliModel) handleProgressMsg(msg cliProgressMsg) {
 	// Guard: !suLoading — during session switch in remote mode, progress events
 	// from the old session may arrive before the RPC reconciles state. Starting
 	// a turn here would create an inconsistent state with no message history loaded.
-	if !m.typing && !m.suLoading && msg.payload != nil && msg.payload.Phase != "done" {
+	// Guard: panelMode != "askuser" — AskUser panel sets m.typing=false but the
+	// turn is paused (not ended). Late progress events from the engine must not
+	// trigger startAgentTurn → resetProgressState, which clears iterationHistory
+	// and makes all previous iterations disappear.
+	if !m.typing && !m.suLoading && msg.payload != nil && msg.payload.Phase != "done" && m.panelMode != "askuser" {
 		log.WithFields(log.Fields{
 			"phase":     msg.payload.Phase,
 			"iteration": msg.payload.Iteration,

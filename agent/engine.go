@@ -1081,6 +1081,18 @@ func buildToolContext(ctx context.Context, cfg *RunConfig) *tools.ToolContext {
 			"hasRemote": cfg.RemoteTUICtrlFn != nil,
 		}).Debug("buildToolContext: no TUI control callback available")
 	}
+
+	// Inject reload callbacks for plugins and hooks (used by tui_control reload actions)
+	if cfg.PluginManager != nil {
+		pm := cfg.PluginManager
+		tc.PluginReloader = func() error {
+			return pm.ReloadAll(context.Background())
+		}
+	}
+	if cfg.HookManager != nil {
+		hm := cfg.HookManager
+		tc.HooksReloader = hm.ReloadConfig
+	}
 	// Config read/write: from SettingsSvc (works everywhere: local + remote via RPC)
 	if cfg.SettingsSvc != nil {
 		svc := cfg.SettingsSvc

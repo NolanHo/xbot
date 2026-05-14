@@ -422,6 +422,7 @@ func (m *cliModel) applyThemeAndRebuild(theme string) {
 	setTheme(theme)
 	// Rebuild styles cache (same as themeChangeCh handler in Update)
 	m.styles = buildStyles(m.width)
+	m.invalidateLayoutCache() // sidebar styles may have changed
 	applyTAStyles(&m.textarea, &m.styles)
 	m.ticker.style = lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.Warning))
 	// Rebuild glamour renderer

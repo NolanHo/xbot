@@ -2168,13 +2168,14 @@ func (m *cliModel) setViewportContent(content string) {
 	// Deduplicate: skip if content and width haven't changed.
 	// During resize storms or high-frequency ticks (busy state), this prevents
 	// O(N*W) hardWrapRunes from running every 100ms on the same content.
-	if content == m.lastViewportContent && m.chatWidth() == m.lastViewportWidth && m.ready {
+	cw := m.chatWidth()
+	if content == m.lastViewportContent && cw == m.lastViewportWidth && m.ready {
 		return
 	}
 	m.lastViewportContent = content
-	m.lastViewportWidth = m.chatWidth()
+	m.lastViewportWidth = cw
 
-	if m.chatWidth() > 0 {
+	if cw > 0 {
 		// Two-tier wrap: find the cachedHistory boundary in content.
 		// The history portion is stable (doesn't change between ticks) — reuse
 		// its wrapped version to avoid O(N*W) hardWrapRunes on the growing history.
@@ -2183,7 +2184,7 @@ func (m *cliModel) setViewportContent(content string) {
 			historyEnd = len(m.cachedHistory)
 		}
 
-		if historyEnd > 0 && m.cachedWrappedHistoryRaw == m.cachedHistory && m.cachedWrappedHistoryWidth == m.chatWidth() {
+		if historyEnd > 0 && m.cachedWrappedHistoryRaw == m.cachedHistory && m.cachedWrappedHistoryWidth == cw {
 			// Fast path: reuse wrapped history, only wrap the dynamic suffix
 			wrappedHistory := m.cachedWrappedHistory
 			dynamicPart := content[historyEnd:]
@@ -2198,7 +2199,7 @@ func (m *cliModel) setViewportContent(content string) {
 							line = trimmed
 						}
 					}
-					wrappedDynamic = append(wrappedDynamic, strings.Split(hardWrapRunes(line, m.chatWidth()), "\n")...)
+					wrappedDynamic = append(wrappedDynamic, strings.Split(hardWrapRunes(line, cw), "\n")...)
 				}
 			}
 			content = wrappedHistory + strings.Join(wrappedDynamic, "\n")
@@ -2208,9 +2209,6 @@ func (m *cliModel) setViewportContent(content string) {
 			var wrapped []string
 			historyLineCount := 0
 			if historyEnd > 0 {
-				// cachedHistory always ends with \n (message rendering appends it).
-				// strings.Count("\n") already equals the line count in that case.
-				// Only add 1 if cachedHistory has no trailing newline (shouldn't happen in practice).
 				historyLineCount = strings.Count(m.cachedHistory, "\n")
 				if len(m.cachedHistory) > 0 && m.cachedHistory[len(m.cachedHistory)-1] != '\n' {
 					historyLineCount++
@@ -2226,7 +2224,7 @@ func (m *cliModel) setViewportContent(content string) {
 						line = trimmed
 					}
 				}
-				wrappedLines := strings.Split(hardWrapRunes(line, m.chatWidth()), "\n")
+				wrappedLines := strings.Split(hardWrapRunes(line, cw), "\n")
 				if i < historyLineCount {
 					wrappedHistoryParts = append(wrappedHistoryParts, wrappedLines...)
 				}
@@ -2237,7 +2235,7 @@ func (m *cliModel) setViewportContent(content string) {
 			if historyEnd > 0 && len(wrappedHistoryParts) > 0 {
 				m.cachedWrappedHistory = strings.Join(wrappedHistoryParts, "\n") + "\n"
 				m.cachedWrappedHistoryRaw = m.cachedHistory
-				m.cachedWrappedHistoryWidth = m.chatWidth()
+				m.cachedWrappedHistoryWidth = cw
 			}
 		}
 	}
@@ -2350,11 +2348,12 @@ func (m *cliModel) appendNewMessagesToCache() {
 	sb.WriteString(m.cachedHistory)
 
 	// Calculate starting line offset for new messages
+	cw := m.chatWidth()
 	runningLines := 0
 	if len(m.msgLineOffsets) > 0 {
 		// Approximate: use the line count of cachedHistory at current width.
 		// This is an estimate but sufficient for msgLineOffsets (used for Ctrl+E folding).
-		runningLines = wrappedLineCount(m.cachedHistory, m.chatWidth())
+		runningLines = wrappedLineCount(m.cachedHistory, cw)
 	}
 
 	startIdx := m.cachedMsgCount
@@ -2364,9 +2363,9 @@ func (m *cliModel) appendNewMessagesToCache() {
 		rendered := m.renderMessage(msg)
 		msg.rendered = rendered
 		msg.dirty = false
-		msg.renderWidth = m.chatWidth()
+		msg.renderWidth = cw
 		sb.WriteString(rendered)
-		runningLines += wrappedLineCount(rendered, m.chatWidth())
+		runningLines += wrappedLineCount(rendered, cw)
 	}
 
 	m.cachedHistory = sb.String()
@@ -2394,15 +2393,16 @@ func (m *cliModel) fullRebuild() {
 	// §19 重置消息行号偏移（基于折行后的 viewport 行号）
 	m.msgLineOffsets = m.msgLineOffsets[:0]
 	runningLines := 0
+	cw := m.chatWidth() // cache once for the entire loop
 	for i := range m.messages[:splitIdx] {
 		// §19 记录消息在 viewport 折行后内容中的起始行号
 		m.msgLineOffsets = append(m.msgLineOffsets, runningLines)
-		needsRender := m.messages[i].dirty || m.messages[i].renderWidth != m.chatWidth()
+		needsRender := m.messages[i].dirty || m.messages[i].renderWidth != cw
 		if needsRender {
 			rendered := m.renderMessage(&m.messages[i])
 			m.messages[i].rendered = rendered
 			m.messages[i].dirty = false
-			m.messages[i].renderWidth = m.chatWidth()
+			m.messages[i].renderWidth = cw
 		}
 		// Build per-message chunk for line counting (avoids calling
 		// historyBuf.String() on every iteration — the O(N²) full
@@ -2416,7 +2416,7 @@ func (m *cliModel) fullRebuild() {
 		}
 		historyBuf.WriteString(m.messages[i].rendered)
 		// 累加本消息（含搜索指示条）在折行后占用的行数
-		runningLines += wrappedLineCount(chunk, m.chatWidth())
+		runningLines += wrappedLineCount(chunk, cw)
 	}
 
 	m.cachedHistory = historyBuf.String()

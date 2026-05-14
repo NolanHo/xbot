@@ -37,29 +37,52 @@ func (m *cliModel) isWide() bool { return m.width >= 120 }
 // sidebarShown returns true when the sidebar is currently rendered on screen.
 func (m *cliModel) sidebarShown() bool { return m.isWide() && m.sidebarEnabled && m.sidebarVisible }
 
+// invalidateLayoutCache resets cached sidebar/chat width metrics.
+// Must be called on resize, sidebar toggle, sidebarWidth change, or theme change.
+func (m *cliModel) invalidateLayoutCache() {
+	m.cachedSidebarRenderedWidth = 0
+	m.cachedSidebarWidthKey = 0
+	m.cachedChatWidth = 0
+	m.cachedChatWidthKey = 0
+}
+
 // sidebarRenderedWidth returns the actual visual width of the sidebar after rendering.
 // This depends on character widths (e.g. RUNEWIDTH_EASTASIAN makes │ width=2),
-// so we measure it dynamically rather than using a hardcoded formula.
+// so we measure it dynamically — but cache the result until layout changes.
 func (m *cliModel) sidebarRenderedWidth() int {
 	sw := m.sidebarWidth
 	if sw < 12 {
 		sw = 12
 	}
+	if m.cachedSidebarRenderedWidth > 0 && m.cachedSidebarWidthKey == sw {
+		return m.cachedSidebarRenderedWidth
+	}
 	rendered := m.styles.SidebarBg.Width(sw).Height(1).Render("")
 	line := strings.Split(rendered, "\n")[0]
-	return lipgloss.Width(line)
+	w := lipgloss.Width(line)
+	m.cachedSidebarRenderedWidth = w
+	m.cachedSidebarWidthKey = sw
+	return w
 }
 
 // chatWidth returns the effective width for the chat viewport, accounting for sidebar.
+// Result is cached until invalidateLayoutCache() is called.
 func (m *cliModel) chatWidth() int {
+	if m.cachedChatWidth > 0 && m.cachedChatWidthKey == m.width {
+		return m.cachedChatWidth
+	}
+	var w int
 	if m.sidebarShown() {
-		w := m.width - m.sidebarRenderedWidth()
+		w = m.width - m.sidebarRenderedWidth()
 		if w < 20 {
 			w = 20
 		}
-		return w
+	} else {
+		w = m.width
 	}
-	return m.width
+	m.cachedChatWidth = w
+	m.cachedChatWidthKey = m.width
+	return w
 }
 
 // cliFormatTokenCount formats a token count with K/M/B suffixes for display.

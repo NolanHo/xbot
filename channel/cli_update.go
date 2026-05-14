@@ -576,9 +576,12 @@ func (m *cliModel) handleResize(width, height int) {
 
 	m.width = width
 	m.height = height
+	m.invalidateLayoutCache()
 
 	// §20 重建样式缓存
 	m.styles = buildStyles(width)
+	// Invalidate again after style rebuild (sidebar styles may have changed)
+	m.cachedSidebarRenderedWidth = 0
 
 	// Refresh widget render function with new styles and re-render all widgets
 	if m.widgetRegistry != nil {

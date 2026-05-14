@@ -102,6 +102,7 @@ func (m *cliModel) handleKeyPress(msg tea.KeyPressMsg, wasTyping bool) (tea.Mode
 		// Ctrl+B: Toggle sidebar (only in wide mode)
 		if m.panelMode == "" && m.isWide() && m.sidebarEnabled {
 			m.sidebarVisible = !m.sidebarVisible
+			m.invalidateLayoutCache()
 			m.relayoutViewport()
 			return m, nil, true
 		}

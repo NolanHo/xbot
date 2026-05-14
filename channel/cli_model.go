@@ -1024,6 +1024,13 @@ type cliModel struct {
 	sidebarVisible  bool   // runtime: is sidebar currently shown (user toggled with Ctrl+B)?
 	xShift          int    // sidebar X offset for middleBlock, set during trackMainLayoutZones
 
+	// Cached layout metrics (invalidated on resize / sidebar toggle).
+	// Eliminates repeated lipgloss.Render + ansi.StringWidth per chatWidth() call.
+	cachedSidebarRenderedWidth int // measured visual width of sidebar (0 = not yet computed)
+	cachedSidebarWidthKey      int // sidebarWidth at time of measurement (for invalidation)
+	cachedChatWidth            int // effective chat width (0 = not yet computed)
+	cachedChatWidthKey         int // m.width at time of measurement (for invalidation)
+
 	// toolDisplayInfo
 
 	// --- 🥚 Easter Eggs 彩蛋 ---

@@ -551,6 +551,8 @@ func (m *cliModel) handleSessionStateMsg(msg cliSessionStateMsg) {
 			instance: ev.Instance,
 			parentID: ev.ParentID,
 		}
+		// New session appeared — trigger async cache refresh so sidebar shows it.
+		m.scheduleSessionsRefresh()
 	case "subagent_stopped":
 		// SubAgent interactive session destroyed.
 		key := "agent:" + ev.Role + "/" + ev.Instance
@@ -561,6 +563,16 @@ func (m *cliModel) handleSessionStateMsg(msg cliSessionStateMsg) {
 			instance: ev.Instance,
 			parentID: ev.ParentID,
 		}
+		// Session disappeared — trigger async cache refresh so sidebar updates.
+		m.scheduleSessionsRefresh()
+	}
+}
+
+// scheduleSessionsRefresh triggers an immediate session list cache refresh.
+// Called when sessions are created/destroyed via server push events.
+func (m *cliModel) scheduleSessionsRefresh() {
+	if m.channel != nil && m.channel.config.SessionsListRefresh != nil {
+		m.channel.config.SessionsListRefresh()
 	}
 }
 

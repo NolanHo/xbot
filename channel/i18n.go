@@ -54,6 +54,7 @@ type UILocale struct {
 	CheckingUpdates       string // "⟳ checking for updates..."
 	StatusReady           string // "● ready"
 	StatusCompressing     string // "compressing"
+	StatusNewing          string // "resetting session"
 	StatusRetrying        string // "retrying"
 	StatusDone            string // "done"
 	NewContentHint        string // "v new content"
@@ -251,6 +252,7 @@ func localeZH() *UILocale {
 		CheckingUpdates:       "⟳ 正在检查更新...",
 		StatusReady:           "◈ 就绪",
 		StatusCompressing:     "压缩中",
+		StatusNewing:          "重置中",
 		StatusRetrying:        "重试中",
 		StatusDone:            "完成",
 		NewContentHint:        "↓ 新内容",
@@ -636,6 +638,7 @@ func localeEN() *UILocale {
 		CheckingUpdates:   "⟳ checking for updates...",
 		StatusReady:       "◈ ready",
 		StatusCompressing: "compressing",
+		StatusNewing:      "resetting",
 		StatusRetrying:    "retrying",
 		StatusDone:        "done",
 		NewContentHint:    "v new content",
@@ -1017,6 +1020,7 @@ func localeJA() *UILocale {
 		CheckingUpdates:   "⟳ アップデート確認中...",
 		StatusReady:       "◈ 準備完了",
 		StatusCompressing: "圧縮中",
+		StatusNewing:      "リセット中",
 		StatusRetrying:    "リトライ中",
 		StatusDone:        "完了",
 		NewContentHint:    "↓ 新着",

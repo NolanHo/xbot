@@ -1502,6 +1502,8 @@ func (m *cliModel) renderProgressStatus() string {
 			sb.WriteString(" · " + m.pickVerb(m.ticker.ticks))
 		case "compressing":
 			sb.WriteString(" · " + m.locale.StatusCompressing)
+		case "newing":
+			sb.WriteString(" · " + m.locale.StatusNewing)
 		case "retrying":
 			sb.WriteString(" · " + m.locale.StatusRetrying)
 		default:

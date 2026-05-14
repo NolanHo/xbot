@@ -511,6 +511,7 @@ func (m *cliModel) handleSlashCommand(cmd string) tea.Cmd {
 		// 保留本地处理（system 消息样式），发送到 msgBus 但不作为用户气泡
 		if m.msgBus != nil {
 			m.sendInbound(m.newInbound("/compress", nil))
+			m.startAgentTurn()
 		}
 
 	// --- 透传命令（发送到 agent） ---
@@ -877,8 +878,8 @@ func (m *cliModel) handleAgentMessage(msg bus.OutboundMessage) {
 			m.cachedWrappedHistory = ""
 			m.cachedWrappedHistoryRaw = ""
 			m.cachedWrappedHistoryWidth = 0
-			// Builtin commands like /new do not emit PhaseDone, so endAgentTurn
-			// is never called by the progress path. End the turn here instead.
+			// PhaseDone from emitBuiltinProgressDone should arrive before this outbound,
+			// so endAgentTurn is usually a no-op (turn already ended). Kept as safety net.
 			m.endAgentTurn(m.agentTurnID)
 			m.invalidateAllCache(true)
 			m.viewport.GotoBottom()
@@ -1600,6 +1601,11 @@ func (m *cliModel) renderCurrentIteration(
 				sb.WriteString("  ")
 				sb.WriteString(m.ticker.viewFrames(orbitFrames))
 				sb.WriteString(thinkingStyle.Render(" compressing..."))
+				sb.WriteString("\n")
+			case "newing":
+				sb.WriteString("  ")
+				sb.WriteString(m.ticker.viewFrames(orbitFrames))
+				sb.WriteString(thinkingStyle.Render(" resetting session..."))
 				sb.WriteString("\n")
 			case "retrying":
 				sb.WriteString("  ")

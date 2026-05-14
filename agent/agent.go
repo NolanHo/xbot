@@ -278,6 +278,11 @@ type Agent struct {
 	// On turn end, the entry is deleted.
 	iterationHistories sync.Map
 
+	// builtinProgressSeq stores per-chat atomic seq counters for builtin commands
+	// (/compress, /new) that bypass engine.Run but still need progress events.
+	// key: "channel:chatID" -> *atomic.Uint64
+	builtinProgressSeq sync.Map
+
 	// interactiveSubAgents stores interactive SubAgent sessions
 	// key: "channel:chatID/roleName" -> *interactiveAgent
 	// sync.Map provides atomic Load/Store/Delete/LoadOrStore, no additional mutex needed
@@ -2324,6 +2329,70 @@ func (a *Agent) RegisterTool(tool tools.Tool) {
 func (a *Agent) RegisterCoreTool(tool tools.Tool) {
 	a.tools.RegisterCore(tool)
 	log.WithField("tool", tool.Name()).Info("Tool registered")
+}
+
+// emitBuiltinProgress sends a progress event for builtin commands (/compress, /new)
+// that bypass engine.Run. It uses the same CLI channel path as buildCLIProgressEventHandler
+// so the snapshot is stored for mid-session reconnect.
+func (a *Agent) emitBuiltinProgress(chName, chatID string, phase ProgressPhase) {
+	progressKey := sessionKey(chName, chatID)
+
+	// Get or create per-chat seq counter. Start at 1 so the first event
+	// is not discarded by the CLI's seq monotonic check (initial lastProgressSeq=0).
+	seqPtr, _ := a.builtinProgressSeq.LoadOrStore(progressKey, &atomic.Uint64{})
+	seq := seqPtr.(*atomic.Uint64).Add(1)
+
+	payload := &protocol.ProgressEvent{
+		ChatID:    progressKey,
+		Phase:     string(phase),
+		Seq:       seq,
+		Iteration: 0,
+	}
+
+	// Send via CLI channel
+	if a.channelFinder != nil {
+		if ch, ok := a.channelFinder("cli"); ok {
+			if cc, ok := ch.(*channel.CLIChannel); ok {
+				cc.SendProgress(chatID, payload)
+			} else if rc, ok := ch.(channel.ProgressSender); ok {
+				rc.SendProgress(chatID, payload)
+			}
+		}
+	}
+
+	// Store snapshot for mid-session reconnect
+	a.lastProgressSnapshot.Store(progressKey, payload)
+}
+
+// emitBuiltinProgressDone sends a PhaseDone progress event and cleans up the snapshot.
+// Must be called in a defer after emitBuiltinProgress to ensure the CLI ends the turn.
+func (a *Agent) emitBuiltinProgressDone(chName, chatID string) {
+	progressKey := sessionKey(chName, chatID)
+
+	seqPtr, ok := a.builtinProgressSeq.Load(progressKey)
+	if !ok {
+		return
+	}
+	seq := seqPtr.(*atomic.Uint64).Add(1)
+
+	payload := &protocol.ProgressEvent{
+		ChatID: progressKey,
+		Phase:  string(PhaseDone),
+		Seq:    seq,
+	}
+
+	if a.channelFinder != nil {
+		if ch, ok := a.channelFinder("cli"); ok {
+			if cc, ok := ch.(*channel.CLIChannel); ok {
+				cc.SendProgress(chatID, payload)
+			} else if rc, ok := ch.(channel.ProgressSender); ok {
+				rc.SendProgress(chatID, payload)
+			}
+		}
+	}
+
+	a.lastProgressSnapshot.Delete(progressKey)
+	a.builtinProgressSeq.Delete(progressKey)
 }
 
 // 首次发送创建新消息（如有入站 message_id 则回复该消息），后续发送 Patch 更新同一条消息。

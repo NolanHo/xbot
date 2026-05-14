@@ -54,6 +54,7 @@ const (
 	PhaseThinking    ProgressPhase = "thinking"
 	PhaseToolExec    ProgressPhase = "tool_exec"
 	PhaseCompressing ProgressPhase = "compressing"
+	PhaseNewing      ProgressPhase = "newing"
 	PhaseRetrying    ProgressPhase = "retrying"
 	PhaseDone        ProgressPhase = "done"
 )

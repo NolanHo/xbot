@@ -201,6 +201,9 @@ func truncateArgs(args string, maxLen int) string {
 
 // handleCompress handles the /compress command: manually trigger context compaction.
 func (a *Agent) handleCompress(ctx context.Context, msg bus.InboundMessage, tenantSession *session.TenantSession) (*bus.OutboundMessage, error) {
+	a.emitBuiltinProgress(msg.Channel, msg.ChatID, PhaseCompressing)
+	defer a.emitBuiltinProgressDone(msg.Channel, msg.ChatID)
+
 	llmClient, model, _, _ := a.llmFactory.GetLLM(msg.SenderID)
 
 	messages, err := a.buildPrompt(ctx, msg, tenantSession)
@@ -226,8 +229,6 @@ func (a *Agent) handleCompress(ctx context.Context, msg bus.InboundMessage, tena
 	}
 
 	// Always allow manual /compress regardless of threshold — user explicitly requested it.
-
-	_ = a.sendMessage(msg.Channel, msg.ChatID, "🔄 开始压缩上下文...")
 
 	cm := a.GetContextManager()
 

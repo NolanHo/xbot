@@ -629,7 +629,7 @@ func (a *Agent) buildSubAgentRunConfig(
 
 		// SubAgent 如果能 spawn 子 Agent，也启用并行执行
 		EnableConcurrentSubAgents: caps.SpawnAgent,
-		SubAgentSem:               a.llmFactory.LLMSemAcquireForUser(originUserID),
+		SubAgentSem:               a.llmFactory.SubAgentSemAcquireForUser(originUserID),
 
 		// ToolExecutor = nil → 使用 defaultToolExecutor（统一 buildToolContext）
 	}

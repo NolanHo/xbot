@@ -722,10 +722,11 @@ func (s *runState) handleFinalResponse(ctx context.Context, response *llm.LLMRes
 			}
 		}
 
-		// Update ThinkingContent so PhaseDone progress carries the final reply.
-		// recordAssistantMsg is not called for final text responses (handleFinalResponse
-		// returns directly), so ThinkingContent must be set here for SubAgent
-		// session viewers that synthesize assistant messages from PhaseDone payload.
+		// Update ThinkingContent and ReasoningContent so PhaseDone progress
+		// carries the final reply and thinking. recordAssistantMsg is not called
+		// for final text responses (handleFinalResponse returns directly), so
+		// both fields must be set here for SubAgent session viewers and CLI
+		// tool_summary rendering.
 		if s.structuredProgress != nil {
 			if cleanContent != "" {
 				s.structuredProgress.ThinkingContent = cleanContent
@@ -738,6 +739,9 @@ func (s *runState) handleFinalResponse(ctx context.Context, response *llm.LLMRes
 					rc = string(r[:200]) + "…"
 				}
 				s.structuredProgress.ThinkingContent = rc
+			}
+			if response.ReasoningContent != "" {
+				s.structuredProgress.ReasoningContent = response.ReasoningContent
 			}
 		}
 

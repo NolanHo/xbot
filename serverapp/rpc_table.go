@@ -633,16 +633,19 @@ func registerSessionHandlers(t rpcTable, h *rpcContext) {
 		ChatID  string `json:"chat_id"`
 	}) (any, error) {
 		bizID := rpcBizID(ctx)
-		senderID := rpcAuthID(ctx)
+		authID := rpcAuthID(ctx)
 		if p.Channel == "" {
 			p.Channel = "cli"
 		}
 		if p.ChatID == "" {
 			p.ChatID = bizID
 		}
-		if !isAdmin(senderID) && p.ChatID != bizID {
+		if !isAdmin(authID) && p.ChatID != bizID {
 			return nil, fmt.Errorf("access denied")
 		}
+		// Use bizID (cliSenderID for admin) as sender_id for DB operations,
+		// because ChatRenameFn writes labels with cliSenderID, not the WS auth identity.
+		senderID := bizID
 		if db := h.ag.MultiSession().DB(); db != nil {
 			cs := sqlite.NewChatService(db.Conn())
 			if err := cs.DeleteChat(p.Channel, senderID, p.ChatID); err != nil {
@@ -660,13 +663,16 @@ func registerSessionHandlers(t rpcTable, h *rpcContext) {
 		NewName string `json:"new_name"`
 	}) (any, error) {
 		bizID := rpcBizID(ctx)
-		senderID := rpcAuthID(ctx)
+		authID := rpcAuthID(ctx)
 		if p.Channel == "" {
 			p.Channel = "cli"
 		}
-		if !isAdmin(senderID) && p.ChatID != bizID {
+		if !isAdmin(authID) && p.ChatID != bizID {
 			return nil, fmt.Errorf("access denied")
 		}
+		// Use bizID (cliSenderID for admin) as sender_id for DB operations,
+		// consistent with ChatRenameFn which writes labels with cliSenderID.
+		senderID := bizID
 		if db := h.ag.MultiSession().DB(); db != nil {
 			cs := sqlite.NewChatService(db.Conn())
 			if err := cs.RenameChat(p.Channel, senderID, p.ChatID, p.NewName); err != nil {

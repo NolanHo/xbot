@@ -239,3 +239,32 @@ func TestHardWrapRunes_SpaceBreak(t *testing.T) {
 }
 
 // splitLines is a test helper — declared in cli_panel.go.
+
+func TestHardWrapRunes_AnsiColorPreserved(t *testing.T) {
+	// Simulate glamour output: colored text that wraps
+	// \x1b[38;5;188m = light yellow fg, \x1b[0m = reset
+	input := "\x1b[38;5;188mABCDEFGHIJ" + "KLMNOPQRST" + "\x1b[0m"
+	got := hardWrapRunes(input, 10)
+	lines := splitLines(got)
+	if len(lines) < 2 {
+		t.Fatalf("expected >= 2 lines, got %d: %q", len(lines), got)
+	}
+	// Continuation line must replay the active ANSI color
+	if !strings.HasPrefix(lines[1], "\x1b[38;5;188m") {
+		t.Errorf("continuation line lost ANSI color: %q", lines[1])
+	}
+}
+
+func TestHardWrapRunes_AnsiResetClearsState(t *testing.T) {
+	// After reset, continuation should NOT replay old color
+	input := "\x1b[38;5;188mAB\x1b[0mCDEFGHIJKLMNOP"
+	got := hardWrapRunes(input, 8)
+	lines := splitLines(got)
+	if len(lines) < 2 {
+		t.Fatalf("expected >= 2 lines, got %d", len(lines))
+	}
+	// Line 2 should start with plain text, not the old color
+	if strings.HasPrefix(lines[1], "\x1b[38;5;188m") {
+		t.Errorf("continuation replayed color after reset: %q", lines[1])
+	}
+}

@@ -93,16 +93,31 @@ func hardWrapRunes(line string, maxW int) string {
 	inEscape := false
 	lastBreakable := -1 // byte offset in buf of last position where we can break after
 
+	// Track active ANSI state so we can replay it on continuation lines.
+	// We record all escape sequences since the last SGR reset (\x1b[0m).
+	var ansiState strings.Builder // accumulated SGR sequences since last reset
+	haveAnsiState := false
+
 	for _, r := range line {
 		if r == '\x1b' {
 			inEscape = true
 			buf.WriteRune(r)
+			ansiState.WriteRune(r)
 			continue
 		}
 		if inEscape {
 			buf.WriteRune(r)
+			ansiState.WriteRune(r)
 			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
 				inEscape = false
+				// Detect SGR reset: \x1b[0m or \x1b[m
+				s := ansiState.String()
+				if strings.HasSuffix(s, "[0m") || strings.HasSuffix(s, "[m") {
+					ansiState.Reset()
+					haveAnsiState = false
+				} else if strings.HasSuffix(s, "m") {
+					haveAnsiState = true
+				}
 			}
 			continue
 		}
@@ -134,6 +149,10 @@ func hardWrapRunes(line string, maxW int) string {
 				buf.Reset()
 				w = 0
 				lastBreakable = -1
+			}
+			// Replay active ANSI state on continuation line
+			if haveAnsiState {
+				buf.WriteString(ansiState.String())
 			}
 		}
 		buf.WriteRune(r)

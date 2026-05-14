@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"xbot/bus"
+	"xbot/channel"
 	"xbot/config"
 	llm "xbot/llm"
 	"xbot/protocol"
@@ -140,6 +141,21 @@ func (b *Backend) Subscribe(pattern protocol.EventPattern, handler protocol.Even
 
 func (b *Backend) SetTUIControlHandler(cb func(action string, params map[string]string) (map[string]string, error)) {
 	b.transport.SetTUIControlHandler(cb)
+}
+
+func (b *Backend) WireCallbacks(
+	directSend func(msg bus.OutboundMessage) (string, error),
+	channelFinder func(name string) (channel.Channel, bool),
+	sessionStateHandler func(ev protocol.SessionEvent),
+	messageSender bus.MessageSender,
+	registerAgentChannel func(name string, runFn bus.RunFn) error,
+	unregisterAgentChannel func(name string),
+) {
+	b.transport.WireCallbacks(directSend, channelFinder, sessionStateHandler, messageSender, registerAgentChannel, unregisterAgentChannel)
+}
+
+func (b *Backend) SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error)) {
+	b.transport.SetChatRenameFn(fn)
 }
 
 func (b *Backend) BindChat(chatID string) error { return b.transport.BindChat(chatID) }

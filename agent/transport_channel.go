@@ -174,6 +174,23 @@ func (t *channelTransport) SetTUIControlHandler(cb func(string, map[string]strin
 	t.tuiCtrlMu.Lock()
 	t.tuiCtrlCb = cb
 	t.tuiCtrlMu.Unlock()
+	// Also inject into Agent so tools get the callback via RunConfig.
+	t.inner.agent.SetTUICallbacks(cb, nil, nil)
+}
+
+func (t *channelTransport) WireCallbacks(
+	directSend func(msg bus.OutboundMessage) (string, error),
+	channelFinder func(name string) (channel.Channel, bool),
+	sessionStateHandler func(ev protocol.SessionEvent),
+	messageSender bus.MessageSender,
+	registerAgentChannel func(name string, runFn bus.RunFn) error,
+	unregisterAgentChannel func(name string),
+) {
+	t.inner.agent.WireCallbacks(directSend, channelFinder, sessionStateHandler, messageSender, registerAgentChannel, unregisterAgentChannel)
+}
+
+func (t *channelTransport) SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error)) {
+	t.inner.agent.SetChatRenameFn(fn)
 }
 
 func (t *channelTransport) ConnState() string { return "connected" }

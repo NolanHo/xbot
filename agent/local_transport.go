@@ -81,10 +81,26 @@ func (t *localTransport) SendMessage(msg protocol.InboundMessage) error {
 func (t *localTransport) BindChat(string) error { return nil }
 
 // ---------------------------------------------------------------------------
-// TUI control (no-op in local mode — agent handles directly)
+// Callback injection — forward to Agent (same path as server.go)
 // ---------------------------------------------------------------------------
 
 func (t *localTransport) SetTUIControlHandler(cb func(action string, params map[string]string) (map[string]string, error)) {
+	t.agent.SetTUICallbacks(cb, nil, nil)
+}
+
+func (t *localTransport) WireCallbacks(
+	directSend func(msg bus.OutboundMessage) (string, error),
+	channelFinder func(name string) (channel.Channel, bool),
+	sessionStateHandler func(ev protocol.SessionEvent),
+	messageSender bus.MessageSender,
+	registerAgentChannel func(name string, runFn bus.RunFn) error,
+	unregisterAgentChannel func(name string),
+) {
+	t.agent.WireCallbacks(directSend, channelFinder, sessionStateHandler, messageSender, registerAgentChannel, unregisterAgentChannel)
+}
+
+func (t *localTransport) SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error)) {
+	t.agent.SetChatRenameFn(fn)
 }
 
 // ---------------------------------------------------------------------------

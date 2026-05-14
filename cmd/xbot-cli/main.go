@@ -1728,6 +1728,77 @@ func main() {
 	// Both local and remote modes run the same initialization.
 	// Only a few items are remote-specific (reconnect, conn_state).
 
+	// ── Wire ALL shared agent callbacks (same as serverapp/server.go) ──
+	// Both local and remote modes call the exact same methods with the same positional
+	// parameters. Adding a new parameter changes the signature → compile error at BOTH call sites.
+	if app.backend != nil {
+		sessionStateHandler := func(ev protocol.SessionEvent) {
+			cliCh.SendSessionState(ev)
+		}
+
+		app.backend.WireCallbacks(
+			func(msg bus.OutboundMessage) (string, error) { // directSend
+				return disp.SendDirect(msg)
+			},
+			disp.GetChannel,     // channelFinder
+			sessionStateHandler, // sessionStateHandler
+			disp,                // messageSender
+			func(name string, runFn bus.RunFn) error { // registerAgentChannel
+				ac := channel.NewAgentChannel(name, runFn)
+				if err := ac.Start(); err != nil {
+					return fmt.Errorf("start AgentChannel %s: %w", name, err)
+				}
+				disp.Register(ac)
+				return nil
+			},
+			func(name string) { disp.Unregister(name) }, // unregisterAgentChannel
+		)
+
+		// SetChatRenameFn: rename session in DB. Same logic as server.go.
+		if app.db != nil {
+			conn := app.db.Conn()
+			app.backend.SetChatRenameFn(func(chatID, newName string) (string, error) {
+				var oldName string
+				row := conn.QueryRow(`SELECT label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND chat_id = ?`, cliSenderID, chatID)
+				_ = row.Scan(&oldName)
+				if oldName == "" {
+					_, oldName = channel.ParseChatID(chatID)
+				}
+				finalName := channel.DeduplicateSessionName(newName, chatID, func() []channel.NameEntry {
+					rows, err := conn.Query(`SELECT chat_id, label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND label != ''`, cliSenderID)
+					if err != nil {
+						return nil
+					}
+					defer rows.Close()
+					var entries []channel.NameEntry
+					for rows.Next() {
+						var cid, lbl string
+						if err := rows.Scan(&cid, &lbl); err == nil {
+							entries = append(entries, channel.NameEntry{Name: lbl, ChatID: cid})
+						}
+					}
+					return entries
+				})
+				_, err := conn.Exec(`
+					INSERT INTO user_chats (channel, sender_id, chat_id, label)
+					VALUES ('cli', ?, ?, ?)
+					ON CONFLICT(channel, sender_id, chat_id) DO UPDATE SET label = ?`,
+					cliSenderID, chatID, finalName, finalName,
+				)
+				if err != nil {
+					return "", fmt.Errorf("rename chat in DB: %w", err)
+				}
+				sessionStateHandler(protocol.SessionEvent{
+					Channel: "cli",
+					ChatID:  chatID,
+					Action:  "renamed",
+					Label:   finalName,
+				})
+				return oldName, nil
+			})
+		}
+	} // end WireCallbacks + SetChatRenameFn
+
 	// Refine firstRun: config.json check passed, but DB may already have a subscription.
 	// Must be after backend.Start() because channelTransport requires the serve()
 	// goroutine to be running for RPC calls (GetDefaultSubscription goes through Call).

@@ -817,6 +817,8 @@ func (b *fakeAgentBackend) SetTUICallbacks(_ func(action string, params map[stri
 }
 func (b *fakeAgentBackend) SetTUIControlHandler(_ func(action string, params map[string]string) (map[string]string, error)) {
 }
+func (b *fakeAgentBackend) WireCallbacks(func(bus.OutboundMessage) (string, error), func(string) (channel.Channel, bool), func(protocol.SessionEvent), bus.MessageSender, func(string, bus.RunFn) error, func(string)) {
+}
 func (b *fakeAgentBackend) SetChatRenameFn(_ func(chatID, newName string) (oldName string, err error)) {
 }
 func (b *fakeAgentBackend) GetContextMode() string                                { return "" }

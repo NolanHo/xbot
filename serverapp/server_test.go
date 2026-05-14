@@ -287,6 +287,8 @@ func (b fakeBackend) GetActiveProgress(_, _ string) *protocol.ProgressEvent { re
 func (b fakeBackend) GetTodos(_, _ string) []protocol.TodoItem              { return nil }
 func (b fakeBackend) SetTUIControlHandler(_ func(action string, params map[string]string) (map[string]string, error)) {
 }
+func (b fakeBackend) WireCallbacks(func(bus.OutboundMessage) (string, error), func(string) (channel.Channel, bool), func(protocol.SessionEvent), bus.MessageSender, func(string, bus.RunFn) error, func(string)) {
+}
 func (b fakeBackend) ConnState() string                                                  { return "connected" }
 func (b fakeBackend) ServerURL() string                                                  { return "" }
 func (b fakeBackend) Agent() *agent.Agent                                                { return nil }

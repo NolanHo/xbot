@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"xbot/bus"
+	"xbot/channel"
 	"xbot/config"
 	llm "xbot/llm"
 	"xbot/protocol"
@@ -134,4 +135,17 @@ type AgentBackend interface {
 	// --- Channel Config (via RPC) ---
 	GetChannelConfigs() (map[string]map[string]string, error)
 	SetChannelConfig(channel string, values map[string]string) error
+
+	// --- Callback Injection (same path for local & remote) ---
+	// WireCallbacks injects all shared agent callbacks (channelFinder, directSend, etc).
+	WireCallbacks(
+		directSend func(msg bus.OutboundMessage) (string, error),
+		channelFinder func(name string) (channel.Channel, bool),
+		sessionStateHandler func(ev protocol.SessionEvent),
+		messageSender bus.MessageSender,
+		registerAgentChannel func(name string, runFn bus.RunFn) error,
+		unregisterAgentChannel func(name string),
+	)
+	// SetChatRenameFn injects the chat rename callback.
+	SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error))
 }

@@ -2144,7 +2144,7 @@ func executeNonInteractive(prompt string, maxContextTokens, maxOutputTokens int)
 	absWorkDir, _ := filepath.Abs(app.workDir)
 
 	nonIntCh := channel.NewNonInteractiveChannel(app.msgBus)
-	disp := channel.NewDispatcher(app.msgBus)
+	disp := app.disp
 	disp.Register(nonIntCh)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2152,7 +2152,8 @@ func executeNonInteractive(prompt string, maxContextTokens, maxOutputTokens int)
 	_ = app.backend.Start(ctx)
 	go disp.Run()
 
-	app.msgBus.Inbound <- bus.InboundMessage{
+	// Send message through unified RPC path (same as interactive mode)
+	_ = app.backend.SendInbound(bus.InboundMessage{
 		Channel:    "cli",
 		SenderID:   "cli_user",
 		ChatID:     absWorkDir,
@@ -2161,7 +2162,7 @@ func executeNonInteractive(prompt string, maxContextTokens, maxOutputTokens int)
 		SenderName: "CLI User",
 		Time:       time.Now(),
 		RequestID:  strings.ReplaceAll(uuid.New().String(), "-", ""),
-	}
+	})
 
 	nonIntCh.WaitDone()
 }

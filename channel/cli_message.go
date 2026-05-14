@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"xbot/bus"
 	log "xbot/logger"
 	"xbot/protocol"
@@ -2184,6 +2185,74 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 	return sb.String()
 }
 
+// wrapPreservingGuide wraps a line at cw columns, preserving any guide prefix
+// (┊) on continuation lines. Guide prefixes are ANSI-colored "┊ " patterns
+// that must be repeated when a line is broken.
+func wrapPreservingGuide(line string, cw int) []string {
+	prefix, rest, pw := splitGuidePrefix(line)
+	if pw == 0 || rest == "" {
+		return strings.Split(hardWrapRunes(line, cw), "\n")
+	}
+	contentW := cw - pw
+	if contentW <= 0 {
+		return []string{line}
+	}
+	wrapped := strings.Split(hardWrapRunes(rest, contentW), "\n")
+	result := make([]string, len(wrapped))
+	for i, w := range wrapped {
+		result[i] = prefix + w
+	}
+	return result
+}
+
+// splitGuidePrefix splits a rendered line into its guide prefix and the rest.
+// Guide lines start with optional spaces then "┊ " (possibly ANSI-colored).
+// Returns (prefix, rest, prefixDisplayWidth). If no guide, returns ("", line, 0).
+func splitGuidePrefix(line string) (prefix, rest string, prefixW int) {
+	i := 0
+	n := len(line)
+	inEscape := false
+	foundPipe := false
+
+	for i < n {
+		b := line[i]
+		if b == '\x1b' {
+			inEscape = true
+			i++
+			continue
+		}
+		if inEscape {
+			i++
+			if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') {
+				inEscape = false
+			}
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(line[i:])
+		if !foundPipe {
+			if r == '┊' {
+				foundPipe = true
+			} else if r != ' ' {
+				// Not a guide line
+				return "", line, 0
+			}
+		} else {
+			// After ┊, expect a space
+			if r == ' ' {
+				end := i + size
+				prefix = line[:end]
+				rest = line[end:]
+				prefixW = lipgloss.Width(prefix)
+				return
+			}
+			// ┊ not followed by space — not a guide prefix
+			return "", line, 0
+		}
+		i += size
+	}
+	return "", line, 0
+}
+
 // setViewportContent sets viewport content while preserving scroll position.
 // If the user was at the bottom before the update, keep them at the bottom.
 // Lines wider than the viewport are truncated to prevent layout breakage.
@@ -2222,7 +2291,7 @@ func (m *cliModel) setViewportContent(content string) {
 							line = trimmed
 						}
 					}
-					wrappedDynamic = append(wrappedDynamic, strings.Split(hardWrapRunes(line, cw), "\n")...)
+					wrappedDynamic = append(wrappedDynamic, wrapPreservingGuide(line, cw)...)
 				}
 			}
 			content = wrappedHistory + strings.Join(wrappedDynamic, "\n")
@@ -2247,7 +2316,7 @@ func (m *cliModel) setViewportContent(content string) {
 						line = trimmed
 					}
 				}
-				wrappedLines := strings.Split(hardWrapRunes(line, cw), "\n")
+				wrappedLines := wrapPreservingGuide(line, cw)
 				if i < historyLineCount {
 					wrappedHistoryParts = append(wrappedHistoryParts, wrappedLines...)
 				}

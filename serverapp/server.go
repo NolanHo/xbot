@@ -237,7 +237,7 @@ func channelShouldRun(cfg *config.Config, name string) bool {
 }
 
 // registerChannels creates and registers all channels.
-func registerChannels(disp *channel.Dispatcher, cfg *config.Config, msgBus *bus.MessageBus, backend *agent.Backend, ag *agent.Agent, webDB *sql.DB, workDir string) (*channel.FeishuChannel, *channel.WebChannel, error) {
+func registerChannels(disp *channel.Dispatcher, cfg *config.Config, msgBus *bus.MessageBus, ag *agent.Agent, webDB *sql.DB, workDir string) (*channel.FeishuChannel, *channel.WebChannel, error) {
 	var feishuCh *channel.FeishuChannel
 	var webCh *channel.WebChannel
 	if cfg.Feishu.Enabled {
@@ -311,7 +311,7 @@ func registerChannels(disp *channel.Dispatcher, cfg *config.Config, msgBus *bus.
 				}
 			}
 
-			webCh.SetCallbacks(buildWebCallbacks(cfg, backend, ag, webDB))
+			webCh.SetCallbacks(buildWebCallbacks(cfg, ag, webDB))
 			// Wire up RemoteSandbox callbacks to push real-time status to WebChannel.
 			// In WebChannel, senderID == chatID (see handleWS: client.userID = senderID, chatID := c.userID).
 			sb := tools.GetSandbox()
@@ -404,7 +404,6 @@ func Run(args []string) error {
 	}
 
 	ag := core.Agent
-	backend := core.Backend
 	rpcTable := core.RPCTable
 	msgBus := core.MsgBus
 	disp := core.Disp
@@ -490,58 +489,58 @@ func Run(args []string) error {
 			Manager: oauthManager,
 			BaseURL: cfg.OAuth.BaseURL,
 		}
-		backend.RegisterCoreTool(oauthTool)
+		ag.RegisterCoreTool(oauthTool)
 		feishuMCP := feishu_mcp.NewFeishuMCP(oauthManager, cfg.Feishu.AppID, cfg.Feishu.AppSecret)
 		if feishuProvider != nil {
 			feishuMCP.SetLarkClient(feishuProvider.GetLarkClient())
 		}
-		backend.RegisterTool(&feishu_mcp.ListAllBitablesTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.BitableFieldsTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.BitableRecordTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.BitableListTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.BatchCreateAppTableRecordTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.ListAllBitablesTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.BitableFieldsTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.BitableRecordTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.BitableListTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.BatchCreateAppTableRecordTool{MCP: feishuMCP})
 
 		// Wiki tools
-		backend.RegisterTool(&feishu_mcp.WikiListSpacesTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.WikiListNodesTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.WikiGetNodeTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.WikiMoveNodeTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.WikiCreateNodeTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.WikiListSpacesTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.WikiListNodesTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.WikiGetNodeTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.WikiMoveNodeTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.WikiCreateNodeTool{MCP: feishuMCP})
 
 		// Document tools
-		backend.RegisterTool(&feishu_mcp.DocxGetContentTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.DocxListBlocksTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.DocxCreateTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.DocxInsertBlockTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.DocxGetBlockTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.DocxDeleteBlocksTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.DocxFindBlockTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.DocxGetContentTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.DocxListBlocksTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.DocxCreateTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.DocxInsertBlockTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.DocxGetBlockTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.DocxDeleteBlocksTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.DocxFindBlockTool{MCP: feishuMCP})
 
 		// Search tools
-		backend.RegisterTool(&feishu_mcp.SearchWikiTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.SearchWikiTool{MCP: feishuMCP})
 
 		// Drive tools
-		backend.RegisterTool(&feishu_mcp.UploadFileTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.ListFilesTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.AddPermissionTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.UploadFileTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.ListFilesTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.AddPermissionTool{MCP: feishuMCP})
 
 		// Message resource tools
-		backend.RegisterTool(&feishu_mcp.DownloadFileTool{MCP: feishuMCP})
-		backend.RegisterTool(&feishu_mcp.SendFileTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.DownloadFileTool{MCP: feishuMCP})
+		ag.RegisterTool(&feishu_mcp.SendFileTool{MCP: feishuMCP})
 
 		log.Info("OAuth and Feishu MCP tools registered")
 	}
 
 	// 注册 DownloadFile 工具（支持 Web/OSS 和飞书两种来源）
-	backend.RegisterCoreTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
-	backend.RegisterTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
-	backend.RegisterCoreTool(tools.NewWebSearchTool(cfg.TavilyAPIKey))
+	ag.RegisterCoreTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
+	ag.RegisterTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
+	ag.RegisterCoreTool(tools.NewWebSearchTool(cfg.TavilyAPIKey))
 
 	// 注册 Logs 工具（仅管理员可用）
 	adminChatID := cfg.Admin.ChatID
 	if adminChatID != "" {
 		logsTool := tools.NewLogsTool(adminChatID)
-		backend.RegisterCoreTool(logsTool)
+		ag.RegisterCoreTool(logsTool)
 		log.WithField("admin_chat_id", adminChatID).Info("Logs tool registered (admin only)")
 	}
 
@@ -554,7 +553,7 @@ func Run(args []string) error {
 	if webhookBaseURL == "" {
 		webhookBaseURL = fmt.Sprintf("http://%s:%d", cfg.EventWebhook.Host, cfg.EventWebhook.Port)
 	}
-	backend.RegisterCoreTool(tools.NewEventTriggerTool(eventRouter, webhookBaseURL))
+	ag.RegisterCoreTool(tools.NewEventTriggerTool(eventRouter, webhookBaseURL))
 
 	var webhookServer *event.WebhookServer
 	if cfg.EventWebhook.Enable {
@@ -568,7 +567,7 @@ func Run(args []string) error {
 	}
 
 	// 所有工具注册完成，索引全局工具（用于 search_tools 语义搜索）
-	backend.IndexGlobalTools()
+	ag.IndexGlobalTools()
 	ag.LLMFactory().SetModelTiers(cfg.LLM)
 	ag.LLMFactory().SetModelContexts(cfg.Agent.ModelContexts)
 	ag.LLMFactory().SetRetryConfig(llm_pkg.RetryConfig{
@@ -589,14 +588,14 @@ func Run(args []string) error {
 	if tokenDB != nil {
 		webDB = tokenDB.Conn()
 	}
-	feishuCh, webCh, err := registerChannels(disp, cfg, msgBus, backend, ag, webDB, workDir)
+	feishuCh, webCh, err := registerChannels(disp, cfg, msgBus, ag, webDB, workDir)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to register channels")
 	}
 
 	// Wire channel reconfiguration: when TUI channel config changes, restart
 	// the affected channel so it picks up the new configuration immediately.
-	backend.SetChannelReconfigureFn(func(name string) {
+	core.SetChannelReconfigureFn(func(name string) {
 		if disp == nil || msgBus == nil {
 			return
 		}
@@ -737,7 +736,7 @@ func Run(args []string) error {
 		}
 
 		// 注入设置卡片回调（让飞书渠道能访问 Agent 的 LLM/Registry/Settings 功能）
-		feishuCh.SetSettingsCallbacks(buildFeishuSettingsCallbacks(cfg, backend, ag))
+		feishuCh.SetSettingsCallbacks(buildFeishuSettingsCallbacks(cfg, ag))
 
 		// 注入飞书渠道特化 prompt 提供者
 		ag.SetChannelPromptProviders(&feishuPromptAdapter{ch: feishuCh})
@@ -834,7 +833,7 @@ func Run(args []string) error {
 				sigCh <- syscall.SIGTERM
 			}
 		}()
-		if err := backend.Run(ctx); err != nil && ctx.Err() == nil {
+		if err := ag.Run(ctx); err != nil && ctx.Err() == nil {
 			log.WithError(err).Error("Agent loop exited with error")
 		}
 	}()
@@ -861,8 +860,8 @@ func Run(args []string) error {
 	}
 
 	// 等待 agent loop 退出后再继续关闭
-	if backend != nil {
-		backend.Close()
+	if ag != nil {
+		ag.Close()
 	}
 
 	// 关闭沙箱（清理 Docker 容器等资源）

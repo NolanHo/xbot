@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"xbot/agent"
@@ -26,26 +27,26 @@ type ServerCoreOpts struct {
 }
 
 // ServerCore is the shared core for both local and remote server modes.
-// It owns the Agent, Bus, Dispatcher, Backend, and RPCTable.
+// It owns the Agent, Bus, Dispatcher, and RPCTable.
 type ServerCore struct {
 	Agent    *agent.Agent
 	Config   *config.Config
 	Disp     *channel.Dispatcher
 	MsgBus   *bus.MessageBus
-	Backend  *agent.Backend
 	RPCTable RPCTable
+
+	// channelReconfigureFn is called after a channel config change.
+	channelReconfigureFn func(channel string)
 }
 
 // NewServerCore creates and initializes a ServerCore.
 //
 // It performs the following steps:
-//  1. Creates the Agent from BackendConfig
+//  1. Creates the Agent from Config
 //  2. Creates the Dispatcher
-//  3. Creates the DirectBackend and RPCTable
-//  4. Creates the LocalBackend (Transport + Agent)
-//  5. Wires callbacks (directSend, channelFinder, sessionStateHandler, etc.)
-//  6. Configures LLM (tiers, contexts, retry)
-//  7. Registers core tools (DownloadFile, WebSearch, EventTrigger)
+//  3. Creates the RPCTable
+//  4. Registers core tools (DownloadFile, WebSearch)
+//  5. Configures LLM (tiers, contexts, retry)
 //
 // It does NOT handle:
 //   - HTTP listening, channel registration (Feishu/Web/QQ)
@@ -62,16 +63,56 @@ func NewServerCore(opts ServerCoreOpts) (*ServerCore, error) {
 	disp := channel.NewDispatcher(msgBus)
 
 	// 2. Create Agent.
-	bc := agent.BackendConfig{
-		Cfg:              cfg,
-		LLM:              opts.LLM,
-		Bus:              msgBus,
-		DBPath:           opts.DBPath,
-		WorkDir:          opts.WorkDir,
-		XbotHome:         opts.XbotHome,
-		PersonaIsolation: opts.PersonaIsolation,
+	// Embedding fallback: use LLM endpoint if embedding not configured.
+	embBaseURL := cfg.Embedding.BaseURL
+	if embBaseURL == "" {
+		embBaseURL = cfg.LLM.BaseURL
 	}
-	ag, err := agent.New(bc.AgentConfig())
+	embAPIKey := cfg.Embedding.APIKey
+	if embAPIKey == "" {
+		embAPIKey = cfg.LLM.APIKey
+	}
+
+	offloadDir := filepath.Join(opts.XbotHome, "offload_store")
+	maskDir := filepath.Join(opts.XbotHome, "mask")
+
+	ag, err := agent.New(agent.Config{
+		Bus:                   msgBus,
+		LLM:                   opts.LLM,
+		Model:                 cfg.LLM.Model,
+		MaxIterations:         cfg.Agent.MaxIterations,
+		MaxConcurrency:        cfg.Agent.MaxConcurrency,
+		DBPath:                opts.DBPath,
+		SkillsDir:             filepath.Join(opts.XbotHome, "skills"),
+		AgentsDir:             filepath.Join(opts.XbotHome, "agents"),
+		WorkDir:               opts.WorkDir,
+		XbotHome:              opts.XbotHome,
+		PromptFile:            cfg.Agent.PromptFile,
+		SandboxMode:           cfg.Sandbox.Mode,
+		Sandbox:               tools.GetSandbox(),
+		MemoryProvider:        cfg.Agent.MemoryProvider,
+		EmbeddingProvider:     cfg.Embedding.Provider,
+		EmbeddingBaseURL:      embBaseURL,
+		EmbeddingAPIKey:       embAPIKey,
+		EmbeddingModel:        cfg.Embedding.Model,
+		EmbeddingMaxTokens:    cfg.Embedding.MaxTokens,
+		MCPInactivityTimeout:  time.Duration(cfg.Agent.MCPInactivityTimeout),
+		MCPCleanupInterval:    time.Duration(cfg.Agent.MCPCleanupInterval),
+		SessionCacheTimeout:   time.Duration(cfg.Agent.SessionCacheTimeout),
+		EnableAutoCompress:    cfg.Agent.EffectiveEnableAutoCompress(),
+		MaxContextTokens:      cfg.Agent.MaxContextTokens,
+		CompressionThreshold:  cfg.Agent.CompressionThreshold,
+		ContextMode:           agent.ContextMode(cfg.Agent.ContextMode),
+		MaxSubAgentDepth:      cfg.Agent.MaxSubAgentDepth,
+		PurgeOldMessages:      cfg.Agent.PurgeOldMessages,
+		SandboxIdleTimeout:    time.Duration(cfg.Sandbox.IdleTimeout),
+		PersonaIsolation:      opts.PersonaIsolation,
+		OffloadDir:            offloadDir,
+		MaskDir:               maskDir,
+		PluginEnabled:         cfg.Plugins.Enabled,
+		PluginDirs:            cfg.Plugins.Dirs,
+		PluginDisabledPlugins: cfg.Plugins.DisabledPlugins,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
@@ -79,28 +120,19 @@ func NewServerCore(opts ServerCoreOpts) (*ServerCore, error) {
 	// 3. Create RPCTable.
 	rpcTable := BuildRPCTable(cfg, ag, disp, msgBus)
 
-	// 4. Create Backend (local mode: ChannelTransport + Agent).
-	backend := agent.NewLocalBackend(
-		agent.NewChannelTransport(rpcTable.Dispatch),
-		ag,
-		nil, // runner: caller manages Agent.Run() directly
-		nil, // router: caller sets up EventRouter if needed
-		nil, // callbacks: caller wires via ag.WireCallbacks or core.Agent.WireCallbacks
-	)
-
-	// 5. Register core tools.
-	backend.RegisterCoreTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
-	backend.RegisterTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
-	backend.RegisterCoreTool(tools.NewWebSearchTool(cfg.TavilyAPIKey))
+	// 4. Register core tools.
+	ag.RegisterCoreTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
+	ag.RegisterTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
+	ag.RegisterCoreTool(tools.NewWebSearchTool(cfg.TavilyAPIKey))
 
 	// Register Logs tool (admin only).
 	if adminChatID := cfg.Admin.ChatID; adminChatID != "" {
 		logsTool := tools.NewLogsTool(adminChatID)
-		backend.RegisterCoreTool(logsTool)
+		ag.RegisterCoreTool(logsTool)
 		log.WithField("admin_chat_id", adminChatID).Info("Logs tool registered (admin only)")
 	}
 
-	// 7. Configure LLM.
+	// 5. Configure LLM.
 	ag.LLMFactory().SetModelTiers(cfg.LLM)
 	ag.LLMFactory().SetModelContexts(cfg.Agent.ModelContexts)
 	ag.LLMFactory().SetRetryConfig(llm_pkg.RetryConfig{
@@ -110,32 +142,11 @@ func NewServerCore(opts ServerCoreOpts) (*ServerCore, error) {
 		Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
 	})
 
-	// Wire channel reconfiguration callback.
-	backend.SetChannelReconfigureFn(func(name string) {
-		if disp == nil || msgBus == nil {
-			return
-		}
-		loaded := config.LoadFromFile(config.ConfigFilePath())
-		if loaded == nil {
-			return
-		}
-		_, running := disp.GetChannel(name)
-		shouldRun := channelShouldRun(loaded, name)
-		if shouldRun && !running {
-			if ch := createChannelInstance(name, loaded, msgBus); ch != nil {
-				disp.Register(ch)
-			}
-		} else if !shouldRun && running {
-			disp.Unregister(name)
-		}
-	})
-
 	return &ServerCore{
 		Agent:    ag,
 		Config:   cfg,
 		Disp:     disp,
 		MsgBus:   msgBus,
-		Backend:  backend,
 		RPCTable: rpcTable,
 	}, nil
 }
@@ -148,30 +159,30 @@ func (sc *ServerCore) HandleRPC(ctx context.Context, method string, payload json
 
 // SetChannelReconfigureFn sets the callback for dynamic channel reconfiguration.
 func (sc *ServerCore) SetChannelReconfigureFn(fn func(string)) {
-	sc.Backend.SetChannelReconfigureFn(fn)
+	sc.channelReconfigureFn = fn
 }
 
-// RegisterCoreTool registers a core tool on the backend.
+// RegisterCoreTool registers a core tool on the agent.
 func (sc *ServerCore) RegisterCoreTool(tool tools.Tool) {
-	sc.Backend.RegisterCoreTool(tool)
+	sc.Agent.RegisterCoreTool(tool)
 }
 
-// RegisterTool registers a tool on the backend.
+// RegisterTool registers a tool on the agent.
 func (sc *ServerCore) RegisterTool(tool tools.Tool) {
-	sc.Backend.RegisterTool(tool)
+	sc.Agent.RegisterTool(tool)
 }
 
 // IndexGlobalTools indexes all registered tools.
 func (sc *ServerCore) IndexGlobalTools() {
-	sc.Backend.IndexGlobalTools()
+	sc.Agent.IndexGlobalTools()
 }
 
 // Run starts the agent loop and blocks until the context is done.
 func (sc *ServerCore) Run(ctx context.Context) error {
-	return sc.Backend.Run(ctx)
+	return sc.Agent.Run(ctx)
 }
 
-// Close releases backend resources.
+// Close releases agent resources.
 func (sc *ServerCore) Close() error {
-	return sc.Backend.Close()
+	return sc.Agent.Close()
 }

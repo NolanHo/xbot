@@ -71,6 +71,10 @@ Two modes (`agent/engine_run.go`):
 | `MessageMiddleware` | `agent/middleware.go` | Process(mc) |
 | `MemoryProvider` | `memory/memory.go` | Core + Archival memory |
 | `AgentBackend` | `agent/backend.go` | Abstract local/remote agent execution (pure RPC client) |
+| `Transport` | `agent/transport.go` | Pure transmission: Call(method, payload) → (response, error) |
+| `AgentRunner` | `agent/lifecycle.go` | Agent lifecycle: Start/Stop/Run |
+| `EventRouter` | `agent/lifecycle.go` | Message/event routing: SendInbound/Subscribe/BindChat |
+| `CallbackRegistry` | `agent/lifecycle.go` | Callback injection: WireCallbacks/SetTUIControlHandler |
 
 ## Subscription System
 

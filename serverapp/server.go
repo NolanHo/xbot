@@ -401,10 +401,25 @@ func Run(args []string) error {
 		XbotHome:         xbotDir,
 		PersonaIsolation: cfg.Web.PersonaIsolation,
 	}
-	backend, ag, err := agent.NewBackend(bc.AgentConfig())
+	ag, err := agent.New(bc.AgentConfig())
 	if err != nil {
-		log.WithError(err).Fatal("Failed to create local backend")
+		log.WithError(err).Fatal("Failed to create agent")
 	}
+
+	disp := channel.NewDispatcher(msgBus)
+
+	// Server mode: create Backend with DirectBackend + RPCTable.
+	// The server uses RPCTable.Dispatch directly for WS RPC, and
+	// the DirectBackend for type-safe AgentBackend methods.
+	directBackend := agent.NewDirectBackend(ag)
+	rpcTable := BuildRPCTable(cfg, directBackend, ag, disp, msgBus)
+	backend := agent.NewLocalBackend(
+		agent.NewChannelTransport(rpcTable.Dispatch),
+		ag,
+		nil, // runner: server manages Agent.Run() directly
+		nil, // router: server doesn't use EventRouter
+		nil, // callbacks: server sets up callbacks directly on Agent
+	)
 
 	// Migrate config.json subscriptions into DB for the admin user.
 	// This ensures admin is a normal DB user with real subscriptions,
@@ -584,8 +599,6 @@ func Run(args []string) error {
 		tools.SetRunnerTokenDB(tokenDB.Conn())
 	}
 
-	disp := channel.NewDispatcher(msgBus)
-
 	var webDB *sql.DB
 	if tokenDB != nil {
 		webDB = tokenDB.Conn()
@@ -628,13 +641,10 @@ func Run(args []string) error {
 		}
 	})
 
-	// Build RPC table once at startup; per-request identity is passed via context.
-	rpcTable := buildRPCTable(cfg, backend, ag, disp, msgBus)
-
 	// Wire RPC handler for CLI RemoteBackend clients (after disp/msgBus are available).
 	if webCh != nil {
 		webCh.SetRPCHandler(func(method string, params json.RawMessage, senderID string) (json.RawMessage, error) {
-			return handleCLIRPC(rpcTable, method, params, senderID)
+			return HandleCLIRPC(rpcTable, method, params, senderID)
 		})
 	}
 

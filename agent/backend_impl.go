@@ -47,33 +47,87 @@ type TenantInfo struct {
 	LastActiveAt string `json:"last_active_at"`
 }
 
-// Backend is the unified RPC client.
-// Every method goes through transport.Call() — zero local state.
-// Server-side code (serverapp) gets a separate *Agent for direct access.
+// Backend is the RPC-based AgentBackend implementation.
+// It composes five components extracted from the old monolithic Transport:
+//
+//	transport Transport        — RPC calls (Call + Close)
+//	runner    AgentRunner      — lifecycle (Start/Stop/Run)
+//	router    EventRouter      — communication (SendInbound/Subscribe/BindChat)
+//	callbacks CallbackRegistry — callback injection (WireCallbacks/SetTUIControlHandler/SetChatRenameFn)
+//	agent     *Agent           — direct agent access for tool registration (nil in remote mode)
 type Backend struct {
 	transport Transport
+	runner    AgentRunner
+	router    EventRouter
+	callbacks CallbackRegistry
+	agent     *Agent // direct agent access — nil for remote mode
+
+	// reconfigureFn is called after a channel config change (server-side only).
+	reconfigureFn func(channel string)
 }
 
-// NewBackend creates a local-mode Backend with an in-process Agent.
-// Returns (Backend for RPC, Agent for direct server-side access).
-func NewBackend(cfg Config) (*Backend, *Agent, error) {
-	a, err := New(cfg)
-	if err != nil {
-		return nil, nil, err
+// NewLocalBackend creates a Backend for local (in-process) mode.
+// The caller is responsible for creating the Transport, Agent, and lifecycle components.
+func NewLocalBackend(
+	transport Transport,
+	agent *Agent,
+	runner AgentRunner,
+	router EventRouter,
+	callbacks CallbackRegistry,
+) *Backend {
+	return &Backend{
+		transport: transport,
+		agent:     agent,
+		runner:    runner,
+		router:    router,
+		callbacks: callbacks,
 	}
-	lt := newLocalTransport(a, cfg.Bus)
-	return &Backend{transport: lt}, a, nil
 }
 
-// NewTransportBackend creates a Backend from an existing Transport (remote mode).
-func NewTransportBackend(t Transport) *Backend {
-	return &Backend{transport: t}
-}
-
-// NewRemoteBackend creates a remote-mode Backend from a RemoteTransportConfig.
+// NewRemoteBackend creates a Backend for remote (WebSocket) mode.
+// It creates a RemoteTransport and wraps it as the runner, router, and callbacks.
 func NewRemoteBackend(cfg RemoteTransportConfig) *Backend {
-	return &Backend{transport: NewRemoteTransport(cfg)}
+	rt := NewRemoteTransport(cfg)
+	return &Backend{
+		transport: rt,                         // Transport (Call + Close)
+		runner:    rt,                         // AgentRunner (Start/Stop/Run) — RemoteTransport has these
+		router:    &remoteEventRouter{rt: rt}, // EventRouter — adapts bus→protocol
+		callbacks: rt,                         // CallbackRegistry — RemoteTransport has these (no-op)
+	}
 }
+
+// ---------------------------------------------------------------------------
+// remoteEventRouter adapts RemoteTransport to the EventRouter interface.
+// RemoteTransport.SendMessage takes protocol.InboundMessage, but EventRouter
+// expects bus.InboundMessage. This wrapper performs the conversion.
+// ---------------------------------------------------------------------------
+
+type remoteEventRouter struct {
+	rt *RemoteTransport
+}
+
+func (r *remoteEventRouter) SendMessage(msg bus.InboundMessage) error {
+	return r.rt.SendMessage(protocol.InboundMessage{
+		MessagePayload: bus.MessagePayload{
+			Content:    msg.Content,
+			Channel:    msg.Channel,
+			ChatID:     msg.ChatID,
+			SenderID:   msg.SenderID,
+			SenderName: msg.SenderName,
+			ChatType:   msg.ChatType,
+		},
+	})
+}
+
+func (r *remoteEventRouter) BindChat(chatID string) error { return r.rt.BindChat(chatID) }
+
+func (r *remoteEventRouter) Subscribe(pattern protocol.EventPattern, handler protocol.EventHandler) (cancel func()) {
+	return r.rt.Subscribe(pattern, handler)
+}
+
+func (r *remoteEventRouter) ConnState() string { return r.rt.ConnState() }
+func (r *remoteEventRouter) IsRemote() bool    { return r.rt.IsRemote() }
+func (r *remoteEventRouter) ServerURL() string { return r.rt.ServerURL() }
 
 // ---------------------------------------------------------------------------
 // Generic RPC helpers — the only two functions Backend ever needs
@@ -106,41 +160,89 @@ func (b *Backend) callVoid(method string, req any) {
 }
 
 // ---------------------------------------------------------------------------
-// Lifecycle — pure transport delegation
+// Lifecycle — delegated to AgentRunner
 // ---------------------------------------------------------------------------
 
-func (b *Backend) Start(ctx context.Context) error { return b.transport.Start(ctx) }
-func (b *Backend) Stop()                           { b.transport.Stop() }
-func (b *Backend) Close() error                    { return b.transport.Close() }
-func (b *Backend) Run(ctx context.Context) error   { return b.transport.Run(ctx) }
+func (b *Backend) Start(ctx context.Context) error {
+	if b.runner == nil {
+		return fmt.Errorf("no runner configured")
+	}
+	return b.runner.Start(ctx)
+}
+
+func (b *Backend) Stop() {
+	if b.runner != nil {
+		b.runner.Stop()
+	}
+}
+
+func (b *Backend) Close() error { return b.transport.Close() }
+
+func (b *Backend) Run(ctx context.Context) error {
+	if b.runner == nil {
+		return fmt.Errorf("no runner configured")
+	}
+	return b.runner.Run(ctx)
+}
 
 // ---------------------------------------------------------------------------
-// Communication — pure transport delegation
+// Communication — delegated to EventRouter
 // ---------------------------------------------------------------------------
 
 func (b *Backend) SendInbound(msg bus.InboundMessage) error {
-	return b.transport.SendMessage(protocol.InboundMessage{
-		MessagePayload: bus.MessagePayload{
-			Content:    msg.Content,
-			Channel:    msg.Channel,
-			ChatID:     msg.ChatID,
-			SenderID:   msg.SenderID,
-			SenderName: msg.SenderName,
-			ChatType:   msg.ChatType,
-		},
-	})
+	if b.router != nil {
+		return b.router.SendMessage(msg)
+	}
+	return fmt.Errorf("no event router configured")
 }
-
-// ---------------------------------------------------------------------------
-// Callback setters — pure transport delegation
-// ---------------------------------------------------------------------------
 
 func (b *Backend) Subscribe(pattern protocol.EventPattern, handler protocol.EventHandler) (cancel func()) {
-	return b.transport.Subscribe(pattern, handler)
+	if b.router != nil {
+		return b.router.Subscribe(pattern, handler)
+	}
+	return func() {}
 }
 
+func (b *Backend) BindChat(chatID string) error {
+	if b.router != nil {
+		return b.router.BindChat(chatID)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Transport identity — delegated to EventRouter
+// ---------------------------------------------------------------------------
+
+func (b *Backend) ConnState() string {
+	if b.router != nil {
+		return b.router.ConnState()
+	}
+	return "unknown"
+}
+
+func (b *Backend) ServerURL() string {
+	if b.router != nil {
+		return b.router.ServerURL()
+	}
+	return ""
+}
+
+func (b *Backend) IsRemote() bool {
+	if b.router != nil {
+		return b.router.IsRemote()
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// Callbacks — delegated to CallbackRegistry
+// ---------------------------------------------------------------------------
+
 func (b *Backend) SetTUIControlHandler(cb func(action string, params map[string]string) (map[string]string, error)) {
-	b.transport.SetTUIControlHandler(cb)
+	if b.callbacks != nil {
+		b.callbacks.SetTUIControlHandler(cb)
+	}
 }
 
 func (b *Backend) WireCallbacks(
@@ -151,48 +253,49 @@ func (b *Backend) WireCallbacks(
 	registerAgentChannel func(name string, runFn bus.RunFn) error,
 	unregisterAgentChannel func(name string),
 ) {
-	b.transport.WireCallbacks(directSend, channelFinder, sessionStateHandler, messageSender, registerAgentChannel, unregisterAgentChannel)
+	if b.callbacks != nil {
+		b.callbacks.WireCallbacks(directSend, channelFinder, sessionStateHandler, messageSender, registerAgentChannel, unregisterAgentChannel)
+	}
 }
 
 func (b *Backend) SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error)) {
-	b.transport.SetChatRenameFn(fn)
+	if b.callbacks != nil {
+		b.callbacks.SetChatRenameFn(fn)
+	}
 }
 
-func (b *Backend) BindChat(chatID string) error { return b.transport.BindChat(chatID) }
-func (b *Backend) ConnState() string            { return b.transport.ConnState() }
-func (b *Backend) ServerURL() string            { return b.transport.ServerURL() }
-func (b *Backend) IsRemote() bool               { return b.transport.IsRemote() }
+// ---------------------------------------------------------------------------
+// Tool registration — direct agent access (local mode only)
+// ---------------------------------------------------------------------------
 
-// RegisterCoreTool/RegisterTool/IndexGlobalTools delegate to localTransport
-// for server-side use. No-op for remote transports.
 func (b *Backend) RegisterCoreTool(tool tools.Tool) {
-	if lt, ok := b.transport.(*localTransport); ok {
-		lt.agent.RegisterCoreTool(tool)
+	if b.agent != nil {
+		b.agent.RegisterCoreTool(tool)
 	}
 }
+
 func (b *Backend) RegisterTool(tool tools.Tool) {
-	if lt, ok := b.transport.(*localTransport); ok {
-		lt.agent.RegisterTool(tool)
+	if b.agent != nil {
+		b.agent.RegisterTool(tool)
 	}
 }
+
 func (b *Backend) IndexGlobalTools() {
-	if lt, ok := b.transport.(*localTransport); ok {
-		lt.agent.IndexGlobalTools()
+	if b.agent != nil {
+		b.agent.IndexGlobalTools()
 	}
 }
 
-// SetSandbox delegates to localTransport for server-side use.
 func (b *Backend) SetSandbox(sb tools.Sandbox, mode string) {
-	if lt, ok := b.transport.(*localTransport); ok {
-		lt.agent.SetSandbox(sb, mode)
+	if b.agent != nil {
+		b.agent.SetSandbox(sb, mode)
 	}
 }
 
-// SetChannelReconfigureFn delegates to localTransport for server-side use.
+// SetChannelReconfigureFn sets the callback invoked after a channel config change.
+// Stored on Backend itself — used by server-side code.
 func (b *Backend) SetChannelReconfigureFn(fn func(channel string)) {
-	if lt, ok := b.transport.(*localTransport); ok {
-		lt.reconfigureFn = fn
-	}
+	b.reconfigureFn = fn
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +537,6 @@ func (b *Backend) AddSubscription(senderID string, sub protocol.Subscription) er
 			BaseURL: sub.BaseURL, APIKey: sub.APIKey,
 			Model: sub.Model, Active: sub.Active,
 			MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode,
-			// PerModelConfigs is now protocol.PerModelConfig alias — use directly.
 			PerModelConfigs: sub.PerModelConfigs,
 		},
 	}, nil)
@@ -456,7 +558,6 @@ func (b *Backend) UpdateSubscription(id string, sub protocol.Subscription) error
 			BaseURL: sub.BaseURL, APIKey: sub.APIKey,
 			Model: sub.Model, Active: sub.Active,
 			MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode,
-			// PerModelConfigs is now protocol.PerModelConfig alias — use directly.
 			PerModelConfigs: sub.PerModelConfigs,
 		},
 	}, nil)

@@ -14,16 +14,21 @@ import (
 )
 
 // AgentBackend is the client-side interface for interacting with an agent.
-// Most methods are RPC calls — the agent may run in-process (via Go channels)
-// or on a remote server (via WebSocket). Communication methods (SendInbound,
-// Subscribe, BindChat, etc.) delegate directly to the transport.
-// Tool registration methods (RegisterCoreTool, RegisterTool, etc.) require a
-// local transport and are no-op over remote transports.
+// Most methods are RPC calls — the agent may run in-process (via ChannelTransport)
+// or on a remote server (via RemoteTransport).
 //
-// Server-side code (serverapp) uses the concrete *Backend type directly,
-// which has additional methods for in-process agent access.
+// Architecture (post-refactor):
+//
+//	Backend holds: Transport (Call/Close) + AgentRunner + EventRouter + CallbackRegistry
+//	- Lifecycle methods (Start/Stop/Run) → AgentRunner
+//	- Communication methods (SendInbound/Subscribe/BindChat) → EventRouter
+//	- Callback methods (WireCallbacks/SetTUIControlHandler) → CallbackRegistry
+//	- All other methods → Transport.Call() (RPC)
+//
+// Tool registration methods (RegisterCoreTool, etc.) require a local Agent
+// and are no-op over remote transports.
 type AgentBackend interface {
-	// --- Lifecycle ---
+	// --- Lifecycle (delegated to AgentRunner) ---
 	Start(ctx context.Context) error
 	Stop()
 	Close() error
@@ -111,13 +116,13 @@ type AgentBackend interface {
 	// --- Tenants (via RPC) ---
 	ListTenants() ([]TenantInfo, error)
 
-	// --- Tools (local transport only) ---
+	// --- Tools (local mode only — direct Agent access) ---
 	RegisterCoreTool(tool tools.Tool)
 	RegisterTool(tool tools.Tool)
 	IndexGlobalTools()
 	SetSandbox(sb tools.Sandbox, mode string)
 
-	// --- Communication (via Transport) ---
+	// --- Communication (delegated to EventRouter) ---
 	SendInbound(msg bus.InboundMessage) error
 	Subscribe(pattern protocol.EventPattern, handler protocol.EventHandler) (cancel func())
 	BindChat(chatID string) error
@@ -136,8 +141,7 @@ type AgentBackend interface {
 	GetChannelConfigs() (map[string]map[string]string, error)
 	SetChannelConfig(channel string, values map[string]string) error
 
-	// --- Callback Injection (same path for local & remote) ---
-	// WireCallbacks injects all shared agent callbacks (channelFinder, directSend, etc).
+	// --- Callback Injection (delegated to CallbackRegistry) ---
 	WireCallbacks(
 		directSend func(msg bus.OutboundMessage) (string, error),
 		channelFinder func(name string) (channel.Channel, bool),
@@ -146,6 +150,5 @@ type AgentBackend interface {
 		registerAgentChannel func(name string, runFn bus.RunFn) error,
 		unregisterAgentChannel func(name string),
 	)
-	// SetChatRenameFn injects the chat rename callback.
 	SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error))
 }

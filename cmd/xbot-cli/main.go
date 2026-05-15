@@ -826,25 +826,62 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 			XbotHome:        xbotHome,
 			DirectWorkspace: workDir,
 		}
-		backend, err = agent.NewChannelBackend(agent.ChannelTransportConfig{
-			AgentConfig: bc.AgentConfig(),
-			Dispatcher:  disp,
-			InitTools:   []tools.Tool{tools.NewWebSearchTool(cfg.TavilyAPIKey)},
-			LLMSetup: agent.LLMSetupConfig{
-				Tiers:     cfg.LLM,
-				Contexts:  cfg.Agent.ModelContexts,
-				MaxTokens: maxOutputTokens,
-				Retry: llm.RetryConfig{
-					Attempts: uint(cfg.Agent.LLMRetryAttempts),
-					Delay:    time.Duration(cfg.Agent.LLMRetryDelay),
-					MaxDelay: time.Duration(cfg.Agent.LLMRetryMaxDelay),
-					Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
-				},
-			},
-		})
-		if err != nil {
-			log.WithError(err).Fatal("Failed to create local backend")
+
+		// 1. Create Agent
+		ag, agentErr := agent.New(bc.AgentConfig())
+		if agentErr != nil {
+			log.WithError(agentErr).Fatal("Failed to create agent")
 		}
+
+		// 2. Register core tools and index
+		ag.RegisterCoreTool(tools.NewWebSearchTool(cfg.TavilyAPIKey))
+		ag.IndexGlobalTools()
+
+		// 3. Configure LLM factory
+		ag.LLMFactory().SetModelTiers(cfg.LLM)
+		ag.LLMFactory().SetModelContexts(cfg.Agent.ModelContexts)
+		if maxOutputTokens > 0 {
+			ag.LLMFactory().SetGlobalMaxTokens(maxOutputTokens)
+		}
+		ag.LLMFactory().SetRetryConfig(llm.RetryConfig{
+			Attempts: uint(cfg.Agent.LLMRetryAttempts),
+			Delay:    time.Duration(cfg.Agent.LLMRetryDelay),
+			MaxDelay: time.Duration(cfg.Agent.LLMRetryMaxDelay),
+			Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
+		})
+
+		// 4. Create event channel and CLI channel for TUI
+		eventCh := make(chan protocol.WSMessage, 256)
+		cliCh := channel.NewChannelCliChannel(eventCh)
+
+		// 5. Wire agent callbacks (channelFinder, messageSender, etc.)
+		ag.WireCallbacks(
+			disp.SendDirect,
+			disp.GetChannel,
+			func(ev protocol.SessionEvent) { cliCh.SendSessionState(ev) },
+			disp,
+			func(name string, runFn bus.RunFn) error {
+				ac := channel.NewAgentChannel(name, runFn)
+				if err := ac.Start(); err != nil {
+					return fmt.Errorf("start AgentChannel %s: %w", name, err)
+				}
+				disp.Register(ac)
+				return nil
+			},
+			func(name string) { disp.Unregister(name) },
+		)
+
+		// 6. Create DirectBackend + RPCTable
+		directBackend := agent.NewDirectBackend(ag)
+		rpcTable := serverapp.BuildRPCTable(cfg, directBackend, ag, disp, msgBus)
+
+		// 7. Create LocalLifecycle
+		lifecycle := agent.NewLocalLifecycle(ag, msgBus, eventCh)
+		lifecycle.SetCliChannel(cliCh)
+
+		// 8. Create ChannelTransport + assemble Backend
+		transport := agent.NewChannelTransport(rpcTable.Dispatch)
+		backend = agent.NewLocalBackend(transport, ag, lifecycle, lifecycle, lifecycle)
 	}
 
 	return &cliApp{

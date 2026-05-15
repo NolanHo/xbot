@@ -70,7 +70,7 @@ func TestHandleCLIRPCAdminAddSubscription_ListRoundTrip(t *testing.T) {
 	lb := fakeBackend{factory: factory}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := buildRPCTable(aCfg, lb, ag, nil, nil)
+	table := BuildRPCTable(aCfg, lb, ag, nil, nil)
 
 	// Add subscription via admin path (same as remote CLI does)
 	sub := channel.Subscription{
@@ -78,7 +78,7 @@ func TestHandleCLIRPCAdminAddSubscription_ListRoundTrip(t *testing.T) {
 		BaseURL: "https://api.openai.com/v1", APIKey: "sk-test", Model: "gpt-4",
 	}
 	addParams, _ := json.Marshal(map[string]any{"sub": sub})
-	if _, err := handleCLIRPC(table, "add_subscription", addParams, "admin"); err != nil {
+	if _, err := HandleCLIRPC(table, "add_subscription", addParams, "admin"); err != nil {
 		t.Fatalf("add_subscription: %v", err)
 	}
 
@@ -86,7 +86,7 @@ func TestHandleCLIRPCAdminAddSubscription_ListRoundTrip(t *testing.T) {
 	// Before fix: senderIDFromParams falls back to "admin" → empty list
 	// After fix: should return the subscription
 	listParams, _ := json.Marshal(map[string]string{"sender_id": ""})
-	raw, err := handleCLIRPC(table, "list_subscriptions", listParams, "admin")
+	raw, err := HandleCLIRPC(table, "list_subscriptions", listParams, "admin")
 	if err != nil {
 		t.Fatalf("list_subscriptions: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestHandleCLIRPCAddSubscription_PreservesCredentials(t *testing.T) {
 	lb := fakeBackend{factory: factory}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := buildRPCTable(aCfg, lb, ag, nil, nil)
+	table := BuildRPCTable(aCfg, lb, ag, nil, nil)
 
 	// Use snake_case keys matching channelSubscriptionJSON — the format the real
 	// backend sends via RPC (backend_impl.go UpdateSubscription).
@@ -138,13 +138,13 @@ func TestHandleCLIRPCAddSubscription_PreservesCredentials(t *testing.T) {
 			"model":    "gpt-5.5",
 		},
 	})
-	if _, err := handleCLIRPC(table, "add_subscription", addParams, "admin"); err != nil {
+	if _, err := HandleCLIRPC(table, "add_subscription", addParams, "admin"); err != nil {
 		t.Fatalf("add_subscription: %v", err)
 	}
 
 	// List and verify base_url/api_key are preserved
 	listParams, _ := json.Marshal(map[string]string{"sender_id": ""})
-	raw, err := handleCLIRPC(table, "list_subscriptions", listParams, "admin")
+	raw, err := HandleCLIRPC(table, "list_subscriptions", listParams, "admin")
 	if err != nil {
 		t.Fatalf("list_subscriptions: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestHandleCLIRPCUpdateSubscription_PreservesCredentials(t *testing.T) {
 	lb := fakeBackend{factory: factory}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := buildRPCTable(aCfg, lb, ag, nil, nil)
+	table := BuildRPCTable(aCfg, lb, ag, nil, nil)
 
 	// Add a subscription first (using snake_case matching real client)
 	addParams, _ := json.Marshal(map[string]any{
@@ -195,13 +195,13 @@ func TestHandleCLIRPCUpdateSubscription_PreservesCredentials(t *testing.T) {
 			"model":    "gpt-5.5",
 		},
 	})
-	if _, err := handleCLIRPC(table, "add_subscription", addParams, "admin"); err != nil {
+	if _, err := HandleCLIRPC(table, "add_subscription", addParams, "admin"); err != nil {
 		t.Fatalf("add_subscription: %v", err)
 	}
 
 	// Get the subscription ID via list
 	listParams, _ := json.Marshal(map[string]string{"sender_id": ""})
-	listRaw, err := handleCLIRPC(table, "list_subscriptions", listParams, "admin")
+	listRaw, err := HandleCLIRPC(table, "list_subscriptions", listParams, "admin")
 	if err != nil {
 		t.Fatalf("list_subscriptions: %v", err)
 	}
@@ -225,12 +225,12 @@ func TestHandleCLIRPCUpdateSubscription_PreservesCredentials(t *testing.T) {
 			"thinking_mode":     "",
 		},
 	})
-	if _, err := handleCLIRPC(table, "update_subscription", updateParams, "admin"); err != nil {
+	if _, err := HandleCLIRPC(table, "update_subscription", updateParams, "admin"); err != nil {
 		t.Fatalf("update_subscription: %v", err)
 	}
 
 	// Verify base_url and api_key are preserved
-	listRaw2, err := handleCLIRPC(table, "list_subscriptions", listParams, "admin")
+	listRaw2, err := HandleCLIRPC(table, "list_subscriptions", listParams, "admin")
 	if err != nil {
 		t.Fatalf("list_subscriptions after update: %v", err)
 	}
@@ -497,15 +497,15 @@ func TestHandleCLIRPCSetDefaultSubscriptionRefreshesSenderCache(t *testing.T) {
 	lb := fakeBackend{factory: factory}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := buildRPCTable(aCfg, lb, ag, nil, nil)
+	table := BuildRPCTable(aCfg, lb, ag, nil, nil)
 	_, model, _, _ := factory.GetLLM("cli_user")
 	if model != "gpt-4.1" {
 		t.Fatalf("expected initial gpt model, got %q", model)
 	}
 
 	params, _ := json.Marshal(map[string]string{"id": "sub-glm"})
-	if _, err := handleCLIRPC(table, "set_default_subscription", params, "admin"); err != nil {
-		t.Fatalf("handleCLIRPC set_default_subscription: %v", err)
+	if _, err := HandleCLIRPC(table, "set_default_subscription", params, "admin"); err != nil {
+		t.Fatalf("HandleCLIRPC set_default_subscription: %v", err)
 	}
 	_, model, _, _ = factory.GetLLM("cli_user")
 	if model != "glm-5.1" {
@@ -543,7 +543,7 @@ func TestHandleCLIRPCSetDefaultSubscription_CrossIdentity(t *testing.T) {
 	lb := fakeBackend{factory: factory}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := buildRPCTable(aCfg, lb, ag, nil, nil)
+	table := BuildRPCTable(aCfg, lb, ag, nil, nil)
 	// Agent calls GetLLM with "cli_user" (business identity)
 	_, model, _, _ := factory.GetLLM("cli_user")
 	if model != "gpt-4.1" {
@@ -552,8 +552,8 @@ func TestHandleCLIRPCSetDefaultSubscription_CrossIdentity(t *testing.T) {
 
 	// RPC call with WS auth "admin", no sender_id in params (matches real CLI behavior)
 	params, _ := json.Marshal(map[string]string{"id": "sub-glm"})
-	if _, err := handleCLIRPC(table, "set_default_subscription", params, "admin"); err != nil {
-		t.Fatalf("handleCLIRPC set_default_subscription: %v", err)
+	if _, err := HandleCLIRPC(table, "set_default_subscription", params, "admin"); err != nil {
+		t.Fatalf("HandleCLIRPC set_default_subscription: %v", err)
 	}
 	// The key assertion: GetLLM("cli_user") must see the new model
 	_, model, _, _ = factory.GetLLM("cli_user")

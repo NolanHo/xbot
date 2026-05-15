@@ -110,11 +110,6 @@ type setMaxConcurrencyReq struct {
 	N int `json:"n"`
 }
 
-type setMaxContextTokensReq struct {
-	MaxContext int    `json:"max_context"`
-	ChatID     string `json:"chat_id,omitempty"`
-}
-
 type setCompressionThresholdReq struct {
 	Threshold float64 `json:"threshold"`
 }

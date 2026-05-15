@@ -177,7 +177,7 @@ func (a *Agent) buildBaseRunConfig(
 		TUICtrlFn:    a.tuiCtrlFn,
 		ConfigGetFn:  a.configGetFn,
 		ConfigSetFn:  a.configSetFn,
-		ChatRenameFn: a.chatRenameFn,
+		ChatRenameFn: a.renameSession,
 
 		// Remote TUI control — detect RemoteCLIChannel and inject WS-based callback
 		RemoteTUICtrlFn: a.buildRemoteTUICtrlFn(channel, chatID),
@@ -734,7 +734,7 @@ func (a *Agent) buildSubAgentRunConfig(
 	// TUI/Config callbacks for tool execution (needed by tui_control/config tools)
 	cfg.TUICtrlFn = a.tuiCtrlFn
 	cfg.RemoteTUICtrlFn = a.buildRemoteTUICtrlFn(parentCtx.Channel, parentCtx.ChatID)
-	cfg.ChatRenameFn = a.chatRenameFn
+	cfg.ChatRenameFn = a.renameSession
 	cfg.MessageSender = a.messageSender
 	cfg.RegisterAgentChannel = a.registerAgentChannel
 	cfg.UnregisterAgentChannel = a.unregisterAgentChannel
@@ -833,7 +833,7 @@ func (a *Agent) buildToolExecutor(channel, chatID, senderID, senderName, sandbox
 	// TUI/Config callbacks for tool execution (needed by tui_control/config tools)
 	cfg.TUICtrlFn = a.tuiCtrlFn
 	cfg.RemoteTUICtrlFn = a.buildRemoteTUICtrlFn(channel, chatID)
-	cfg.ChatRenameFn = a.chatRenameFn
+	cfg.ChatRenameFn = a.renameSession
 	cfg.ListLLMSubs = a.listLLMSubsFn(channel)
 
 	var sessionOnce sync.Once
@@ -1312,30 +1312,26 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus
 	}
 
 	// Emit subagent_started event for instant sidebar push.
-	if a.sessionStateHandler != nil {
-		a.sessionStateHandler(protocol.SessionEvent{
-			Channel:  originChannel,
-			ChatID:   originChatID,
-			Action:   "subagent_started",
-			Role:     roleName,
-			Instance: oneshotInstance,
-			ParentID: originChatID,
-		})
-	}
+	a.emitSessionState(protocol.SessionEvent{
+		Channel:  originChannel,
+		ChatID:   originChatID,
+		Action:   "subagent_started",
+		Role:     roleName,
+		Instance: oneshotInstance,
+		ParentID: originChatID,
+	})
 
 	out := Run(subCtx, cfg)
 
 	// Emit subagent_stopped event for instant sidebar update.
-	if a.sessionStateHandler != nil {
-		a.sessionStateHandler(protocol.SessionEvent{
-			Channel:  originChannel,
-			ChatID:   originChatID,
-			Action:   "subagent_stopped",
-			Role:     roleName,
-			Instance: oneshotInstance,
-			ParentID: originChatID,
-		})
-	}
+	a.emitSessionState(protocol.SessionEvent{
+		Channel:  originChannel,
+		ChatID:   originChatID,
+		Action:   "subagent_stopped",
+		Role:     roleName,
+		Instance: oneshotInstance,
+		ParentID: originChatID,
+	})
 
 	log.Ctx(ctx).WithFields(log.Fields{
 		"role":     roleName,

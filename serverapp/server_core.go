@@ -13,48 +13,19 @@ import (
 	"xbot/config"
 	llm_pkg "xbot/llm"
 	log "xbot/logger"
-	"xbot/protocol"
 	"xbot/tools"
 )
 
-// ServerHandle is an opaque handle to the server's internal state.
-// External packages (CLI) use it to inject callbacks without
-// ever importing or touching the Agent type.
-type ServerHandle interface {
-	// SetSessionStateHandler registers a callback for session state changes.
-	SetSessionStateHandler(fn func(ev protocol.SessionEvent))
-	// SetChatRenameFn registers a callback for renaming chat sessions.
-	SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error))
-}
-
-// serverHandle is the internal implementation. Within the serverapp package,
-// callers can use .Agent() to access the underlying *agent.Agent.
-type serverHandle struct {
-	ag *agent.Agent
-}
-
-func (h *serverHandle) Agent() *agent.Agent { return h.ag }
-
-func (h *serverHandle) SetSessionStateHandler(fn func(ev protocol.SessionEvent)) {
-	h.ag.SetSessionStateHandler(fn)
-}
-
-func (h *serverHandle) SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error)) {
-	h.ag.SetChatRenameFn(fn)
-}
-
 // InitServer creates the core server components and starts the agent loop.
-// It returns a ServerHandle (opaque to external packages) along with
-// the RPCTable, Dispatcher, and MessageBus.
+// It returns the RPCTable, Dispatcher, and MessageBus.
+// The Agent is created and managed internally — callers never access it directly.
 //
 // Both CLI local mode and server remote mode call this.
 // The caller is responsible for:
 //   - Registering the CLI/WS channel with the returned Dispatcher
-//   - Calling handle.SetSessionStateHandler() after the channel is created
-//   - Calling handle.SetChatRenameFn() if needed (local CLI mode)
 //   - HTTP/WS listening (server mode only)
 func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbotHome string, personaIsolation bool, reconfigureFn func(string)) (
-	handle ServerHandle, rpcTable RPCTable, disp *channel.Dispatcher, msgBus *bus.MessageBus, err error) {
+	ag *agent.Agent, rpcTable RPCTable, disp *channel.Dispatcher, msgBus *bus.MessageBus, err error) {
 
 	// 1. Create MessageBus and Dispatcher.
 	msgBus = bus.NewMessageBus()
@@ -73,7 +44,7 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 	offloadDir := filepath.Join(xbotHome, "offload_store")
 	maskDir := filepath.Join(xbotHome, "mask")
 
-	ag, err := agent.New(agent.Config{
+	ag, err = agent.New(agent.Config{
 		Bus:                   msgBus,
 		LLM:                   llmClient,
 		Model:                 cfg.LLM.Model,
@@ -139,13 +110,12 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 		Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
 	})
 
-	// 6. Wire agent callbacks (sessionStateHandler set later via ServerHandle).
+	// 6. Wire agent callbacks.
 	ag.WireCallbacks(
 		func(msg bus.OutboundMessage) (string, error) { // directSend
 			return disp.SendDirect(msg)
 		},
 		disp.GetChannel, // channelFinder
-		nil,             // sessionStateHandler — set later via handle.SetSessionStateHandler
 		disp,            // messageSender
 		func(name string, runFn bus.RunFn) error { // registerAgentChannel
 			ac := channel.NewAgentChannel(name, runFn)
@@ -168,7 +138,7 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 	}()
 	log.Info("Agent loop started")
 
-	return &serverHandle{ag: ag}, rpcTable, disp, msgBus, nil
+	return ag, rpcTable, disp, msgBus, nil
 }
 
 // DispatchRPC dispatches an RPC request to the given RPCTable.

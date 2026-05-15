@@ -22,7 +22,6 @@ import (
 	log "xbot/logger"
 	"xbot/oauth"
 	"xbot/oauth/providers"
-	"xbot/protocol"
 	"xbot/storage"
 	"xbot/storage/sqlite"
 	"xbot/tools"
@@ -394,7 +393,6 @@ func Run(args []string) error {
 	// The closure is only invoked at runtime (never during InitServer), so the
 	// nil→non-nil transition after InitServer returns is safe.
 	var (
-		handle   ServerHandle
 		ag       *agent.Agent
 		rpcTable RPCTable
 		disp     *channel.Dispatcher
@@ -433,11 +431,10 @@ func Run(args []string) error {
 		}
 	}
 
-	handle, rpcTable, disp, msgBus, err = InitServer(cfg, llmClient, dbPath, workDir, xbotDir, cfg.Web.PersonaIsolation, channelReconfigureFn)
+	ag, rpcTable, disp, msgBus, err = InitServer(cfg, llmClient, dbPath, workDir, xbotDir, cfg.Web.PersonaIsolation, channelReconfigureFn)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to init server")
 	}
-	ag = handle.(*serverHandle).Agent() // internal: serverapp package can access *agent.Agent
 
 	// Migrate config.json subscriptions into DB for the admin user.
 	// This ensures admin is a normal DB user with real subscriptions,
@@ -640,66 +637,8 @@ func Run(args []string) error {
 		disp.Register(channel.NewRemoteCLIChannel(webCh.Hub()))
 	}
 
-	// sessionStateHandler pushes session state change events to the CLI via WS.
-	// InitServer already called WireCallbacks with nil sessionStateHandler;
-	// we set it here after the RemoteCLIChannel is registered.
-	sessionStateHandler := func(ev protocol.SessionEvent) {
-		if ch, ok := disp.GetChannel("cli"); ok {
-			if remoteCLICh, ok := ch.(*channel.RemoteCLIChannel); ok {
-				remoteCLICh.SendSessionState(ev)
-			}
-		}
-	}
-	handle.SetSessionStateHandler(sessionStateHandler)
-
-	// Wire ChatRenameFn: rename session in DB (for remote CLI and server-side agents).
-	// Uses upsert (INSERT ON CONFLICT) to handle both existing and new user_chats rows.
-	// CLI sessions may not have a user_chats row yet — the upsert creates one if needed.
-	if tokenDB != nil {
-		ag.SetChatRenameFn(func(chatID, newName string) (string, error) {
-			conn := tokenDB.Conn()
-			// Look up current label from DB for the old name
-			var oldName string
-			row := conn.QueryRow(`SELECT label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND chat_id = ?`, cliSenderID, chatID)
-			_ = row.Scan(&oldName)
-			if oldName == "" {
-				_, oldName = channel.ParseChatID(chatID)
-			}
-			// Deduplicate against all other CLI session labels in DB
-			finalName := channel.DeduplicateSessionName(newName, chatID, func() []channel.NameEntry {
-				rows, err := conn.Query(`SELECT chat_id, label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND label != ''`, cliSenderID)
-				if err != nil {
-					return nil
-				}
-				defer rows.Close()
-				var entries []channel.NameEntry
-				for rows.Next() {
-					var cid, lbl string
-					if err := rows.Scan(&cid, &lbl); err == nil {
-						entries = append(entries, channel.NameEntry{Name: lbl, ChatID: cid})
-					}
-				}
-				return entries
-			})
-			_, err := conn.Exec(`
-				INSERT INTO user_chats (channel, sender_id, chat_id, label)
-				VALUES ('cli', ?, ?, ?)
-				ON CONFLICT(channel, sender_id, chat_id) DO UPDATE SET label = ?`,
-				cliSenderID, chatID, finalName, finalName,
-			)
-			if err != nil {
-				return "", fmt.Errorf("rename chat in DB: %w", err)
-			}
-			// Push renamed event to CLI so sidebar updates immediately.
-			sessionStateHandler(protocol.SessionEvent{
-				Channel: "cli",
-				ChatID:  chatID,
-				Action:  "renamed",
-				Label:   finalName,
-			})
-			return oldName, nil
-		})
-	}
+	// sessionStateHandler and ChatRenameFn are now handled internally by Agent.
+	// No external injection needed — Agent uses its own channelFinder + multiSession.DB().
 
 	// 设置飞书渠道的 CardBuilder（用于卡片回调处理）
 	if feishuCh != nil {

@@ -39,7 +39,7 @@ type rpcResponse struct {
 //   - Transport interface: Call, Close (WebSocket RPC transport)
 //   - AgentRunner interface: Start, Stop, Run (lifecycle management)
 //   - EventRouter interface: SendMessage, BindChat, Subscribe, ConnState (event routing)
-//   - CallbackRegistry interface: WireCallbacks, SetTUIControlHandler, SetChatRenameFn
+//   - CallbackRegistry interface: WireCallbacks, SetTUIControlHandler
 //
 // Internal WebSocket plumbing (connect, readPump, pingLoop, reconnectLoop)
 // is grouped at the bottom of this file.
@@ -304,9 +304,9 @@ func (t *RemoteTransport) IsRemote() bool { return true }
 func (t *RemoteTransport) ServerURL() string { return t.serverURL }
 
 // ==========================================================================
-// CallbackRegistry interface (SetTUIControlHandler + WireCallbacks + SetChatRenameFn)
+// CallbackRegistry interface (SetTUIControlHandler + WireCallbacks)
 // These methods satisfy Client callback requirements.
-// WireCallbacks and SetChatRenameFn are no-op for remote transport —
+// WireCallbacks is no-op for remote transport —
 // the server wires these directly on the Agent.
 // ==========================================================================
 
@@ -320,15 +320,10 @@ func (t *RemoteTransport) SetTUIControlHandler(cb func(action string, params map
 func (t *RemoteTransport) WireCallbacks(
 	func(msg bus.OutboundMessage) (string, error),
 	func(name string) (channel.Channel, bool),
-	func(ev protocol.SessionEvent),
 	bus.MessageSender,
 	func(name string, runFn bus.RunFn) error,
 	func(name string),
 ) {
-}
-
-// SetChatRenameFn is noop for remote transport — server.go wires directly on Agent.
-func (t *RemoteTransport) SetChatRenameFn(func(chatID, newName string) (oldName string, err error)) {
 }
 
 // ==========================================================================

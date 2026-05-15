@@ -326,17 +326,15 @@ type Agent struct {
 	settingsSvc *SettingsService
 
 	// TUI control callbacks (set by CLI channel, nil for other channels)
-	tuiCtrlFn    func(action string, params map[string]string) (map[string]string, error)
-	configGetFn  func(key string) (string, error)
-	configSetFn  func(key, value string) (string, error)
-	chatRenameFn func(chatID, newName string) (oldName string, err error)
+	tuiCtrlFn   func(action string, params map[string]string) (map[string]string, error)
+	configGetFn func(key string) (string, error)
+	configSetFn func(key, value string) (string, error)
 
 	// channelFinder looks up a channel instance by name (injected from main.go).
 	channelFinder func(name string) (channel.Channel, bool)
 
-	// sessionStateHandler emits session state change events (injected from main.go).
-	// Called at Run busy/idle transitions and SubAgent create/destroy.
-	sessionStateHandler func(ev protocol.SessionEvent)
+	// cliSenderID is the sender_id used for CLI channel DB operations.
+	cliSenderID string
 
 	// bgTaskMgr manages background shell tasks (shared across all sessions)
 
@@ -375,11 +373,6 @@ func (a *Agent) SetTUICallbacks(
 	a.tuiCtrlFn = tuiCtrl
 	a.configGetFn = configGet
 	a.configSetFn = configSet
-}
-
-// SetChatRenameFn sets the chat rename callback (CLI channel only).
-func (a *Agent) SetChatRenameFn(chatRename func(chatID, newName string) (oldName string, err error)) {
-	a.chatRenameFn = chatRename
 }
 
 // buildRemoteTUICtrlFn returns a TUIControl callback for remote CLI mode via WS,
@@ -492,10 +485,77 @@ func (a *Agent) SetChannelFinder(fn func(name string) (channel.Channel, bool)) {
 	}
 }
 
-// SetSessionStateHandler sets the callback for emitting session state change events.
-// Called at Run busy/idle transitions and SubAgent lifecycle events.
-func (a *Agent) SetSessionStateHandler(fn func(ev protocol.SessionEvent)) {
-	a.sessionStateHandler = fn
+// emitSessionState pushes a session state event to the CLI channel.
+// Uses channelFinder to locate the "cli" channel and type-asserts to SessionStateSender.
+func (a *Agent) emitSessionState(ev protocol.SessionEvent) {
+	if a.channelFinder == nil {
+		return
+	}
+	ch, ok := a.channelFinder("cli")
+	if !ok {
+		return
+	}
+	if sender, ok := ch.(channel.SessionStateSender); ok {
+		sender.SendSessionState(ev)
+	}
+}
+
+// renameSession renames a chat session in DB and pushes the state change.
+// Uses multiSession.DB() for DB access and emitSessionState for notification.
+func (a *Agent) renameSession(chatID, newName string) (oldName string, err error) {
+	if a.multiSession == nil {
+		return "", fmt.Errorf("renameSession: no multiSession DB")
+	}
+	db := a.multiSession.DB()
+	if db == nil {
+		return "", fmt.Errorf("renameSession: no DB connection")
+	}
+	conn := db.Conn()
+
+	// Get old name
+	row := conn.QueryRow(`SELECT label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND chat_id = ?`, a.cliSenderID, chatID)
+	_ = row.Scan(&oldName)
+	if oldName == "" {
+		_, oldName = channel.ParseChatID(chatID)
+	}
+
+	// Deduplicate
+	finalName := channel.DeduplicateSessionName(newName, chatID, func() []channel.NameEntry {
+		rows, err := conn.Query(`SELECT chat_id, label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND label != ''`, a.cliSenderID)
+		if err != nil {
+			return nil
+		}
+		defer rows.Close()
+		var entries []channel.NameEntry
+		for rows.Next() {
+			var cid, lbl string
+			if err := rows.Scan(&cid, &lbl); err == nil {
+				entries = append(entries, channel.NameEntry{Name: lbl, ChatID: cid})
+			}
+		}
+		return entries
+	})
+
+	// Update DB
+	_, err = conn.Exec(`
+		INSERT INTO user_chats (channel, sender_id, chat_id, label)
+		VALUES ('cli', ?, ?, ?)
+		ON CONFLICT(channel, sender_id, chat_id) DO UPDATE SET label = ?`,
+		a.cliSenderID, chatID, finalName, finalName,
+	)
+	if err != nil {
+		return "", fmt.Errorf("rename chat in DB: %w", err)
+	}
+
+	// Push state change
+	a.emitSessionState(protocol.SessionEvent{
+		Channel: "cli",
+		ChatID:  chatID,
+		Action:  "renamed",
+		Label:   finalName,
+	})
+
+	return oldName, nil
 }
 
 // IsProcessing returns true if there is an active Run for the given sender.
@@ -623,6 +683,9 @@ type Config struct {
 	PluginEnabled         bool     // Enable plugin system
 	PluginDirs            []string // Additional plugin directories
 	PluginDisabledPlugins []string // Plugin IDs to disable
+
+	// CLISenderID is the sender_id used for CLI channel DB operations (default: "cli_user").
+	CLISenderID string
 }
 
 // initStores 初始化各类存储和注册表，返回 skillStore, agentStore, chatHistory, registry, cardBuilder。
@@ -915,6 +978,9 @@ func New(cfg Config) (*Agent, error) {
 	if cfg.MaxSubAgentDepth <= 0 {
 		cfg.MaxSubAgentDepth = 6
 	}
+	if cfg.CLISenderID == "" {
+		cfg.CLISenderID = "cli_user"
+	}
 
 	// 2. 初始化存储和注册表
 	skillStore, agentStore, chatHistory, registry, cardBuilder := initStores(cfg)
@@ -967,7 +1033,8 @@ func New(cfg Config) (*Agent, error) {
 			}
 			return mgr
 		}(),
-		bgTaskMgr: tools.NewBackgroundTaskManager(),
+		bgTaskMgr:   tools.NewBackgroundTaskManager(),
+		cliSenderID: cfg.CLISenderID,
 	}
 
 	// 5. 初始化各类服务（修改 agent 指针）
@@ -1707,11 +1774,9 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 		a.chatCancelCh.Store(cancelKey, cancelCh)
 
 		// Emit session busy event for instant sidebar push.
-		if a.sessionStateHandler != nil {
-			a.sessionStateHandler(protocol.SessionEvent{
-				Channel: msg.Channel, ChatID: msg.ChatID, Action: "busy",
-			})
-		}
+		a.emitSessionState(protocol.SessionEvent{
+			Channel: msg.Channel, ChatID: msg.ChatID, Action: "busy",
+		})
 
 		// 消费 pending cancel：如果 /cancel 在消息排队期间已到达，立即发信号
 		if _, pending := a.pendingCancel.LoadAndDelete(cancelKey); pending {
@@ -1743,11 +1808,9 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 				a.pendingCancel.Delete(cancelKey)
 
 				// Emit session idle event for instant sidebar push.
-				if a.sessionStateHandler != nil {
-					a.sessionStateHandler(protocol.SessionEvent{
-						Channel: msg.Channel, ChatID: msg.ChatID, Action: "idle",
-					})
-				}
+				a.emitSessionState(protocol.SessionEvent{
+					Channel: msg.Channel, ChatID: msg.ChatID, Action: "idle",
+				})
 				key := sessionKey(msg.Channel, msg.ChatID)
 				a.lastProgressSnapshot.Delete(key)
 				a.iterationHistories.Delete(key)

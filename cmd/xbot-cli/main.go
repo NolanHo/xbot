@@ -573,8 +573,7 @@ type cliApp struct {
 	llmClient llm.LLM
 	msgBus    *bus.MessageBus
 	db        *sqlite.DB
-	client    *agent.Client          // unified RPC client (local or remote)
-	handle    serverapp.ServerHandle // server handle for callback injection (local mode)
+	client    *agent.Client // unified RPC client (local or remote)
 	disp      *channel.Dispatcher
 	workDir   string
 	xbotHome  string
@@ -754,7 +753,6 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 	}
 
 	var (
-		handle serverapp.ServerHandle
 		disp   *channel.Dispatcher
 		client *agent.Client
 	)
@@ -829,7 +827,7 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 		var coreDisp *channel.Dispatcher
 		var coreMsgBus *bus.MessageBus
 		var coreErr error
-		handle, rpcTable, coreDisp, coreMsgBus, coreErr = serverapp.InitServer(cfg, llmClient, dbPath, workDir, xbotHome, false, nil)
+		_, rpcTable, coreDisp, coreMsgBus, coreErr = serverapp.InitServer(cfg, llmClient, dbPath, workDir, xbotHome, false, nil)
 		if coreErr != nil {
 			log.WithError(coreErr).Fatal("Failed to init server")
 		}
@@ -861,7 +859,6 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 		msgBus:    msgBus,
 		db:        db,
 		client:    client,
-		handle:    handle,
 		disp:      disp,
 		workDir:   workDir,
 		xbotHome:  xbotHome,
@@ -1737,59 +1734,8 @@ func main() {
 	// Both local and remote modes run the same initialization.
 	// Only a few items are remote-specific (reconnect, conn_state).
 
-	// ── Wire CLI-specific callbacks (sessionStateHandler, SetChatRenameFn) ──
-	// InitServer already called WireCallbacks (with nil sessionStateHandler)
-	// and started ag.Run. We only set the CLI-specific callbacks here.
-	if app.handle != nil {
-		sessionStateHandler := func(ev protocol.SessionEvent) {
-			cliCh.SendSessionState(ev)
-		}
-		app.handle.SetSessionStateHandler(sessionStateHandler)
-
-		// SetChatRenameFn: rename session in DB. Same logic as server.go.
-		if app.db != nil {
-			conn := app.db.Conn()
-			app.handle.SetChatRenameFn(func(chatID, newName string) (string, error) {
-				var oldName string
-				row := conn.QueryRow(`SELECT label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND chat_id = ?`, cliSenderID, chatID)
-				_ = row.Scan(&oldName)
-				if oldName == "" {
-					_, oldName = channel.ParseChatID(chatID)
-				}
-				finalName := channel.DeduplicateSessionName(newName, chatID, func() []channel.NameEntry {
-					rows, err := conn.Query(`SELECT chat_id, label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND label != ''`, cliSenderID)
-					if err != nil {
-						return nil
-					}
-					defer rows.Close()
-					var entries []channel.NameEntry
-					for rows.Next() {
-						var cid, lbl string
-						if err := rows.Scan(&cid, &lbl); err == nil {
-							entries = append(entries, channel.NameEntry{Name: lbl, ChatID: cid})
-						}
-					}
-					return entries
-				})
-				_, err := conn.Exec(`
-					INSERT INTO user_chats (channel, sender_id, chat_id, label)
-					VALUES ('cli', ?, ?, ?)
-					ON CONFLICT(channel, sender_id, chat_id) DO UPDATE SET label = ?`,
-					cliSenderID, chatID, finalName, finalName,
-				)
-				if err != nil {
-					return "", fmt.Errorf("rename chat in DB: %w", err)
-				}
-				sessionStateHandler(protocol.SessionEvent{
-					Channel: "cli",
-					ChatID:  chatID,
-					Action:  "renamed",
-					Label:   finalName,
-				})
-				return oldName, nil
-			})
-		}
-	} // end sessionStateHandler + SetChatRenameFn
+	// sessionStateHandler and ChatRenameFn are now handled internally by Agent.
+	// No external injection needed — Agent uses its own channelFinder + multiSession.DB().
 
 	// Refine firstRun: config.json check passed, but DB may already have a subscription.
 	// Must be after backend.Start() because channelTransport requires the serve()

@@ -288,7 +288,6 @@ func (c *Client) SetTUIControlHandler(cb func(action string, params map[string]s
 func (c *Client) WireCallbacks(
 	directSend func(msg bus.OutboundMessage) (string, error),
 	channelFinder func(name string) (channel.Channel, bool),
-	sessionStateHandler func(ev protocol.SessionEvent),
 	messageSender bus.MessageSender,
 	registerAgentChannel func(name string, runFn bus.RunFn) error,
 	unregisterAgentChannel func(name string),
@@ -297,25 +296,15 @@ func (c *Client) WireCallbacks(
 		WireCallbacks(
 			func(msg bus.OutboundMessage) (string, error),
 			func(name string) (channel.Channel, bool),
-			func(ev protocol.SessionEvent),
 			bus.MessageSender,
 			func(name string, runFn bus.RunFn) error,
 			func(name string),
 		)
 	}
 	if setter, ok := c.transport.(wireSetter); ok {
-		setter.WireCallbacks(directSend, channelFinder, sessionStateHandler, messageSender, registerAgentChannel, unregisterAgentChannel)
+		setter.WireCallbacks(directSend, channelFinder, messageSender, registerAgentChannel, unregisterAgentChannel)
 	}
 	// Local mode: no-op (handled by ServerCore)
-}
-
-func (c *Client) SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error)) {
-	type renameSetter interface {
-		SetChatRenameFn(func(chatID, newName string) (oldName string, err error))
-	}
-	if setter, ok := c.transport.(renameSetter); ok {
-		setter.SetChatRenameFn(fn)
-	}
 }
 
 // ---------------------------------------------------------------------------

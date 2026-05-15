@@ -343,16 +343,14 @@ func (a *Agent) SpawnInteractiveSession(
 	}
 
 	// Emit subagent_started event for instant sidebar push.
-	if a.sessionStateHandler != nil {
-		a.sessionStateHandler(protocol.SessionEvent{
-			Channel:  originChannel,
-			ChatID:   originChatID,
-			Action:   "subagent_started",
-			Role:     roleName,
-			Instance: instance,
-			ParentID: originChatID,
-		})
-	}
+	a.emitSessionState(protocol.SessionEvent{
+		Channel:  originChannel,
+		ChatID:   originChatID,
+		Action:   "subagent_started",
+		Role:     roleName,
+		Instance: instance,
+		ParentID: originChatID,
+	})
 
 	// --- 阶段 2：锁外构建 config（不需要锁） ---
 	parentCtx := a.buildParentToolContext(ctx, originChannel, originChatID, originSender, msg)
@@ -362,38 +360,36 @@ func (a *Agent) SpawnInteractiveSession(
 		a.interactiveSubAgents.Delete(key)
 
 		// Emit subagent_stopped event for instant sidebar push.
-		if a.sessionStateHandler != nil {
-			// Parse key to extract channel, chatID, role, instance.
-			// key format: "channel:chatID/roleName[:instance]"
-			parts := strings.SplitN(key, ":", 2)
-			chanPart := ""
-			rest := key
-			if len(parts) == 2 {
-				chanPart = parts[0]
-				rest = parts[1]
+		// Parse key to extract channel, chatID, role, instance.
+		// key format: "channel:chatID/roleName[:instance]"
+		parts := strings.SplitN(key, ":", 2)
+		chanPart := ""
+		rest := key
+		if len(parts) == 2 {
+			chanPart = parts[0]
+			rest = parts[1]
+		}
+		chatIDAndRole := strings.SplitN(rest, "/", 2)
+		chatIDPart := rest
+		rolePart := ""
+		instPart := ""
+		if len(chatIDAndRole) == 2 {
+			chatIDPart = chatIDAndRole[0]
+			roleAndInst := chatIDAndRole[1]
+			riParts := strings.SplitN(roleAndInst, ":", 2)
+			rolePart = riParts[0]
+			if len(riParts) > 1 {
+				instPart = riParts[1]
 			}
-			chatIDAndRole := strings.SplitN(rest, "/", 2)
-			chatIDPart := rest
-			rolePart := ""
-			instPart := ""
-			if len(chatIDAndRole) == 2 {
-				chatIDPart = chatIDAndRole[0]
-				roleAndInst := chatIDAndRole[1]
-				riParts := strings.SplitN(roleAndInst, ":", 2)
-				rolePart = riParts[0]
-				if len(riParts) > 1 {
-					instPart = riParts[1]
-				}
-			}
-			a.sessionStateHandler(protocol.SessionEvent{
-				Channel:  chanPart,
-				ChatID:   chatIDPart,
-				Action:   "subagent_stopped",
-				Role:     rolePart,
-				Instance: instPart,
-				ParentID: chatIDPart,
-			})
-		} // 清理占位符
+		}
+		a.emitSessionState(protocol.SessionEvent{
+			Channel:  chanPart,
+			ChatID:   chatIDPart,
+			Action:   "subagent_stopped",
+			Role:     rolePart,
+			Instance: instPart,
+			ParentID: chatIDPart,
+		}) // 清理占位符
 		return &bus.OutboundMessage{Content: err.Error(), Error: err}, nil
 	}
 	subCtx := WithCallChain(ctx, cc.Spawn(roleName))

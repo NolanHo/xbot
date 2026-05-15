@@ -385,15 +385,15 @@ func loadLLMFromLocalDB(db *sqlite.DB, cfg *config.Config) bool {
 	return true
 }
 
-func seedLocalDBSubscriptions(backend agent.AgentBackend, cfg *config.Config) error {
-	if backend == nil {
+func seedLocalDBSubscriptions(client *agent.Client, cfg *config.Config) error {
+	if client == nil {
 		return nil
 	}
 	sourceSubs := localSeedSourceSubscriptions(cfg)
 	if len(sourceSubs) == 0 {
 		return nil
 	}
-	existing, err := backend.ListSubscriptions(cliSenderID)
+	existing, err := client.ListSubscriptions(cliSenderID)
 	if err != nil {
 		return err
 	}
@@ -402,7 +402,7 @@ func seedLocalDBSubscriptions(backend agent.AgentBackend, cfg *config.Config) er
 	}
 	hasActive := hasActiveSeedSubscription(sourceSubs)
 	for i, sc := range sourceSubs {
-		if err := backend.AddSubscription(cliSenderID, protocol.Subscription{
+		if err := client.AddSubscription(cliSenderID, protocol.Subscription{
 			ID:              sc.ID,
 			Name:            sc.Name,
 			Provider:        sc.Provider,
@@ -419,11 +419,11 @@ func seedLocalDBSubscriptions(backend agent.AgentBackend, cfg *config.Config) er
 	return nil
 }
 
-func loadLLMFromDBSubscription(backend agent.AgentBackend, cfg *config.Config) bool {
-	if backend == nil {
+func loadLLMFromDBSubscription(client *agent.Client, cfg *config.Config) bool {
+	if client == nil {
 		return false
 	}
-	sub, err := backend.GetDefaultSubscription(cliSenderID)
+	sub, err := client.GetDefaultSubscription(cliSenderID)
 	if err != nil || sub == nil {
 		return false
 	}
@@ -431,8 +431,8 @@ func loadLLMFromDBSubscription(backend agent.AgentBackend, cfg *config.Config) b
 	cfg.LLM.BaseURL = sub.BaseURL
 	cfg.LLM.APIKey = sub.APIKey
 	cfg.LLM.Model = sub.Model
-	cfg.LLM.MaxOutputTokens = backend.GetUserMaxOutputTokens(cliSenderID)
-	cfg.LLM.ThinkingMode = backend.GetUserThinkingMode(cliSenderID)
+	cfg.LLM.MaxOutputTokens = client.GetUserMaxOutputTokens(cliSenderID)
+	cfg.LLM.ThinkingMode = client.GetUserThinkingMode(cliSenderID)
 	return true
 }
 
@@ -442,8 +442,8 @@ func loadLLMFromDBSubscription(backend agent.AgentBackend, cfg *config.Config) b
 //
 // When only llm_model changes (no provider/key/url), it checks if the target model
 // belongs to a different subscription and switches to it instead of overwriting.
-func updateActiveSubscription(backend agent.AgentBackend, cfg *config.Config, values map[string]string) error {
-	if backend == nil {
+func updateActiveSubscription(client *agent.Client, cfg *config.Config, values map[string]string) error {
+	if client == nil {
 		return nil
 	}
 
@@ -454,10 +454,10 @@ func updateActiveSubscription(backend agent.AgentBackend, cfg *config.Config, va
 		_, keyChanged := values["llm_api_key"]
 		_, urlChanged := values["llm_base_url"]
 		if !providerChanged && !keyChanged && !urlChanged {
-			if subs, err := backend.ListSubscriptions(cliSenderID); err == nil {
+			if subs, err := client.ListSubscriptions(cliSenderID); err == nil {
 				for _, sub := range subs {
 					if sub.Model == targetModel && sub.ID != "" {
-						return backend.SetDefaultSubscription(sub.ID, "")
+						return client.SetDefaultSubscription(sub.ID, "")
 					}
 				}
 			}
@@ -465,7 +465,7 @@ func updateActiveSubscription(backend agent.AgentBackend, cfg *config.Config, va
 	}
 
 	// Get or create default subscription
-	sub, err := backend.GetDefaultSubscription(cliSenderID)
+	sub, err := client.GetDefaultSubscription(cliSenderID)
 	if err != nil || sub == nil {
 		subID := ""
 		maxTok := -1
@@ -510,17 +510,17 @@ func updateActiveSubscription(backend agent.AgentBackend, cfg *config.Config, va
 		if v, ok := values["thinking_mode"]; ok {
 			newSub.ThinkingMode = v
 		}
-		if err := backend.AddSubscription(cliSenderID, newSub); err != nil {
+		if err := client.AddSubscription(cliSenderID, newSub); err != nil {
 			return fmt.Errorf("create subscription: %w", err)
 		}
 		// Find the newly created subscription and set it as default
-		subs, listErr := backend.ListSubscriptions(cliSenderID)
+		subs, listErr := client.ListSubscriptions(cliSenderID)
 		if listErr != nil {
 			return fmt.Errorf("list subscriptions after create: %w", listErr)
 		}
 		for _, s := range subs {
 			if s.Provider == provider && s.Model == model && s.APIKey == apiKey {
-				_ = backend.SetDefaultSubscription(s.ID, "")
+				_ = client.SetDefaultSubscription(s.ID, "")
 				break
 			}
 		}
@@ -564,7 +564,7 @@ func updateActiveSubscription(backend agent.AgentBackend, cfg *config.Config, va
 	}
 
 	log.Debugf("[Settings] UpdateSubscription: id=%s max_output_tokens=%d thinking_mode=%q", sub.ID, sub.MaxOutputTokens, sub.ThinkingMode)
-	return backend.UpdateSubscription(sub.ID, *sub)
+	return client.UpdateSubscription(sub.ID, *sub)
 }
 
 // cliApp 封装 CLI 的公共初始化逻辑，供交互和非交互模式共享。
@@ -2219,32 +2219,32 @@ func createLLM(cfg config.LLMConfig, retryCfg llm.RetryConfig) (llm.LLM, error) 
 
 // backendSettingsService implements channel.SettingsService via Backend RPC.
 type backendSettingsService struct {
-	backend agent.AgentBackend
+	client *agent.Client
 }
 
-func newBackendSettingsService(backend agent.AgentBackend) *backendSettingsService {
-	return &backendSettingsService{backend: backend}
+func newBackendSettingsService(client *agent.Client) *backendSettingsService {
+	return &backendSettingsService{client: client}
 }
 
 func (s *backendSettingsService) GetSettings(namespace, senderID string) (map[string]string, error) {
-	return s.backend.GetSettings(namespace, senderID)
+	return s.client.GetSettings(namespace, senderID)
 }
 
 func (s *backendSettingsService) SetSetting(namespace, senderID, key, value string) error {
-	return s.backend.SetSetting(namespace, senderID, key, value)
+	return s.client.SetSetting(namespace, senderID, key, value)
 }
 
 // backendModelLister implements channel.ModelLister via Backend RPC.
 type backendModelLister struct {
-	backend agent.AgentBackend
+	client *agent.Client
 }
 
-func newBackendModelLister(backend agent.AgentBackend) *backendModelLister {
-	return &backendModelLister{backend: backend}
+func newBackendModelLister(client *agent.Client) *backendModelLister {
+	return &backendModelLister{client: client}
 }
 
 func (l *backendModelLister) ListModels() []string {
-	return l.backend.ListModels()
+	return l.client.ListModels()
 }
 
 func (l *backendModelLister) EnsureModelsLoaded() {
@@ -2253,87 +2253,87 @@ func (l *backendModelLister) EnsureModelsLoaded() {
 }
 
 func (l *backendModelLister) ListAllModels() []string {
-	return l.backend.ListAllModels()
+	return l.client.ListAllModels()
 }
 
 // backendSubscriptionManager implements channel.SubscriptionManager via Backend interface.
 // Works identically for both local (localTransport → DB) and remote (WS RPC → server DB) modes.
 type backendSubscriptionManager struct {
-	backend agent.AgentBackend
+	client *agent.Client
 }
 
-func newBackendSubscriptionManager(backend agent.AgentBackend) *backendSubscriptionManager {
-	return &backendSubscriptionManager{backend: backend}
+func newBackendSubscriptionManager(client *agent.Client) *backendSubscriptionManager {
+	return &backendSubscriptionManager{client: client}
 }
 
 func (m *backendSubscriptionManager) List(senderID string) ([]channel.Subscription, error) {
 	if senderID == "" {
 		senderID = cliSenderID
 	}
-	return m.backend.ListSubscriptions(senderID)
+	return m.client.ListSubscriptions(senderID)
 }
 
 func (m *backendSubscriptionManager) GetDefault(senderID string) (*channel.Subscription, error) {
 	if senderID == "" {
 		senderID = cliSenderID
 	}
-	return m.backend.GetDefaultSubscription(senderID)
+	return m.client.GetDefaultSubscription(senderID)
 }
 
 func (m *backendSubscriptionManager) Add(sub *channel.Subscription) error {
-	return m.backend.AddSubscription(cliSenderID, *sub)
+	return m.client.AddSubscription(cliSenderID, *sub)
 }
 
 func (m *backendSubscriptionManager) Remove(id string) error {
-	return m.backend.RemoveSubscription(id)
+	return m.client.RemoveSubscription(id)
 }
 
 func (m *backendSubscriptionManager) SetDefault(id, chatID string) error {
-	return m.backend.SetDefaultSubscription(id, chatID)
+	return m.client.SetDefaultSubscription(id, chatID)
 }
 
 func (m *backendSubscriptionManager) SetModel(id, model string) error {
-	return m.backend.SetSubscriptionModel(id, model)
+	return m.client.SetSubscriptionModel(id, model)
 }
 
 func (m *backendSubscriptionManager) Rename(id, name string) error {
-	return m.backend.RenameSubscription(id, name)
+	return m.client.RenameSubscription(id, name)
 }
 
 func (m *backendSubscriptionManager) Update(id string, sub *channel.Subscription) error {
-	return m.backend.UpdateSubscription(id, *sub)
+	return m.client.UpdateSubscription(id, *sub)
 }
 
 func (m *backendSubscriptionManager) UpdatePerModelConfig(id, model string, pmc channel.PerModelConfig) error {
-	return m.backend.UpdatePerModelConfig(id, model, protocol.PerModelConfig(pmc))
+	return m.client.UpdatePerModelConfig(id, model, protocol.PerModelConfig(pmc))
 }
 
 // backendLLMSubscriber implements channel.LLMSubscriber via Backend interface.
 // Works identically for both local and remote modes.
 type backendLLMSubscriber struct {
-	backend agent.AgentBackend
+	client *agent.Client
 }
 
-func newBackendLLMSubscriber(backend agent.AgentBackend) *backendLLMSubscriber {
-	return &backendLLMSubscriber{backend: backend}
+func newBackendLLMSubscriber(client *agent.Client) *backendLLMSubscriber {
+	return &backendLLMSubscriber{client: client}
 }
 
 func (s *backendLLMSubscriber) SwitchSubscription(senderID string, sub *channel.Subscription, chatID string) error {
 	if sub == nil {
 		return nil
 	}
-	return s.backend.SetDefaultSubscription(sub.ID, chatID)
+	return s.client.SetDefaultSubscription(sub.ID, chatID)
 }
 
 func (s *backendLLMSubscriber) SwitchModel(senderID, model, chatID string) {
 	if senderID == "" {
 		senderID = cliSenderID
 	}
-	if err := s.backend.SwitchModel(senderID, model, chatID); err != nil {
+	if err := s.client.SwitchModel(senderID, model, chatID); err != nil {
 		log.WithError(err).Warn("backendLLMSubscriber: SwitchModel failed")
 	}
 }
 
 func (s *backendLLMSubscriber) GetDefaultModel() string {
-	return s.backend.GetDefaultModel()
+	return s.client.GetDefaultModel()
 }

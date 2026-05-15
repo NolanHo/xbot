@@ -35,7 +35,7 @@ type rpcResponse struct {
 // ==========================================================================
 
 // RemoteTransport connects to a remote xbot server via WebSocket.
-// It implements the AgentBackend interface by composing:
+// It implements the Transport interface by composing:
 //   - Transport interface: Call, Close (WebSocket RPC transport)
 //   - AgentRunner interface: Start, Stop, Run (lifecycle management)
 //   - EventRouter interface: SendMessage, BindChat, Subscribe, ConnState (event routing)
@@ -305,7 +305,7 @@ func (t *RemoteTransport) ServerURL() string { return t.serverURL }
 
 // ==========================================================================
 // CallbackRegistry interface (SetTUIControlHandler + WireCallbacks + SetChatRenameFn)
-// These methods satisfy AgentBackend callback requirements.
+// These methods satisfy Client callback requirements.
 // WireCallbacks and SetChatRenameFn are no-op for remote transport —
 // the server wires these directly on the Agent.
 // ==========================================================================

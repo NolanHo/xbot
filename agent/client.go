@@ -20,9 +20,6 @@ import (
 //
 // In local mode: Transport = ChannelTransport, events arrive via eventCh.
 // In remote mode: Transport = RemoteTransport, events arrive via WebSocket.
-//
-// Client implements the AgentBackend interface so it can be used as a
-// drop-in replacement for Backend in CLI code.
 type Client struct {
 	transport Transport
 	eventCh   chan protocol.WSMessage // nil in remote mode
@@ -805,6 +802,3 @@ func (c *Client) RenameChat(ch, senderID, chatID, newName string) error {
 	})
 	return err
 }
-
-// Ensure Client implements AgentBackend.
-var _ AgentBackend = (*Client)(nil)

@@ -151,7 +151,7 @@
 ### Channel Configuration
 - **TUI channel config changes require live channel restart.** Writing config.json is not enough — Feishu/Web/QQ/NapCat channels are created once at startup via `registerChannels()`. `SetChannelConfig()` now calls `reconfigureFn` (set by server.go) to start/stop the affected channel. Any new channel type must be added to both `channelShouldRun()` and `createChannelInstance()`.
 - **Key naming must be consistent across all channels.** Web used `enable` while Feishu/QQ/NapCat used `enabled` — the RPC handler only checked `enabled`, so web changes were silently ignored. All channels now use `enabled` (with backward compat for `enable`).
-- **New backend methods must be added to `AgentBackend` interface, not `LocalBackend` only.** `SetChannelReconfigureFn` was originally a `*LocalBackend`-only method, requiring a type assertion in server.go. This breaks the abstraction — `AgentBackend` is the contract. Both `LocalBackend` and `RemoteBackend` must implement any functional method. RemoteBackend gets a no-op when the server handles the behavior via RPC.
+- **New client methods must be added to `*Client` in `agent/client.go`.** The `Client` struct is the unified RPC client used by both CLI and server modes. Both local (ChannelTransport) and remote (RemoteTransport) modes go through the same RPC path.
 - **Command hooks disabled by default** — requires `enable_command_hooks: true` in config.
 - **Max 10 handlers per event**, total timeout 60s. Excess silently truncated with warning log.
 

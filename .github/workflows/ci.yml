@@ -10,6 +10,22 @@ permissions:
   contents: read
 
 jobs:
+  verify-generated:
+    name: Verify Generated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Re-generate rpc_backend_gen.go
+        run: go run ./cmd/rpcgen/
+
+      - name: Check for diff
+        run: git diff --exit-code
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

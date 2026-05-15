@@ -17,11 +17,11 @@ type SettingHandler struct {
 	ApplyConfig func(cfg *config.Config, value string)
 	// ApplyBackend applies runtime side effects via the backend.
 	// Called after ApplyConfig. backend is always non-nil.
-	ApplyBackend func(backend AgentBackend, senderID, chatID, value string)
+	ApplyBackend func(backend RPCHandlerBackend, senderID, chatID, value string)
 	// ApplyFull is called with both cfg and backend. Used when the side effect
 	// needs config context (e.g. sandbox reinit needs cfg.Agent.WorkDir).
 	// If set, called instead of the ApplyConfig+ApplyBackend pair.
-	ApplyFull func(cfg *config.Config, backend AgentBackend, senderID, value string)
+	ApplyFull func(cfg *config.Config, backend RPCHandlerBackend, senderID, value string)
 }
 
 // SettingHandlerRegistry is the single source of truth for runtime setting effects.
@@ -52,7 +52,7 @@ var SettingHandlerRegistry = map[string]SettingHandler{
 	// --- Agent settings ---
 	"sandbox_mode": {
 		ApplyConfig: func(cfg *config.Config, value string) { cfg.Sandbox.Mode = value },
-		ApplyFull: func(cfg *config.Config, backend AgentBackend, senderID, value string) {
+		ApplyFull: func(cfg *config.Config, backend RPCHandlerBackend, senderID, value string) {
 			workDir := cfg.Agent.WorkDir
 			if workDir == "" {
 				workDir = "."
@@ -67,7 +67,7 @@ var SettingHandlerRegistry = map[string]SettingHandler{
 				cfg.Agent.CompressionThreshold = f
 			}
 		},
-		ApplyBackend: func(backend AgentBackend, senderID, chatID, value string) {
+		ApplyBackend: func(backend RPCHandlerBackend, senderID, chatID, value string) {
 			if f, err := strconv.ParseFloat(value, 64); err == nil && f > 0 {
 				backend.SetCompressionThreshold(f)
 			}
@@ -81,7 +81,7 @@ var SettingHandlerRegistry = map[string]SettingHandler{
 	// --- Runtime state settings (config + backend side-effects) ---
 	"context_mode": {
 		ApplyConfig: func(cfg *config.Config, value string) { cfg.Agent.ContextMode = value },
-		ApplyBackend: func(backend AgentBackend, senderID, chatID, value string) {
+		ApplyBackend: func(backend RPCHandlerBackend, senderID, chatID, value string) {
 			_ = backend.SetContextMode(value)
 		},
 	},
@@ -89,7 +89,7 @@ var SettingHandlerRegistry = map[string]SettingHandler{
 		ApplyConfig: func(cfg *config.Config, value string) {
 			cfg.Agent.MaxIterations = channel.ParseSettingInt(value, cfg.Agent.MaxIterations)
 		},
-		ApplyBackend: func(backend AgentBackend, senderID, chatID, value string) {
+		ApplyBackend: func(backend RPCHandlerBackend, senderID, chatID, value string) {
 			if n, err := strconv.Atoi(value); err == nil && n > 0 {
 				backend.SetMaxIterations(n)
 			}
@@ -99,7 +99,7 @@ var SettingHandlerRegistry = map[string]SettingHandler{
 		ApplyConfig: func(cfg *config.Config, value string) {
 			cfg.Agent.MaxConcurrency = channel.ParseSettingInt(value, cfg.Agent.MaxConcurrency)
 		},
-		ApplyBackend: func(backend AgentBackend, senderID, chatID, value string) {
+		ApplyBackend: func(backend RPCHandlerBackend, senderID, chatID, value string) {
 			if n, err := strconv.Atoi(value); err == nil && n > 0 {
 				backend.SetMaxConcurrency(n)
 			}
@@ -109,7 +109,7 @@ var SettingHandlerRegistry = map[string]SettingHandler{
 		// max_context is subscription-scoped, stored in PerModelConfigs.
 		// Do NOT write to cfg.Agent.MaxContextTokens (global fallback only).
 		ApplyConfig: nil,
-		ApplyBackend: func(backend AgentBackend, senderID, chatID, value string) {
+		ApplyBackend: func(backend RPCHandlerBackend, senderID, chatID, value string) {
 			if n, err := strconv.Atoi(value); err == nil && n >= 0 {
 				if chatID != "" {
 					backend.SetMaxContextTokens(n, chatID)
@@ -124,7 +124,7 @@ var SettingHandlerRegistry = map[string]SettingHandler{
 			b := channel.ParseSettingBool(value)
 			cfg.Agent.EnableAutoCompress = &b
 		},
-		ApplyBackend: func(backend AgentBackend, senderID, chatID, value string) {
+		ApplyBackend: func(backend RPCHandlerBackend, senderID, chatID, value string) {
 			if channel.ParseSettingBool(value) {
 				_ = backend.SetContextMode("auto")
 			} else {
@@ -145,7 +145,7 @@ var SettingHandlerRegistry = map[string]SettingHandler{
 
 // ApplyRuntimeSetting applies a single setting change to the in-memory config and backend.
 // Used after the setting is persisted to DB.
-func ApplyRuntimeSetting(cfg *config.Config, backend AgentBackend, senderID, key, value string) {
+func ApplyRuntimeSetting(cfg *config.Config, backend RPCHandlerBackend, senderID, key, value string) {
 	handler, ok := SettingHandlerRegistry[key]
 	if !ok {
 		if !channel.IsKnownNonRuntimeKey(key) {
@@ -164,7 +164,7 @@ func ApplyRuntimeSetting(cfg *config.Config, backend AgentBackend, senderID, key
 // context_mode is processed LAST so it correctly overrides enable_auto_compress.
 // SetModelTiers is called once after all keys are processed.
 // Caller should save config after this returns.
-func ApplyRuntimeSettings(cfg *config.Config, backend AgentBackend, senderID string, values map[string]string) {
+func ApplyRuntimeSettings(cfg *config.Config, backend RPCHandlerBackend, senderID string, values map[string]string) {
 	for k, v := range values {
 		if k == "context_mode" {
 			continue
@@ -194,7 +194,7 @@ func MissingSettingHandlerKeys() []string {
 	return channel.MissingRegistryKeys(SettingHandlerRegistry)
 }
 
-func applyHandler(cfg *config.Config, backend AgentBackend, senderID, chatID string, h SettingHandler, value string) {
+func applyHandler(cfg *config.Config, backend RPCHandlerBackend, senderID, chatID string, h SettingHandler, value string) {
 	if h.ApplyFull != nil && backend != nil {
 		h.ApplyFull(cfg, backend, senderID, value)
 	} else {

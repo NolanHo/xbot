@@ -410,7 +410,7 @@ func Run(args []string) error {
 
 	// Server mode: create Backend with DirectBackend + RPCTable.
 	// The server uses RPCTable.Dispatch directly for WS RPC, and
-	// the DirectBackend for type-safe AgentBackend methods.
+	// the DirectBackend for RPCHandlerBackend methods.
 	directBackend := agent.NewDirectBackend(ag)
 	rpcTable := BuildRPCTable(cfg, directBackend, ag, disp, msgBus)
 	backend := agent.NewLocalBackend(

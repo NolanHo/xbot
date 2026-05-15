@@ -252,7 +252,7 @@ func TestHandleCLIRPCUpdateSubscription_PreservesCredentials(t *testing.T) {
 	}
 }
 
-func newTestBackendWithSettings(t *testing.T) (agent.AgentBackend, *agent.Agent, *sqlite.UserSettingsService) {
+func newTestBackendWithSettings(t *testing.T) (agent.RPCHandlerBackend, *agent.Agent, *sqlite.UserSettingsService) {
 	t.Helper()
 	db, err := sqlite.Open(filepath.Join(t.TempDir(), "settings.db"))
 	if err != nil {
@@ -271,7 +271,8 @@ type fakeBackend struct {
 	factory     *agent.LLMFactory
 }
 
-// Compile-time check: fakeBackend implements agent.AgentBackend.
+// Compile-time check: fakeBackend implements agent.RPCHandlerBackend.
+var _ agent.RPCHandlerBackend = fakeBackend{}
 var _ agent.AgentBackend = fakeBackend{}
 
 func (b fakeBackend) Start(_ context.Context) error          { return nil }
@@ -448,7 +449,7 @@ func TestMigrateCLIUserSettingsFromGlobalIfNeeded_SkipsWhenUserAlreadyHasSetting
 
 func TestApplyRuntimeSetting_UpdatesConfig(t *testing.T) {
 	cfg := newTestConfig()
-	var backend agent.AgentBackend // nil is fine — we only test cfg mutation
+	var backend agent.RPCHandlerBackend // nil is fine — we only test cfg mutation
 	// LLM fields (llm_model, llm_base_url) are no longer handled by
 	// applyRuntimeSetting — they go through update_subscription RPC.
 	// Test a non-LLM config mutation instead.
@@ -468,7 +469,7 @@ func TestAllRuntimeKeysHaveHandlers(t *testing.T) {
 
 func TestApplyRuntimeSetting_WarnsOnUnknownKey(t *testing.T) {
 	cfg := newTestConfig()
-	var backend agent.AgentBackend
+	var backend agent.RPCHandlerBackend
 	applyRuntimeSetting(cfg, backend, "cli_user", "totally_unknown_key", "value")
 	// Should not panic, just log a warning
 }

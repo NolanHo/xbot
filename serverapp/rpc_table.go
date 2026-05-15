@@ -29,7 +29,7 @@ import (
 // Exported so that CLI local mode can construct it via BuildRPCTable.
 type RPCContext struct {
 	Cfg     *config.Config
-	Backend agent.AgentBackend
+	Backend agent.RPCHandlerBackend
 	Ag      *agent.Agent
 	Disp    *channel.Dispatcher
 	MsgBus  *bus.MessageBus
@@ -96,7 +96,7 @@ func resolveChatID(ctx context.Context, chatID string) (string, error) {
 // BuildRPCTable constructs the complete RPC dispatch table.
 // The table is built once at startup and reused for every request;
 // per-request identity is injected via context, so no authSenderID/bizID is needed here.
-func BuildRPCTable(cfg *config.Config, backend agent.AgentBackend, ag *agent.Agent, disp *channel.Dispatcher, msgBus *bus.MessageBus) RPCTable {
+func BuildRPCTable(cfg *config.Config, backend agent.RPCHandlerBackend, ag *agent.Agent, disp *channel.Dispatcher, msgBus *bus.MessageBus) RPCTable {
 	h := &RPCContext{Cfg: cfg, Backend: backend, Ag: ag, Disp: disp, MsgBus: msgBus}
 	t := make(RPCTable, 70)
 	registerSettingsHandlers(t, h)
@@ -263,7 +263,6 @@ func registerSettingsHandlers(t RPCTable, h *RPCContext) {
 // ── LLM / model / tier / proxy handlers ──
 
 func registerLLMHandlers(t RPCTable, h *RPCContext) {
-	backend := h.Backend
 	t["get_default_model"] = rpc0(func(ctx context.Context) string {
 		bizID := rpcBizID(ctx)
 		model := ""
@@ -282,7 +281,7 @@ func registerLLMHandlers(t RPCTable, h *RPCContext) {
 	t["set_user_model"] = rpc1void(func(ctx context.Context, p struct {
 		Model string `json:"model"`
 	}) error {
-		return backend.SetUserModel(rpcBizID(ctx), p.Model)
+		return h.Ag.SetUserModel(rpcBizID(ctx), p.Model)
 	})
 	t["switch_model"] = rpc1void(func(ctx context.Context, p struct {
 		Model  string `json:"model"`
@@ -290,7 +289,11 @@ func registerLLMHandlers(t RPCTable, h *RPCContext) {
 	}) error {
 		bizID := rpcBizID(ctx)
 		log.WithField("sender_id", bizID).WithField("model", p.Model).WithField("chat_id", p.ChatID).Info("RPC switch_model")
-		backend.SwitchModel(bizID, p.Model, p.ChatID)
+		if p.ChatID != "" {
+			h.Ag.LLMFactory().SwitchModel(bizID, p.Model, p.ChatID)
+		} else {
+			h.Ag.LLMFactory().SwitchModel(bizID, p.Model)
+		}
 		if subSvc := h.Ag.LLMFactory().GetSubscriptionSvc(); subSvc != nil {
 			if sub, err := subSvc.GetDefault(bizID); err == nil && sub != nil {
 				if err := subSvc.SetModel(sub.ID, p.Model); err != nil {
@@ -300,29 +303,29 @@ func registerLLMHandlers(t RPCTable, h *RPCContext) {
 		}
 		return nil
 	})
-	t["get_user_max_context"] = rpc0(func(ctx context.Context) int { return backend.GetUserMaxContext(rpcBizID(ctx)) })
+	t["get_user_max_context"] = rpc0(func(ctx context.Context) int { return h.Ag.GetUserMaxContext(rpcBizID(ctx)) })
 	t["set_user_max_context"] = rpc1void(func(ctx context.Context, p struct {
 		MaxContext int `json:"max_context"`
 	}) error {
-		return backend.SetUserMaxContext(rpcBizID(ctx), p.MaxContext)
+		return h.Ag.SetUserMaxContext(rpcBizID(ctx), p.MaxContext)
 	})
-	t["get_user_max_output_tokens"] = rpc0(func(ctx context.Context) int { return backend.GetUserMaxOutputTokens(rpcBizID(ctx)) })
+	t["get_user_max_output_tokens"] = rpc0(func(ctx context.Context) int { return h.Ag.GetUserMaxOutputTokens(rpcBizID(ctx)) })
 	t["set_user_max_output_tokens"] = rpc1void(func(ctx context.Context, p struct {
 		MaxTokens int `json:"max_tokens"`
 	}) error {
-		return backend.SetUserMaxOutputTokens(rpcBizID(ctx), p.MaxTokens)
+		return h.Ag.SetUserMaxOutputTokens(rpcBizID(ctx), p.MaxTokens)
 	})
-	t["get_user_thinking_mode"] = rpc0(func(ctx context.Context) string { return backend.GetUserThinkingMode(rpcBizID(ctx)) })
+	t["get_user_thinking_mode"] = rpc0(func(ctx context.Context) string { return h.Ag.GetUserThinkingMode(rpcBizID(ctx)) })
 	t["set_user_thinking_mode"] = rpc1void(func(ctx context.Context, p struct {
 		Mode string `json:"mode"`
 	}) error {
-		return backend.SetUserThinkingMode(rpcBizID(ctx), p.Mode)
+		return h.Ag.SetUserThinkingMode(rpcBizID(ctx), p.Mode)
 	})
-	t["get_llm_concurrency"] = rpc0(func(ctx context.Context) int { return backend.GetLLMConcurrency(rpcBizID(ctx)) })
+	t["get_llm_concurrency"] = rpc0(func(ctx context.Context) int { return h.Ag.GetLLMConcurrency(rpcBizID(ctx)) })
 	t["set_llm_concurrency"] = rpc1void(func(ctx context.Context, p struct {
 		Personal int `json:"personal"`
 	}) error {
-		return backend.SetLLMConcurrency(rpcBizID(ctx), p.Personal)
+		return h.Ag.SetLLMConcurrency(rpcBizID(ctx), p.Personal)
 	})
 	t["set_default_thinking_mode"] = h.requireAdmin(rpc1void(func(ctx context.Context, p struct {
 		Mode string `json:"mode"`
@@ -363,14 +366,12 @@ func registerLLMHandlers(t RPCTable, h *RPCContext) {
 		}
 		return nil
 	})
-	t["clear_proxy_llm"] = rpc0void(func(ctx context.Context) error { backend.ClearProxyLLM(rpcBizID(ctx)); return nil })
+	t["clear_proxy_llm"] = rpc0void(func(ctx context.Context) error { h.Ag.ClearProxyLLM(rpcBizID(ctx)); return nil })
 }
 
 // ── Subscription CRUD ──
 
 func registerSubscriptionHandlers(t RPCTable, h *RPCContext) {
-	backend := h.Backend
-	_ = backend
 	t["list_subscriptions"] = rpc0err(h.listSubscriptions)
 	t["get_default_subscription"] = rpc0err(h.getDefaultSubscription)
 	t["add_subscription"] = rpc1void(func(ctx context.Context, p struct {
@@ -470,7 +471,6 @@ func registerSubscriptionHandlers(t RPCTable, h *RPCContext) {
 // ── Memory / session / history / status ──
 
 func registerSessionHandlers(t RPCTable, h *RPCContext) {
-	backend := h.Backend
 	t["clear_memory"] = rpc1void(func(ctx context.Context, p struct {
 		Channel    string `json:"channel"`
 		ChatID     string `json:"chat_id"`
@@ -525,7 +525,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if !isAdmin(rpcAuthID(ctx)) && p.ChatID == "" {
 			p.ChatID = rpcBizID(ctx)
 		}
-		return backend.CountInteractiveSessions(p.Channel, p.ChatID), nil
+		return h.Ag.CountInteractiveSessions(p.Channel, p.ChatID), nil
 	})
 	t["list_interactive_sessions"] = rpc1(func(ctx context.Context, p struct {
 		Channel string `json:"channel"`
@@ -537,7 +537,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if !isAdmin(rpcAuthID(ctx)) && p.ChatID == "" {
 			p.ChatID = rpcBizID(ctx)
 		}
-		return backend.ListInteractiveSessions(p.Channel, p.ChatID), nil
+		return h.Ag.ListInteractiveSessions(p.Channel, p.ChatID), nil
 	})
 	t["inspect_interactive_session"] = rpc1(func(ctx context.Context, p struct {
 		Role      string `json:"role"`
@@ -550,7 +550,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if err != nil {
 			return "", err
 		}
-		return backend.InspectInteractiveSession(context.Background(), p.Role, p.Channel, chatID, p.Instance, p.TailCount)
+		return h.Ag.InspectInteractiveSession(context.Background(), p.Role, p.Channel, chatID, p.Instance, p.TailCount)
 	})
 	t["get_session_messages"] = rpc1(func(ctx context.Context, p struct {
 		Channel  string `json:"channel"`
@@ -562,7 +562,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if err != nil {
 			return nil, err
 		}
-		msgs, _ := backend.GetSessionMessages(p.Channel, chatID, p.Role, p.Instance)
+		msgs, _ := h.Ag.GetSessionMessages(p.Channel, chatID, p.Role, p.Instance)
 		if msgs == nil {
 			msgs = []agent.SessionMessage{}
 		}
@@ -578,7 +578,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if err != nil {
 			return nil, err
 		}
-		dump, _ := backend.GetAgentSessionDump(p.Channel, chatID, p.Role, p.Instance)
+		dump, _ := h.Ag.GetAgentSessionDump(p.Channel, chatID, p.Role, p.Instance)
 		if dump == nil {
 			dump = &agent.AgentSessionDump{}
 		}
@@ -595,7 +595,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 				return nil, fmt.Errorf("access denied")
 			}
 		}
-		dump, _ := backend.GetAgentSessionDumpByFullKey(p.FullKey)
+		dump, _ := h.Ag.GetAgentSessionDumpByFullKey(p.FullKey)
 		if dump == nil {
 			dump = &agent.AgentSessionDump{}
 		}
@@ -623,7 +623,21 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 				log.WithError(err).Warn("RPC get_history: failed to update last_active_at")
 			}
 		}
-		history, err := backend.GetHistory(p.Channel, p.ChatID)
+		history, err := func() ([]channel.HistoryMessage, error) {
+			ms := h.Ag.MultiSession()
+			if ms == nil {
+				return nil, fmt.Errorf("multi-session not available")
+			}
+			sess, err := ms.GetOrCreateSession(p.Channel, p.ChatID)
+			if err != nil {
+				return nil, err
+			}
+			msgs, err := sess.GetMessages()
+			if err != nil {
+				return nil, err
+			}
+			return channel.ConvertMessagesToHistory(msgs), nil
+		}()
 		if err != nil {
 			return nil, err
 		}
@@ -733,7 +747,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if p.Cutoff > 0 {
 			cutoff = time.Unix(p.Cutoff, 0)
 		}
-		return backend.TrimHistory(p.Channel, p.ChatID, cutoff)
+		return h.Ag.MultiSession().TrimHistory(p.Channel, p.ChatID, cutoff)
 	})
 
 	// ── Status ──
@@ -749,7 +763,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if !isAdmin(rpcAuthID(ctx)) && p.ChatID != rpcBizID(ctx) {
 			return false, fmt.Errorf("access denied")
 		}
-		return backend.IsProcessing(p.Channel, p.ChatID), nil
+		return h.Backend.IsProcessing(p.Channel, p.ChatID), nil
 	})
 	t["get_active_progress"] = rpc1(func(ctx context.Context, p struct {
 		Channel string `json:"channel"`
@@ -762,7 +776,7 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if !isAdmin(rpcAuthID(ctx)) && p.ChatID != bizID && p.Channel != "agent" {
 			return nil, fmt.Errorf("access denied")
 		}
-		return backend.GetActiveProgress(p.Channel, p.ChatID), nil
+		return h.Backend.GetActiveProgress(p.Channel, p.ChatID), nil
 	})
 
 	t["get_todos"] = rpc1(func(ctx context.Context, p struct {
@@ -776,15 +790,13 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		if !isAdmin(rpcAuthID(ctx)) && p.ChatID != bizID && p.Channel != "agent" {
 			return nil, fmt.Errorf("access denied")
 		}
-		return backend.GetTodos(p.Channel, p.ChatID), nil
+		return h.Backend.GetTodos(p.Channel, p.ChatID), nil
 	})
 }
 
 // ── Background tasks / tenants ──
 
 func registerTaskHandlers(t RPCTable, h *RPCContext) {
-	backend := h.Backend
-	_ = backend
 	t["get_bg_task_count"] = rpc1(func(ctx context.Context, p struct {
 		SessionKey string `json:"session_key"`
 	}) (int, error) {
@@ -858,7 +870,10 @@ func registerAdminHandlers(t RPCTable, h *RPCContext) {
 	disp := h.Disp
 	msgBus := h.MsgBus
 
-	t["reset_token_state"] = h.requireAdmin(rpc0void(func(ctx context.Context) error { backend.ResetTokenState(); return nil }))
+	t["reset_token_state"] = h.requireAdmin(rpc0void(func(ctx context.Context) error {
+		// no-op in local mode (same as DirectBackend implementation)
+		return nil
+	}))
 	t["get_channel_config"] = h.requireAdmin(rpc0err(func(ctx context.Context) (any, error) {
 		return backend.GetChannelConfigs()
 	}))

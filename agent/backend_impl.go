@@ -748,5 +748,6 @@ func (b *Backend) RenameChat(ch, senderID, chatID, newName string) error {
 	return err
 }
 
-// Ensure Backend implements AgentBackend.
+// Ensure Backend implements AgentBackend and RPCHandlerBackend.
 var _ AgentBackend = (*Backend)(nil)
+var _ RPCHandlerBackend = (*Backend)(nil)

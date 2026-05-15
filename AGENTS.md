@@ -140,12 +140,13 @@
 - **Decision priority**: `deny > defer > ask > allow`. Low-priority layer deny cannot be overridden by high-priority allow.
 
 ### Backend/Transport Architecture
-- **Backend is a pure typed RPC client** (agent/backend_impl.go). Every method is 1-3 lines calling `b.call(method, req, &result)` or `b.callVoid(method, req)`. Backend composes: `Transport` (Call+Close) + `AgentRunner` + `EventRouter` + `CallbackRegistry` + optional `*Agent` (for tool registration).
-- **Transport is the pure transmission layer** (agent/transport.go). Only 2 methods: `Call(method, payload)` and `Close()`. `ChannelTransport` (agent/transport_channel.go) dispatches directly to `RPCTable.Dispatch`. `RemoteTransport` (agent/transport_remote.go) sends JSON-RPC over WebSocket. Backend never knows which one it's using.
-- **RPCTable is the single handler truth source** (serverapp/rpc_table.go). Both CLI local mode and server WS mode use the same `BuildRPCTable`. `DirectBackend` (agent/direct_backend.go) wraps `*Agent` for handler-side calls. No duplicate handler tables.
-- **Lifecycle is separated from Transport** (agent/lifecycle.go). `AgentRunner` (Start/Stop/Run), `EventRouter` (SendInbound/Subscribe/BindChat), `CallbackRegistry` (WireCallbacks/SetTUIControlHandler) are independent interfaces. `LocalLifecycle` implements all three for local mode. `RemoteTransport` implements all three for remote mode.
-- **Handler table uses generic helpers**: `rpc0`, `rpc1`, `rpc1void`, `rpc0void` eliminate JSON marshal/unmarshal boilerplate. Adding a new RPC method = 1 method in DirectBackend + 1 handler in rpc_table.go + 1 method in backend_impl.go.
-- **Adding new transports** (gRPC, MCP) only requires implementing 2 Transport methods (Call + Close) + optionally AgentRunner/EventRouter/CallbackRegistry.
+- **CLI always uses Client → Transport → Server, even in local mode.** Client (agent/client.go) is a pure RPC client — every method is `Transport.Call("method", params)`.
+- **Transport is the pure transmission layer** (agent/transport.go). Only 2 methods: `Call(method, payload)` and `Close()`. `ChannelTransport` (agent/transport_channel.go) dispatches directly to `ServerCore.HandleRPC`. `RemoteTransport` (agent/transport_remote.go) sends JSON-RPC over WebSocket.
+- **ServerCore** (serverapp/server_core.go) is the shared server core for both local and remote modes. Owns Agent + RPCTable + Dispatcher + Bus. Created by CLI (local mode) and server.go (remote mode).
+- **RPCTable is the single handler truth source** (serverapp/rpc_table.go). Handlers access `h.Ag` (the *Agent) directly — no intermediate Backend/DirectBackend layer.
+- **Lifecycle interfaces** (agent/lifecycle.go): AgentRunner, EventRouter, CallbackRegistry — only used by the legacy Backend struct for remote mode.
+- **Adding a new RPC method**: 1 handler in rpc_table.go (using h.Ag) + 1 method in client.go (Transport.Call) + 1 MethodXxx constant in req_types.go.
+- **Adding new transports** (gRPC, MCP) only requires implementing 2 Transport methods (Call + Close).
 
 ### Channel Configuration
 - **TUI channel config changes require live channel restart.** Writing config.json is not enough — Feishu/Web/QQ/NapCat channels are created once at startup via `registerChannels()`. `SetChannelConfig()` now calls `reconfigureFn` (set by server.go) to start/stop the affected channel. Any new channel type must be added to both `channelShouldRun()` and `createChannelInstance()`.

@@ -16,54 +16,24 @@ import (
 	"xbot/tools"
 )
 
-// ServerCoreOpts holds all parameters for creating a ServerCore.
-type ServerCoreOpts struct {
-	Config           *config.Config
-	LLM              llm_pkg.LLM
-	DBPath           string
-	WorkDir          string
-	XbotHome         string
-	PersonaIsolation bool
-}
-
-// ServerCore is the shared core for both local and remote server modes.
-// It owns the Agent, Bus, Dispatcher, and RPCTable.
-type ServerCore struct {
-	Agent    *agent.Agent
-	Config   *config.Config
-	Disp     *channel.Dispatcher
-	MsgBus   *bus.MessageBus
-	RPCTable RPCTable
-
-	// channelReconfigureFn is called after a channel config change.
-	channelReconfigureFn func(channel string)
-}
-
-// NewServerCore creates and initializes a ServerCore.
+// InitServer creates the core server components:
+// Agent, RPCTable, Dispatcher, and MessageBus.
 //
-// It performs the following steps:
-//  1. Creates the Agent from Config
-//  2. Creates the Dispatcher
-//  3. Creates the RPCTable
-//  4. Registers core tools (DownloadFile, WebSearch)
-//  5. Configures LLM (tiers, contexts, retry)
-//
-// It does NOT handle:
-//   - HTTP listening, channel registration (Feishu/Web/QQ)
-//   - Database migration
-//   - OAuth setup
-//   - Subscription migration from config.json to DB
-//   - Settings sync from DB
-//   - Runner token DB
-func NewServerCore(opts ServerCoreOpts) (*ServerCore, error) {
-	cfg := opts.Config
+// Both CLI local mode and server remote mode call this.
+// The caller is responsible for:
+//   - Calling ag.WireCallbacks()
+//   - Calling ag.SetChatRenameFn()
+//   - Registering additional tools (OAuth, Feishu MCP, etc.)
+//   - Starting the agent loop (ag.Run)
+//   - HTTP/WS listening (server mode only)
+func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbotHome string, personaIsolation bool, reconfigureFn func(string)) (
+	ag *agent.Agent, rpcTable RPCTable, disp *channel.Dispatcher, msgBus *bus.MessageBus, err error) {
 
 	// 1. Create MessageBus and Dispatcher.
-	msgBus := bus.NewMessageBus()
-	disp := channel.NewDispatcher(msgBus)
+	msgBus = bus.NewMessageBus()
+	disp = channel.NewDispatcher(msgBus)
 
 	// 2. Create Agent.
-	// Embedding fallback: use LLM endpoint if embedding not configured.
 	embBaseURL := cfg.Embedding.BaseURL
 	if embBaseURL == "" {
 		embBaseURL = cfg.LLM.BaseURL
@@ -73,20 +43,20 @@ func NewServerCore(opts ServerCoreOpts) (*ServerCore, error) {
 		embAPIKey = cfg.LLM.APIKey
 	}
 
-	offloadDir := filepath.Join(opts.XbotHome, "offload_store")
-	maskDir := filepath.Join(opts.XbotHome, "mask")
+	offloadDir := filepath.Join(xbotHome, "offload_store")
+	maskDir := filepath.Join(xbotHome, "mask")
 
-	ag, err := agent.New(agent.Config{
+	ag, err = agent.New(agent.Config{
 		Bus:                   msgBus,
-		LLM:                   opts.LLM,
+		LLM:                   llmClient,
 		Model:                 cfg.LLM.Model,
 		MaxIterations:         cfg.Agent.MaxIterations,
 		MaxConcurrency:        cfg.Agent.MaxConcurrency,
-		DBPath:                opts.DBPath,
-		SkillsDir:             filepath.Join(opts.XbotHome, "skills"),
-		AgentsDir:             filepath.Join(opts.XbotHome, "agents"),
-		WorkDir:               opts.WorkDir,
-		XbotHome:              opts.XbotHome,
+		DBPath:                dbPath,
+		SkillsDir:             filepath.Join(xbotHome, "skills"),
+		AgentsDir:             filepath.Join(xbotHome, "agents"),
+		WorkDir:               workDir,
+		XbotHome:              xbotHome,
 		PromptFile:            cfg.Agent.PromptFile,
 		SandboxMode:           cfg.Sandbox.Mode,
 		Sandbox:               tools.GetSandbox(),
@@ -106,7 +76,7 @@ func NewServerCore(opts ServerCoreOpts) (*ServerCore, error) {
 		MaxSubAgentDepth:      cfg.Agent.MaxSubAgentDepth,
 		PurgeOldMessages:      cfg.Agent.PurgeOldMessages,
 		SandboxIdleTimeout:    time.Duration(cfg.Sandbox.IdleTimeout),
-		PersonaIsolation:      opts.PersonaIsolation,
+		PersonaIsolation:      personaIsolation,
 		OffloadDir:            offloadDir,
 		MaskDir:               maskDir,
 		PluginEnabled:         cfg.Plugins.Enabled,
@@ -114,25 +84,22 @@ func NewServerCore(opts ServerCoreOpts) (*ServerCore, error) {
 		PluginDisabledPlugins: cfg.Plugins.DisabledPlugins,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create agent: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("create agent: %w", err)
 	}
 
 	// 3. Create RPCTable.
-	rpcTable := BuildRPCTable(cfg, ag, disp, msgBus)
+	rpcTable = BuildRPCTable(cfg, ag, disp, msgBus, reconfigureFn)
 
 	// 4. Register core tools.
 	ag.RegisterCoreTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
 	ag.RegisterTool(tools.NewDownloadFileTool(cfg.Feishu.AppID, cfg.Feishu.AppSecret))
 	ag.RegisterCoreTool(tools.NewWebSearchTool(cfg.TavilyAPIKey))
 
-	// Register Logs tool (admin only).
 	if adminChatID := cfg.Admin.ChatID; adminChatID != "" {
-		logsTool := tools.NewLogsTool(adminChatID)
-		ag.RegisterCoreTool(logsTool)
+		ag.RegisterCoreTool(tools.NewLogsTool(adminChatID))
 		log.WithField("admin_chat_id", adminChatID).Info("Logs tool registered (admin only)")
 	}
 
-	// Index all registered tools so the agent knows about them.
 	ag.IndexGlobalTools()
 
 	// 5. Configure LLM.
@@ -145,51 +112,11 @@ func NewServerCore(opts ServerCoreOpts) (*ServerCore, error) {
 		Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
 	})
 
-	// 6. WireCallbacks and SetChatRenameFn are set by the caller
-	// (CLI main.go or serverapp/server.go), not here.
-	// ServerCore only creates the Agent + RPCTable + Dispatcher.
-
-	return &ServerCore{
-		Agent:    ag,
-		Config:   cfg,
-		Disp:     disp,
-		MsgBus:   msgBus,
-		RPCTable: rpcTable,
-	}, nil
+	return ag, rpcTable, disp, msgBus, nil
 }
 
-// HandleRPC dispatches an RPC request to the RPCTable.
-// This is the entry point for in-process Transport (ChannelTransport).
-func (sc *ServerCore) HandleRPC(ctx context.Context, method string, payload json.RawMessage) (json.RawMessage, error) {
-	return sc.RPCTable.Dispatch(ctx, method, payload)
-}
-
-// SetChannelReconfigureFn sets the callback for dynamic channel reconfiguration.
-func (sc *ServerCore) SetChannelReconfigureFn(fn func(string)) {
-	sc.channelReconfigureFn = fn
-}
-
-// RegisterCoreTool registers a core tool on the agent.
-func (sc *ServerCore) RegisterCoreTool(tool tools.Tool) {
-	sc.Agent.RegisterCoreTool(tool)
-}
-
-// RegisterTool registers a tool on the agent.
-func (sc *ServerCore) RegisterTool(tool tools.Tool) {
-	sc.Agent.RegisterTool(tool)
-}
-
-// IndexGlobalTools indexes all registered tools.
-func (sc *ServerCore) IndexGlobalTools() {
-	sc.Agent.IndexGlobalTools()
-}
-
-// Run starts the agent loop and blocks until the context is done.
-func (sc *ServerCore) Run(ctx context.Context) error {
-	return sc.Agent.Run(ctx)
-}
-
-// Close releases agent resources.
-func (sc *ServerCore) Close() error {
-	return sc.Agent.Close()
+// DispatchRPC dispatches an RPC request to the given RPCTable.
+// Used by InProcessTransport in local mode.
+func DispatchRPC(table RPCTable) func(ctx context.Context, method string, payload json.RawMessage) (json.RawMessage, error) {
+	return table.Dispatch
 }

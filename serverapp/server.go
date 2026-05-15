@@ -390,23 +390,52 @@ func Run(args []string) error {
 	// 初始化沙箱
 	tools.InitSandbox(cfg.Sandbox, workDir)
 
-	// Create ServerCore (shared core for local and remote modes).
-	core, err := NewServerCore(ServerCoreOpts{
-		Config:           cfg,
-		LLM:              llmClient,
-		DBPath:           dbPath,
-		WorkDir:          workDir,
-		XbotHome:         xbotDir,
-		PersonaIsolation: cfg.Web.PersonaIsolation,
-	})
-	if err != nil {
-		log.WithError(err).Fatal("Failed to create server core")
+	// Pre-declare so the channelReconfigureFn closure can reference them by pointer.
+	// The closure is only invoked at runtime (never during InitServer), so the
+	// nil→non-nil transition after InitServer returns is safe.
+	var (
+		ag       *agent.Agent
+		rpcTable RPCTable
+		disp     *channel.Dispatcher
+		msgBus   *bus.MessageBus
+	)
+
+	// channelReconfigureFn is called after a channel config change (server-side only).
+	channelReconfigureFn := func(name string) {
+		if disp == nil || msgBus == nil {
+			return
+		}
+		cfg := config.LoadFromFile(config.ConfigFilePath())
+		if cfg == nil {
+			return
+		}
+		_, running := disp.GetChannel(name)
+		shouldRun := channelShouldRun(cfg, name)
+		if shouldRun && !running {
+			if ch := createChannelInstance(name, cfg, msgBus); ch != nil {
+				disp.Register(ch)
+				go func(n string, c any) {
+					defer func() {
+						if r := recover(); r != nil {
+							log.WithField("channel", n).Error("Dynamic channel start panicked\n" + string(debug.Stack()))
+						}
+					}()
+					if sc, ok := c.(interface{ Start() error }); ok {
+						if err := sc.Start(); err != nil {
+							log.WithError(err).WithField("channel", n).Error("Dynamic channel failed")
+						}
+					}
+				}(ch.Name(), ch)
+			}
+		} else if !shouldRun && running {
+			disp.Unregister(name)
+		}
 	}
 
-	ag := core.Agent
-	rpcTable := core.RPCTable
-	msgBus := core.MsgBus
-	disp := core.Disp
+	ag, rpcTable, disp, msgBus, err = InitServer(cfg, llmClient, dbPath, workDir, xbotDir, cfg.Web.PersonaIsolation, channelReconfigureFn)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to init server")
+	}
 
 	// Migrate config.json subscriptions into DB for the admin user.
 	// This ensures admin is a normal DB user with real subscriptions,
@@ -593,38 +622,7 @@ func Run(args []string) error {
 		log.WithError(err).Fatal("Failed to register channels")
 	}
 
-	// Wire channel reconfiguration: when TUI channel config changes, restart
-	// the affected channel so it picks up the new configuration immediately.
-	core.SetChannelReconfigureFn(func(name string) {
-		if disp == nil || msgBus == nil {
-			return
-		}
-		cfg := config.LoadFromFile(config.ConfigFilePath())
-		if cfg == nil {
-			return
-		}
-		_, running := disp.GetChannel(name)
-		shouldRun := channelShouldRun(cfg, name)
-		if shouldRun && !running {
-			if ch := createChannelInstance(name, cfg, msgBus); ch != nil {
-				disp.Register(ch)
-				go func(n string, c any) {
-					defer func() {
-						if r := recover(); r != nil {
-							log.WithField("channel", n).Error("Dynamic channel start panicked\n" + string(debug.Stack()))
-						}
-					}()
-					if sc, ok := c.(interface{ Start() error }); ok {
-						if err := sc.Start(); err != nil {
-							log.WithError(err).WithField("channel", n).Error("Dynamic channel failed")
-						}
-					}
-				}(ch.Name(), ch)
-			}
-		} else if !shouldRun && running {
-			disp.Unregister(name)
-		}
-	})
+	// channelReconfigureFn was moved before InitServer call and passed as parameter.
 
 	// Wire RPC handler for CLI RemoteBackend clients (after disp/msgBus are available).
 	if webCh != nil {

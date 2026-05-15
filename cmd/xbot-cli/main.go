@@ -823,34 +823,29 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 		client = agent.NewClient(transport, nil, nil)
 		disp = channel.NewDispatcher(msgBus)
 	} else {
-		// Local mode: ServerCore + ChannelTransport + Client.
-		// ServerCore owns the msgBus and disp — CLI reuses them.
-		// core is a local variable only used during init; not stored in cliApp.
-		core, coreErr := serverapp.NewServerCore(serverapp.ServerCoreOpts{
-			Config:           cfg,
-			LLM:              llmClient,
-			DBPath:           dbPath,
-			WorkDir:          workDir,
-			XbotHome:         xbotHome,
-			PersonaIsolation: false,
-		})
+		// Local mode: InitServer + ChannelTransport + Client.
+		// InitServer owns the msgBus and disp — CLI reuses them.
+		var rpcTable serverapp.RPCTable
+		var coreDisp *channel.Dispatcher
+		var coreMsgBus *bus.MessageBus
+		var coreErr error
+		ag, rpcTable, coreDisp, coreMsgBus, coreErr = serverapp.InitServer(cfg, llmClient, dbPath, workDir, xbotHome, false, nil)
 		if coreErr != nil {
-			log.WithError(coreErr).Fatal("Failed to create server core")
+			log.WithError(coreErr).Fatal("Failed to init server")
 		}
-		ag = core.Agent
 
 		// Create event channel for TUI
 		eventCh := make(chan protocol.WSMessage, 256)
 
-		// ChannelTransport wraps ServerCore's HandleRPC
-		transport := agent.NewChannelTransport(core.HandleRPC)
+		// ChannelTransport wraps RPCTable dispatch
+		transport := agent.NewChannelTransport(serverapp.DispatchRPC(rpcTable))
 
 		// Client is the unified interface
-		client = agent.NewClient(transport, eventCh, core.MsgBus)
+		client = agent.NewClient(transport, eventCh, coreMsgBus)
 
-		// Use ServerCore's disp and msgBus
-		msgBus = core.MsgBus
-		disp = core.Disp
+		// Use InitServer's disp and msgBus
+		msgBus = coreMsgBus
+		disp = coreDisp
 
 		// Apply CLI flag overrides via RPC
 		if maxOutputTokens > 0 {

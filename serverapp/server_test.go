@@ -59,7 +59,7 @@ func TestHandleCLIRPCAdminAddSubscription_ListRoundTrip(t *testing.T) {
 	aCfg := &config.Config{}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := BuildRPCTable(aCfg, ag, nil, nil)
+	table := BuildRPCTable(aCfg, ag, nil, nil, nil)
 
 	// Add subscription via admin path (same as remote CLI does)
 	sub := channel.Subscription{
@@ -113,7 +113,7 @@ func TestHandleCLIRPCAddSubscription_PreservesCredentials(t *testing.T) {
 	aCfg := &config.Config{}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := BuildRPCTable(aCfg, ag, nil, nil)
+	table := BuildRPCTable(aCfg, ag, nil, nil, nil)
 
 	// Use snake_case keys matching channelSubscriptionJSON — the format the real
 	// backend sends via RPC (backend_impl.go UpdateSubscription).
@@ -170,7 +170,7 @@ func TestHandleCLIRPCUpdateSubscription_PreservesCredentials(t *testing.T) {
 	aCfg := &config.Config{}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := BuildRPCTable(aCfg, ag, nil, nil)
+	table := BuildRPCTable(aCfg, ag, nil, nil, nil)
 
 	// Add a subscription first (using snake_case matching real client)
 	addParams, _ := json.Marshal(map[string]any{
@@ -348,7 +348,7 @@ func TestHandleCLIRPCSetDefaultSubscriptionRefreshesSenderCache(t *testing.T) {
 	aCfg := &config.Config{}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := BuildRPCTable(aCfg, ag, nil, nil)
+	table := BuildRPCTable(aCfg, ag, nil, nil, nil)
 	_, model, _, _ := factory.GetLLM("cli_user")
 	if model != "gpt-4.1" {
 		t.Fatalf("expected initial gpt model, got %q", model)
@@ -393,7 +393,7 @@ func TestHandleCLIRPCSetDefaultSubscription_CrossIdentity(t *testing.T) {
 	aCfg := &config.Config{}
 	ag := &agent.Agent{}
 	ag.SetLLMFactory(factory)
-	table := BuildRPCTable(aCfg, ag, nil, nil)
+	table := BuildRPCTable(aCfg, ag, nil, nil, nil)
 	// Agent calls GetLLM with "cli_user" (business identity)
 	_, model, _, _ := factory.GetLLM("cli_user")
 	if model != "gpt-4.1" {

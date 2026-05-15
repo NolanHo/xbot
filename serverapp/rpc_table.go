@@ -99,8 +99,8 @@ func resolveChatID(ctx context.Context, chatID string) (string, error) {
 // BuildRPCTable constructs the complete RPC dispatch table.
 // The table is built once at startup and reused for every request;
 // per-request identity is injected via context, so no authSenderID/bizID is needed here.
-func BuildRPCTable(cfg *config.Config, ag *agent.Agent, disp *channel.Dispatcher, msgBus *bus.MessageBus) RPCTable {
-	h := &RPCContext{Cfg: cfg, Ag: ag, Disp: disp, MsgBus: msgBus}
+func BuildRPCTable(cfg *config.Config, ag *agent.Agent, disp *channel.Dispatcher, msgBus *bus.MessageBus, reconfigureFn func(string)) RPCTable {
+	h := &RPCContext{Cfg: cfg, Ag: ag, Disp: disp, MsgBus: msgBus, reconfigureFn: reconfigureFn}
 	t := make(RPCTable, 70)
 	registerSettingsHandlers(t, h)
 	registerLLMHandlers(t, h)

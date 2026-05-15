@@ -17,20 +17,44 @@ import (
 	"xbot/tools"
 )
 
-// InitServer creates the core server components:
-// RPCTable, Dispatcher, and MessageBus.
-//
-// It creates the Agent internally, wires its callbacks,
-// and starts the agent loop. The caller never touches the Agent directly.
+// ServerHandle is an opaque handle to the server's internal state.
+// External packages (CLI) use it to inject callbacks without
+// ever importing or touching the Agent type.
+type ServerHandle interface {
+	// SetSessionStateHandler registers a callback for session state changes.
+	SetSessionStateHandler(fn func(ev protocol.SessionEvent))
+	// SetChatRenameFn registers a callback for renaming chat sessions.
+	SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error))
+}
+
+// serverHandle is the internal implementation. Within the serverapp package,
+// callers can use .Agent() to access the underlying *agent.Agent.
+type serverHandle struct {
+	ag *agent.Agent
+}
+
+func (h *serverHandle) Agent() *agent.Agent { return h.ag }
+
+func (h *serverHandle) SetSessionStateHandler(fn func(ev protocol.SessionEvent)) {
+	h.ag.SetSessionStateHandler(fn)
+}
+
+func (h *serverHandle) SetChatRenameFn(fn func(chatID, newName string) (oldName string, err error)) {
+	h.ag.SetChatRenameFn(fn)
+}
+
+// InitServer creates the core server components and starts the agent loop.
+// It returns a ServerHandle (opaque to external packages) along with
+// the RPCTable, Dispatcher, and MessageBus.
 //
 // Both CLI local mode and server remote mode call this.
 // The caller is responsible for:
 //   - Registering the CLI/WS channel with the returned Dispatcher
-//   - Calling SetSessionStateHandler after the channel is created
-//   - Calling SetChatRenameFn if needed (local CLI mode)
+//   - Calling handle.SetSessionStateHandler() after the channel is created
+//   - Calling handle.SetChatRenameFn() if needed (local CLI mode)
 //   - HTTP/WS listening (server mode only)
 func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbotHome string, personaIsolation bool, reconfigureFn func(string)) (
-	ag *agent.Agent, rpcTable RPCTable, disp *channel.Dispatcher, msgBus *bus.MessageBus, err error) {
+	handle ServerHandle, rpcTable RPCTable, disp *channel.Dispatcher, msgBus *bus.MessageBus, err error) {
 
 	// 1. Create MessageBus and Dispatcher.
 	msgBus = bus.NewMessageBus()
@@ -49,7 +73,7 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 	offloadDir := filepath.Join(xbotHome, "offload_store")
 	maskDir := filepath.Join(xbotHome, "mask")
 
-	ag, err = agent.New(agent.Config{
+	ag, err := agent.New(agent.Config{
 		Bus:                   msgBus,
 		LLM:                   llmClient,
 		Model:                 cfg.LLM.Model,
@@ -115,13 +139,13 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 		Timeout:  time.Duration(cfg.Agent.LLMRetryTimeout),
 	})
 
-	// 6. Wire agent callbacks (sessionStateHandler set later via SetSessionStateHandler).
+	// 6. Wire agent callbacks (sessionStateHandler set later via ServerHandle).
 	ag.WireCallbacks(
 		func(msg bus.OutboundMessage) (string, error) { // directSend
 			return disp.SendDirect(msg)
 		},
 		disp.GetChannel, // channelFinder
-		nil,             // sessionStateHandler — set later via SetSessionStateHandler
+		nil,             // sessionStateHandler — set later via handle.SetSessionStateHandler
 		disp,            // messageSender
 		func(name string, runFn bus.RunFn) error { // registerAgentChannel
 			ac := channel.NewAgentChannel(name, runFn)
@@ -135,10 +159,6 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 	)
 
 	// 7. Start agent loop.
-	// The agent blocks on msgBus.Inbound until a message arrives,
-	// so it's safe to start before sessionStateHandler is set —
-	// the handler is only called when processing outbound events,
-	// which happens after the first user message.
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		defer cancel()
@@ -148,23 +168,11 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 	}()
 	log.Info("Agent loop started")
 
-	return ag, rpcTable, disp, msgBus, nil
-}
-
-// SetSessionStateHandler is a convenience function that calls
-// ag.SetSessionStateHandler. CLI uses this after creating cliCh.
-func SetSessionStateHandler(ag *agent.Agent, fn func(ev protocol.SessionEvent)) {
-	ag.SetSessionStateHandler(fn)
-}
-
-// SetChatRenameFn is a convenience function that calls
-// ag.SetChatRenameFn. CLI uses this after creating the DB.
-func SetChatRenameFn(ag *agent.Agent, fn func(chatID, newName string) (oldName string, err error)) {
-	ag.SetChatRenameFn(fn)
+	return &serverHandle{ag: ag}, rpcTable, disp, msgBus, nil
 }
 
 // DispatchRPC dispatches an RPC request to the given RPCTable.
-// Used by InProcessTransport in local mode.
+// Used by ChannelTransport in local mode.
 func DispatchRPC(table RPCTable) func(ctx context.Context, method string, payload json.RawMessage) (json.RawMessage, error) {
 	return table.Dispatch
 }

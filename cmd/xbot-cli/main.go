@@ -573,8 +573,8 @@ type cliApp struct {
 	llmClient llm.LLM
 	msgBus    *bus.MessageBus
 	db        *sqlite.DB
-	client    *agent.Client // unified RPC client (local or remote)
-	ag        *agent.Agent  // server-side agent (for callback injection, same role as server.go)
+	client    *agent.Client          // unified RPC client (local or remote)
+	handle    serverapp.ServerHandle // server handle for callback injection (local mode)
 	disp      *channel.Dispatcher
 	workDir   string
 	xbotHome  string
@@ -754,7 +754,7 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 	}
 
 	var (
-		ag     *agent.Agent
+		handle serverapp.ServerHandle
 		disp   *channel.Dispatcher
 		client *agent.Client
 	)
@@ -829,7 +829,7 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 		var coreDisp *channel.Dispatcher
 		var coreMsgBus *bus.MessageBus
 		var coreErr error
-		ag, rpcTable, coreDisp, coreMsgBus, coreErr = serverapp.InitServer(cfg, llmClient, dbPath, workDir, xbotHome, false, nil)
+		handle, rpcTable, coreDisp, coreMsgBus, coreErr = serverapp.InitServer(cfg, llmClient, dbPath, workDir, xbotHome, false, nil)
 		if coreErr != nil {
 			log.WithError(coreErr).Fatal("Failed to init server")
 		}
@@ -861,7 +861,7 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 		msgBus:    msgBus,
 		db:        db,
 		client:    client,
-		ag:        ag,
+		handle:    handle,
 		disp:      disp,
 		workDir:   workDir,
 		xbotHome:  xbotHome,
@@ -1740,16 +1740,16 @@ func main() {
 	// ── Wire CLI-specific callbacks (sessionStateHandler, SetChatRenameFn) ──
 	// InitServer already called WireCallbacks (with nil sessionStateHandler)
 	// and started ag.Run. We only set the CLI-specific callbacks here.
-	if app.ag != nil {
+	if app.handle != nil {
 		sessionStateHandler := func(ev protocol.SessionEvent) {
 			cliCh.SendSessionState(ev)
 		}
-		serverapp.SetSessionStateHandler(app.ag, sessionStateHandler)
+		app.handle.SetSessionStateHandler(sessionStateHandler)
 
 		// SetChatRenameFn: rename session in DB. Same logic as server.go.
 		if app.db != nil {
 			conn := app.db.Conn()
-			serverapp.SetChatRenameFn(app.ag, func(chatID, newName string) (string, error) {
+			app.handle.SetChatRenameFn(func(chatID, newName string) (string, error) {
 				var oldName string
 				row := conn.QueryRow(`SELECT label FROM user_chats WHERE channel = 'cli' AND sender_id = ? AND chat_id = ?`, cliSenderID, chatID)
 				_ = row.Scan(&oldName)

@@ -394,6 +394,7 @@ func Run(args []string) error {
 	// The closure is only invoked at runtime (never during InitServer), so the
 	// nil→non-nil transition after InitServer returns is safe.
 	var (
+		handle   ServerHandle
 		ag       *agent.Agent
 		rpcTable RPCTable
 		disp     *channel.Dispatcher
@@ -432,10 +433,11 @@ func Run(args []string) error {
 		}
 	}
 
-	ag, rpcTable, disp, msgBus, err = InitServer(cfg, llmClient, dbPath, workDir, xbotDir, cfg.Web.PersonaIsolation, channelReconfigureFn)
+	handle, rpcTable, disp, msgBus, err = InitServer(cfg, llmClient, dbPath, workDir, xbotDir, cfg.Web.PersonaIsolation, channelReconfigureFn)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to init server")
 	}
+	ag = handle.(*serverHandle).Agent() // internal: serverapp package can access *agent.Agent
 
 	// Migrate config.json subscriptions into DB for the admin user.
 	// This ensures admin is a normal DB user with real subscriptions,
@@ -648,7 +650,7 @@ func Run(args []string) error {
 			}
 		}
 	}
-	SetSessionStateHandler(ag, sessionStateHandler)
+	handle.SetSessionStateHandler(sessionStateHandler)
 
 	// Wire ChatRenameFn: rename session in DB (for remote CLI and server-side agents).
 	// Uses upsert (INSERT ON CONFLICT) to handle both existing and new user_chats rows.

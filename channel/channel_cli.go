@@ -56,7 +56,7 @@ type SessionStateSender interface {
 	SendSessionState(ev protocol.SessionEvent)
 }
 
-func (c *ChannelCliChannel) Send(msg bus.OutboundMessage) (string, error) {
+func (c *ChannelCliChannel) Send(msg OutboundMsg) (string, error) {
 	wsMsg := protocol.WSMessage{
 		Type:    protocol.MsgTypeText,
 		TS:      time.Now().Unix(),

@@ -11,7 +11,6 @@ import (
 	"time"
 	"xbot/protocol"
 
-	"xbot/bus"
 	"xbot/llm"
 
 	tea "charm.land/bubbletea/v2"
@@ -73,7 +72,7 @@ func TestCLIChannelSend(t *testing.T) {
 	ch := NewCLIChannel(&CLIChannelConfig{})
 
 	// Send without starting should still work (messages buffered)
-	msg := bus.OutboundMessage{
+	msg := OutboundMsg{
 		Channel:   "cli",
 		ChatID:    "cli_user",
 		Content:   "Hello, CLI!",
@@ -93,7 +92,7 @@ func TestCLIChannelSendPartial(t *testing.T) {
 	ch := NewCLIChannel(&CLIChannelConfig{})
 
 	// Send partial (streaming) message
-	msg := bus.OutboundMessage{
+	msg := OutboundMsg{
 		Channel:   "cli",
 		ChatID:    "cli_user",
 		Content:   "Thinking...",
@@ -113,7 +112,7 @@ func TestCLIChannelSendComplete(t *testing.T) {
 	ch := NewCLIChannel(&CLIChannelConfig{})
 
 	// Send complete message
-	msg := bus.OutboundMessage{
+	msg := OutboundMsg{
 		Channel:   "cli",
 		ChatID:    "cli_user",
 		Content:   "Final response",
@@ -134,7 +133,7 @@ func TestCLIChannelSendBufferOverflow(t *testing.T) {
 
 	// Send more messages than buffer size to test non-blocking behavior
 	for i := 0; i < cliMsgBufSize+10; i++ {
-		msg := bus.OutboundMessage{
+		msg := OutboundMsg{
 			Content: "message",
 		}
 		_, err := ch.Send(msg)
@@ -167,7 +166,7 @@ func TestCLIChannelSendProgress(t *testing.T) {
 func TestCLIChannelSendEmptyMessage(t *testing.T) {
 	ch := NewCLIChannel(&CLIChannelConfig{})
 
-	msg := bus.OutboundMessage{
+	msg := OutboundMsg{
 		Channel:   "cli",
 		ChatID:    "cli_user",
 		Content:   "", // empty content
@@ -189,7 +188,7 @@ func TestCLIChannelSendLongMessage(t *testing.T) {
 	// Create a very long message
 	longContent := strings.Repeat("This is a long message. ", 1000)
 
-	msg := bus.OutboundMessage{
+	msg := OutboundMsg{
 		Channel:   "cli",
 		ChatID:    "cli_user",
 		Content:   longContent,
@@ -208,7 +207,7 @@ func TestCLIChannelSendLongMessage(t *testing.T) {
 func TestCLIChannelSendWithMetadata(t *testing.T) {
 	ch := NewCLIChannel(&CLIChannelConfig{})
 
-	msg := bus.OutboundMessage{
+	msg := OutboundMsg{
 		Channel:   "cli",
 		ChatID:    "cli_user",
 		Content:   "Message with metadata",
@@ -228,7 +227,7 @@ func TestCLIChannelSendWithMetadata(t *testing.T) {
 func TestCLIChannelSendWithMedia(t *testing.T) {
 	ch := NewCLIChannel(&CLIChannelConfig{})
 
-	msg := bus.OutboundMessage{
+	msg := OutboundMsg{
 		Channel:   "cli",
 		ChatID:    "cli_user",
 		Content:   "Message with media",

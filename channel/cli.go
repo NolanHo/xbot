@@ -21,7 +21,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/google/uuid"
-	"xbot/bus"
 	"xbot/clipanic"
 	"xbot/llm"
 	log "xbot/logger"
@@ -397,25 +396,13 @@ func (c *CLIChannel) Stop() {
 }
 
 // Send 发送消息到 CLI（实现 Channel 接口）
-func (c *CLIChannel) Send(msg bus.OutboundMessage) (string, error) {
+func (c *CLIChannel) Send(msg OutboundMsg) (string, error) {
 	msgID := strings.ReplaceAll(uuid.New().String(), "-", "")
 
-	// Convert bus type to local OutboundMsg for internal processing.
-	local := OutboundMsg{
-		Channel:     msg.Channel,
-		ChatID:      msg.ChatID,
-		Content:     msg.Content,
-		Metadata:    msg.Metadata,
-		WaitingUser: msg.WaitingUser,
-		IsPartial:   msg.IsPartial,
-		ToolsUsed:   msg.ToolsUsed,
-		Media:       msg.Media,
-	}
-
 	// 发送到消息通道，由 handleOutbound 处理
-	log.WithField("msg_id", msgID).WithField("content_len", len(local.Content)).Debug("CLIChannel.Send: queuing")
+	log.WithField("msg_id", msgID).WithField("content_len", len(msg.Content)).Debug("CLIChannel.Send: queuing")
 	select {
-	case c.msgChan <- local:
+	case c.msgChan <- msg:
 	default:
 		log.Warn("CLI message channel full, dropping message")
 	}

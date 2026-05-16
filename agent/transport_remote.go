@@ -318,7 +318,7 @@ func (t *RemoteTransport) SetTUIControlHandler(cb func(action string, params map
 
 // WireCallbacks is noop for remote transport — server.go wires these directly on Agent.
 func (t *RemoteTransport) WireCallbacks(
-	func(msg bus.OutboundMessage) (string, error),
+	func(msg channel.OutboundMsg) (string, error),
 	func(name string) (channel.Channel, bool),
 	bus.MessageSender,
 	func(name string, runFn bus.RunFn) error,

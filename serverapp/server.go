@@ -671,9 +671,9 @@ func Run(args []string) error {
 		// 启动 OAuth flow 定期清理 goroutine
 		oauthManager.Start(ctx)
 
-		oauthServer.SetSendFunc(func(channel, chatID, content string) error {
-			_, err := disp.SendDirect(bus.OutboundMessage{
-				Channel: channel,
+		oauthServer.SetSendFunc(func(chName, chatID, content string) error {
+			_, err := disp.SendDirect(channel.OutboundMsg{
+				Channel: chName,
 				ChatID:  chatID,
 				Content: content,
 			})
@@ -880,7 +880,7 @@ func sendStartupNotify(disp *channel.Dispatcher, cfg *config.Config) {
 	)
 
 	for i := 0; i < 3; i++ {
-		_, err := disp.SendDirect(bus.OutboundMessage{
+		_, err := disp.SendDirect(channel.OutboundMsg{
 			Channel: cfg.StartupNotify.Channel,
 			ChatID:  cfg.StartupNotify.ChatID,
 			Content: content,

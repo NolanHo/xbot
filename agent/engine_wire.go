@@ -303,7 +303,7 @@ func (a *Agent) buildMainRunConfig(
 	}
 
 	// SpawnAgent（主 Agent 可以创建 SubAgent）
-	cfg.SpawnAgent = func(ctx context.Context, inMsg bus.InboundMessage) (*bus.OutboundMessage, error) {
+	cfg.SpawnAgent = func(ctx context.Context, inMsg bus.InboundMessage) (*channelpkg.OutboundMsg, error) {
 		return a.spawnSubAgent(ctx, inMsg)
 	}
 
@@ -722,7 +722,7 @@ func (a *Agent) buildSubAgentRunConfig(
 
 	// Capability: spawn_agent — 允许 SubAgent 创建子 Agent
 	if caps.SpawnAgent {
-		cfg.SpawnAgent = func(ctx context.Context, msg bus.InboundMessage) (*bus.OutboundMessage, error) {
+		cfg.SpawnAgent = func(ctx context.Context, msg bus.InboundMessage) (*channelpkg.OutboundMsg, error) {
 			return a.spawnSubAgent(ctx, msg)
 		}
 	}
@@ -804,7 +804,7 @@ func (a *Agent) buildToolExecutor(channel, chatID, senderID, senderName, sandbox
 		UnregisterAgentChannel: a.unregisterAgentChannel,
 	}
 
-	cfg.SpawnAgent = func(spawnCtx context.Context, inMsg bus.InboundMessage) (*bus.OutboundMessage, error) {
+	cfg.SpawnAgent = func(spawnCtx context.Context, inMsg bus.InboundMessage) (*channelpkg.OutboundMsg, error) {
 		return a.spawnSubAgent(spawnCtx, inMsg)
 	}
 
@@ -1150,7 +1150,7 @@ func (a *Agent) consolidateSubAgentMemory(
 
 // spawnSubAgent 通过 Run() 创建并运行 SubAgent。
 // 这是 SpawnAgent 回调的实现，将 InboundMessage 转换为 RunConfig 并调用 Run()。
-func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus.OutboundMessage, error) {
+func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*channelpkg.OutboundMsg, error) {
 	parentAgentID := msg.ParentAgentID
 	task := msg.Content
 	systemPrompt := msg.SystemPrompt
@@ -1170,7 +1170,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus
 				"role":   roleName,
 				"chain":  cc.Chain,
 			}).Warn("SubAgent spawn blocked by CallChain")
-			return &bus.OutboundMessage{
+			return &channelpkg.OutboundMsg{
 				Channel: "",
 				ChatID:  "",
 				Content: err.Error(),
@@ -1356,7 +1356,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus
 		log.Ctx(ctx).Warn("oneshot subagent returned nil output")
 		oneshotIA.mu.Unlock()
 		a.destroyInteractiveSession(oneshotKey)
-		return &bus.OutboundMessage{}, nil
+		return &channelpkg.OutboundMsg{}, nil
 	}
 	oneshotIA.mu.Unlock()
 	// Cascade-cancel any bg sessions spawned during this one-shot's Run(),
@@ -1399,7 +1399,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*bus
 		a.consolidateSubAgentMemory(ctx, cfg, out.Messages, task, roleName, parentAgentID)
 	}
 
-	return out.OutboundMessage, nil
+	return out.OutboundMsg, nil
 }
 
 // convertWsSubAgentTree 将 agent.SubAgentNode 转换为 protocol.SubAgentInfo 树。

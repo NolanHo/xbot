@@ -318,7 +318,7 @@ func (c *Client) SetTUIControlHandler(cb func(action string, params map[string]s
 }
 
 func (c *Client) WireCallbacks(
-	directSend func(msg bus.OutboundMessage) (string, error),
+	directSend func(msg channel.OutboundMsg) (string, error),
 	channelFinder func(name string) (channel.Channel, bool),
 	messageSender bus.MessageSender,
 	registerAgentChannel func(name string, runFn bus.RunFn) error,
@@ -326,7 +326,7 @@ func (c *Client) WireCallbacks(
 ) {
 	type wireSetter interface {
 		WireCallbacks(
-			func(msg bus.OutboundMessage) (string, error),
+			func(msg channel.OutboundMsg) (string, error),
 			func(name string) (channel.Channel, bool),
 			bus.MessageSender,
 			func(name string, runFn bus.RunFn) error,

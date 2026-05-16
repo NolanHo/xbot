@@ -15,7 +15,7 @@ import (
 // Callbacks that differ between local/server (e.g. ChatRenameFn, TUICallbacks)
 // should NOT go here — use individual Set* methods for those.
 func (a *Agent) WireCallbacks(
-	directSend func(msg bus.OutboundMessage) (string, error),
+	directSend func(msg channel.OutboundMsg) (string, error),
 	channelFinder func(name string) (channel.Channel, bool),
 	messageSender bus.MessageSender,
 	registerAgentChannel func(name string, runFn bus.RunFn) error,

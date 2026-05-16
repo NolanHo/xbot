@@ -41,7 +41,7 @@ type InboundMsg struct {
 }
 
 // OutboundMsg represents a server response to CLI.
-// This is the CLI-local equivalent of bus.OutboundMessage, containing only
+// This is the equivalent of bus.OutboundMessage for the Channel interface, containing only
 // the fields needed by the CLI channel for display.
 type OutboundMsg struct {
 	Channel     string            `json:"channel"`
@@ -52,6 +52,7 @@ type OutboundMsg struct {
 	IsPartial   bool              `json:"is_partial"`
 	ToolsUsed   []string          `json:"tools_used,omitempty"`
 	Media       []string          `json:"media,omitempty"`
+	Error       error             `json:"-"`
 }
 
 // ---------------------------------------------------------------------------

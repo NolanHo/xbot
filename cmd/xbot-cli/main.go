@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"xbot/agent"
-	"xbot/bus"
 	"xbot/channel"
 	"xbot/clipanic"
 	"xbot/config"
@@ -1435,7 +1434,7 @@ func main() {
 			if err := json.Unmarshal(env.Payload, &ev); err != nil {
 				return
 			}
-			cliCh.Send(bus.OutboundMessage{
+			cliCh.Send(channel.OutboundMsg{
 				Channel: ev.Channel,
 				ChatID:  ev.ChatID,
 				Content: ev.Content,
@@ -1451,7 +1450,7 @@ func main() {
 			if ev.RequestID != "" {
 				meta["request_id"] = ev.RequestID
 			}
-			cliCh.Send(bus.OutboundMessage{
+			cliCh.Send(channel.OutboundMsg{
 				Channel:     ev.Channel,
 				ChatID:      ev.ChatID,
 				WaitingUser: true,

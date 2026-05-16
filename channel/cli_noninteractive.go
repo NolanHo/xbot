@@ -5,7 +5,6 @@ import (
 	"strings"
 	"sync"
 
-	"xbot/bus"
 	log "xbot/logger"
 )
 
@@ -17,7 +16,7 @@ import (
 // 收到完整消息后打印到 stdout 并设置退出标志。
 // NOTE: msgBus is no longer used — kept as struct for compatibility with tests.
 type NonInteractiveChannel struct {
-	msgCh    chan bus.OutboundMessage
+	msgCh    chan OutboundMsg
 	done     chan struct{}
 	doneOnce sync.Once // ensures close(done) is called exactly once
 }
@@ -25,7 +24,7 @@ type NonInteractiveChannel struct {
 // NewNonInteractiveChannel 创建非交互模式渠道
 func NewNonInteractiveChannel() *NonInteractiveChannel {
 	ch := &NonInteractiveChannel{
-		msgCh: make(chan bus.OutboundMessage, 64),
+		msgCh: make(chan OutboundMsg, 64),
 		done:  make(chan struct{}),
 	}
 	// 启动消息接收 goroutine
@@ -63,7 +62,7 @@ func (c *NonInteractiveChannel) run() {
 func (c *NonInteractiveChannel) Name() string { return "cli" }
 func (c *NonInteractiveChannel) Start() error { return nil }
 func (c *NonInteractiveChannel) Stop()        {}
-func (c *NonInteractiveChannel) Send(msg bus.OutboundMessage) (string, error) {
+func (c *NonInteractiveChannel) Send(msg OutboundMsg) (string, error) {
 	select {
 	case c.msgCh <- msg:
 	default:

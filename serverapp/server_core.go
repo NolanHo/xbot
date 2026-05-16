@@ -141,7 +141,7 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 
 	// 6. Wire agent callbacks.
 	ag.WireCallbacks(
-		func(msg bus.OutboundMessage) (string, error) { // directSend
+		func(msg channel.OutboundMsg) (string, error) { // directSend
 			return disp.SendDirect(msg)
 		},
 		disp.GetChannel, // channelFinder
@@ -199,7 +199,7 @@ func (b *localEventBridge) Start() error { return nil }
 
 func (b *localEventBridge) Stop() {}
 
-func (b *localEventBridge) Send(msg bus.OutboundMessage) (string, error) {
+func (b *localEventBridge) Send(msg channel.OutboundMsg) (string, error) {
 	// Convert OutboundMessage → WSMessage and push to eventCh.
 	// The Client.eventLoop reads from eventCh and dispatches via dispatchWSMessage.
 	wsMsg := protocol.WSMessage{

@@ -253,7 +253,7 @@ type Agent struct {
 	userSemaphores sync.Map // map[string]chan struct{}
 
 	commands         *CommandRegistry                          // 指令注册表
-	directSend       func(bus.OutboundMessage) (string, error) // 同步发送，绕过 bus 以获取 message_id
+	directSend       func(channel.OutboundMsg) (string, error) // 同步发送，绕过 bus 以获取 message_id
 	sessionMsgIDs    sync.Map                                  // key: "channel:chatID" -> 当前 session 已发消息 ID（用于 Patch 更新）
 	sessionReplyTo   sync.Map                                  // key: "channel:chatID" -> 用户入站消息 ID（用于首条回复的 reply 模式）
 	sessionFinalSent sync.Map                                  // key: "channel:chatID" -> bool, 工具已发送最终回复（如卡片），后续 sendMessage 跳过
@@ -1309,7 +1309,7 @@ func (a *Agent) SetLLMConcurrency(senderID string, personal int) error {
 }
 
 // SetDirectSend 注入同步发送函数（绕过 bus，用于消息更新跟踪）
-func (a *Agent) SetDirectSend(fn func(bus.OutboundMessage) (string, error)) {
+func (a *Agent) SetDirectSend(fn func(channel.OutboundMsg) (string, error)) {
 	a.directSend = fn
 }
 
@@ -1705,7 +1705,12 @@ func (a *Agent) chatWorker(ctx context.Context, chatKey string, ch <-chan bus.In
 					}
 					if response != nil {
 						if sendErr := a.sendMessage(m.Channel, m.ChatID, response.Content, response.Metadata); sendErr != nil {
-							a.bus.Outbound <- *response
+							a.bus.Outbound <- bus.OutboundMessage{
+								Channel: response.Channel,
+								ChatID:  response.ChatID,
+								Content: response.Content,
+								Media:   response.Media,
+							}
 						}
 					}
 				})
@@ -1766,7 +1771,7 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 		}
 
 		// 创建 per-request cancel context
-		var response *bus.OutboundMessage
+		var response *channel.OutboundMsg
 		var err error
 		cancelCh := make(chan struct{}, 1)
 		// cancelKey 仅用 channel:chatID（不含 senderID），与 /cancel 拦截处保持一致
@@ -1874,18 +1879,18 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 				// WaitingUser response: send directly with WaitingUser flag set.
 				// Bypass sendMessage (which doesn't support WaitingUser) since it applies
 				// Patch/Edit logic incompatible with async user interaction.
-				outMsg := bus.OutboundMessage{
+				busMsg := bus.OutboundMessage{
 					Channel:     msg.Channel,
 					ChatID:      msg.ChatID,
 					Content:     response.Content,
 					WaitingUser: true,
 					Metadata:    response.Metadata,
 				}
-				if outMsg.Metadata == nil {
-					outMsg.Metadata = make(map[string]string)
+				if busMsg.Metadata == nil {
+					busMsg.Metadata = make(map[string]string)
 				}
 				select {
-				case a.bus.Outbound <- outMsg:
+				case a.bus.Outbound <- busMsg:
 				default:
 					log.Ctx(ctx).Warn("Message bus outbound channel is full, dropping WaitingUser response")
 				}
@@ -1916,7 +1921,7 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 
 // processMessage 处理单条入站消息
 
-func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bus.OutboundMessage, error) {
+func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*channel.OutboundMsg, error) {
 	// 使用消息携带的 requestID（在渠道收到消息时生成），如果没有则生成新的
 	reqID := msg.RequestID
 	if reqID == "" {
@@ -2148,7 +2153,7 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*bu
 }
 
 // processCronMessage 处理 cron 触发消息（不带历史上下文，使用专用系统提示词）
-func (a *Agent) processCronMessage(ctx context.Context, msg bus.InboundMessage) (*bus.OutboundMessage, error) {
+func (a *Agent) processCronMessage(ctx context.Context, msg bus.InboundMessage) (*channel.OutboundMsg, error) {
 	// 注入 requestID（如果 processMessage 未注入）
 	if log.RequestID(ctx) == "" {
 		ctx = log.WithRequestID(ctx, log.NewRequestID())
@@ -2205,7 +2210,7 @@ func (a *Agent) processCronMessage(ctx context.Context, msg bus.InboundMessage) 
 		metadata = msg.Metadata
 	}
 
-	return &bus.OutboundMessage{
+	return &channel.OutboundMsg{
 		Channel:  msg.Channel,
 		ChatID:   msg.ChatID,
 		Content:  finalContent,
@@ -2462,16 +2467,16 @@ func (a *Agent) emitBuiltinProgressDone(chName, chatID string) {
 // 工具发送最终回复（如飞书卡片）时同样 Patch 更新，但标记 session 为"已完成"，后续调用自动跳过。
 // sendMessage 向 IM 渠道发送消息。
 // 通过 directSend 直连或 bus.Outbound 广播。
-func (a *Agent) sendMessage(channel, chatID, content string, metadata ...map[string]string) error {
-	key := sessionKey(channel, chatID)
+func (a *Agent) sendMessage(chName, chatID, content string, metadata ...map[string]string) error {
+	key := sessionKey(chName, chatID)
 
 	// 工具已发送最终回复 → 跳过后续所有消息（进度更新、LLM 最终回复等）
 	if _, sent := a.sessionFinalSent.Load(key); sent {
 		return nil
 	}
 
-	msg := bus.OutboundMessage{
-		Channel: channel,
+	msg := channel.OutboundMsg{
+		Channel: chName,
 		ChatID:  chatID,
 		Content: content,
 	}
@@ -2502,7 +2507,7 @@ func (a *Agent) sendMessage(channel, chatID, content string, metadata ...map[str
 
 		log.WithField("send_channel", msg.Channel).
 			WithField("send_chat_id", msg.ChatID).
-			WithField("orig_channel", channel).
+			WithField("orig_channel", chName).
 			WithField("orig_chat_id", chatID).
 			WithField("is_final", isFinal).
 			Info("sendMessage directSend dispatch")
@@ -2521,7 +2526,13 @@ func (a *Agent) sendMessage(channel, chatID, content string, metadata ...map[str
 
 	// 降级：directSend 不可用时走 bus（无消息更新跟踪）
 	select {
-	case a.bus.Outbound <- msg:
+	case a.bus.Outbound <- bus.OutboundMessage{
+		Channel:  msg.Channel,
+		ChatID:   msg.ChatID,
+		Content:  msg.Content,
+		Media:    msg.Media,
+		Metadata: msg.Metadata,
+	}:
 		return nil
 	default:
 		return fmt.Errorf("message bus outbound channel is full")
@@ -2750,7 +2761,7 @@ func (a *Agent) addReaction(msg bus.InboundMessage) {
 		return
 	}
 
-	_, err := a.directSend(bus.OutboundMessage{
+	_, err := a.directSend(channel.OutboundMsg{
 		Channel: msg.Channel,
 		ChatID:  msg.ChatID,
 		Metadata: map[string]string{

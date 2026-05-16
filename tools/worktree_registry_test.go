@@ -20,7 +20,10 @@ func newTestGitRepo(t *testing.T) string {
 	run := func(name string, args ...string) {
 		cmd := exec.Command(name, args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
+		// Use cleanGitEnv to strip GIT_DIR etc. leaked from the parent
+		// repo's pre-commit hook. Without this, the test's git commands
+		// would operate on the *host* repo instead of the temp dir.
+		cmd.Env = append(cleanGitEnv(),
 			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
 			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
 		)

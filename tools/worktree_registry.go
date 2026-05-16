@@ -329,6 +329,35 @@ func (r *WorktreeRegistry) saveRepoLocked(repoPath string) {
 
 // --- Worktree helper functions ---
 
+// gitEnvBlocklist contains GIT_* variables that must be stripped from
+// subprocess environments so that git commands operate on the intended
+// directory instead of the parent repo (e.g. during pre-commit hooks).
+var gitEnvBlocklist = []string{
+	"GIT_DIR",
+	"GIT_WORK_TREE",
+	"GIT_INDEX_FILE",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+}
+
+// cleanGitEnv returns os.Environ() with git plumbing variables removed.
+func cleanGitEnv() []string {
+	var env []string
+	for _, e := range os.Environ() {
+		strip := false
+		for _, prefix := range gitEnvBlocklist {
+			if strings.HasPrefix(e, prefix+"=") {
+				strip = true
+				break
+			}
+		}
+		if !strip {
+			env = append(env, e)
+		}
+	}
+	return env
+}
+
 // GitRepoRoot returns the absolute root of the git repo containing dir.
 // Works correctly in both regular repos and git worktrees (uses git-common-dir).
 func GitRepoRoot(dir string) (string, error) {
@@ -348,6 +377,7 @@ func GitRepoRoot(dir string) (string, error) {
 
 	// Regular directory: use git rev-parse
 	cmd := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel")
+	cmd.Env = cleanGitEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("not a git repository: %w", err)

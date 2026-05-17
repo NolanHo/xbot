@@ -186,41 +186,6 @@
   border-color: #3b82f6;
 }
 
-.settings-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 500;
-  color: #94a3b8;
-  margin-bottom: 4px;
-}
-
-[data-theme="light"] .settings-label {
-  color: #64748b;
-}
-
-.settings-select {
-  width: 100%;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid #475569;
-  background: #1e293b;
-  color: #e2e8f0;
-  font-size: 14px;
-  outline: none;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-}
-
-.settings-select:focus {
-  border-color: #3b82f6;
-}
-
-[data-theme="light"] .settings-select {
-  background: #f8fafc;
-  border-color: #cbd5e1;
-  color: #1e293b;
-}
-
 .settings-code-block {
   display: block;
   width: 100%;

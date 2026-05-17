@@ -63,7 +63,7 @@ export default function PresetsTab({ onPresetsChange }: PresetsTabProps) {
 
   const requestPresetDelete = (id: string) => setConfirmDeleteId(id)
 
-  const executePresetDelete = useCallback(async () => {
+  const executePresetDelete = async () => {
     if (!confirmDeleteId) return
     const id = confirmDeleteId
     setConfirmDeleteId(null)
@@ -71,7 +71,7 @@ export default function PresetsTab({ onPresetsChange }: PresetsTabProps) {
       .filter(p => p.id !== id)
       .map((p, i) => ({ ...p, sort: i }))
     await savePresets(newList)
-  }, [presetList, savePresets])
+  }
 
   const handlePresetMove = useCallback(async (id: string, direction: 'up' | 'down') => {
     const sorted = [...presetList].sort((a, b) => a.sort - b.sort)

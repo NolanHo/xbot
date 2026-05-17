@@ -78,7 +78,7 @@ const CodeBlock = memo(function CodeBlock({ className, children }: CodeBlockProp
     <div className="xbot-codeblock">
       <div className="xbot-codeblock-header">
         <span>{lang || 'code'}{lineCount > 1 && <span className="ml-2 text-slate-600 text-[10px]">{lineCount} lines</span>}</span>
-        <button onClick={handleCopy} className="xbot-codeblock-copy">
+        <button onClick={handleCopy} className="xbot-codeblock-copy" aria-label="复制代码" data-testid="codeblock-copy-btn">
           {copied ? '✓ Copied' : 'Copy'}
         </button>
       </div>

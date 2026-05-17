@@ -151,8 +151,7 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
 
   const handleSend = useCallback(() => {
     if (!editor) return
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const md = (editor.storage as any).markdown.getMarkdown()
+    const md = (editor.storage as { markdown?: { getMarkdown: () => string } }).markdown?.getMarkdown() ?? ''
     if (!md.trim()) return
 
     // Add to history (deduplicate with first entry)

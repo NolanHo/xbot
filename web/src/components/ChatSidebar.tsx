@@ -187,7 +187,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
                     )}
                     {chat.is_current && <span className="text-[10px] text-indigo-400 shrink-0">●</span>}
                     {!chat.is_current && (
-                      <button onClick={(e) => handleDelete(e, chat.chat_id)} className="sidebar-delete-btn">✕</button>
+                      <button onClick={(e) => handleDelete(e, chat.chat_id)} className="sidebar-delete-btn" aria-label="删除会话">✕</button>
                     )}
                   </div>
                   {chat.preview && <div className="text-[10px] text-slate-500 mt-0.5 truncate">{chat.preview}</div>}
@@ -270,7 +270,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
 
       {/* Refresh */}
       <div className="border-t border-slate-700/50 px-2 py-1">
-        <button onClick={fetchChats} disabled={loading} className="sidebar-refresh-btn">
+        <button onClick={fetchChats} disabled={loading} className="sidebar-refresh-btn" aria-label="刷新会话列表">
           {loading ? '...' : '🔄 刷新'}
         </button>
       </div>

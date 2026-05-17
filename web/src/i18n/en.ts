@@ -332,6 +332,37 @@ const en: Record<I18nKey, string> = {
   expandCodeBlock: 'Expand ({lines} lines)',
   collapseCodeBlock: 'Collapse',
 
+  // ─── WebSocket Status ───
+  wsConnected: '● Connected',
+  wsConnecting: '◐ Connecting...',
+  wsDisconnected: '○ Disconnected',
+  wsReconnecting: '⚠️ Reconnecting',
+  reconnectAttemptN: 'Attempt {n}',
+  nextRetryIn: '{n}s',
+  reconnectSyncHint: 'Messages will sync automatically after reconnection',
+
+  // ─── Settings Advanced ───
+  searchSettings: 'Search settings...',
+  noMatchingSettings: 'No matching settings',
+  exportSettings: 'Export Settings',
+  importSettings: 'Import Settings',
+  importSuccess: 'Settings imported',
+  importFailed: 'Import failed: invalid format',
+  resetToDefaults: 'Reset to Defaults',
+  confirmResetSettings: 'Reset all appearance settings to defaults?',
+  settingsReset: 'Settings reset',
+
+  // ─── Message Status ───
+  sending: 'Sending...',
+  sendFailed: 'Send failed',
+  retry: 'Retry',
+  edited: '(edited)',
+  charCount: '{count} chars',
+  justNow: 'just now',
+  minutesAgo: '{n}m ago',
+  hoursAgo: '{n}h ago',
+  daysAgo: '{n}d ago',
+
 }
 
 export default en

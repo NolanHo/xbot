@@ -279,8 +279,10 @@
 .xbot-checkbox {
   margin: 0 6px 0 0;
   accent-color: #3b82f6;
-  cursor: default;
-  pointer-events: none;
+}
+.xbot-checkbox-interactive {
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .xbot-task-item {

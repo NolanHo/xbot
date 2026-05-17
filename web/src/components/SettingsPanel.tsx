@@ -23,6 +23,7 @@ export default function SettingsPanel({ open, onClose, onNicknameChange, onPrese
   const [activeTab, setActiveTab] = useState<TabId>('appearance')
   const [saving, setSaving] = useState(false)
   const [closing, setClosing] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Reset closing state when panel re-opens
   useEffect(() => {
@@ -80,6 +81,16 @@ export default function SettingsPanel({ open, onClose, onNicknameChange, onPrese
           ))}
         </div>
 
+        <div className="px-3 py-2">
+          <input
+            type="text"
+            className="settings-input w-full text-sm"
+            placeholder={t('searchSettings')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            data-testid="settings-search-input"
+          />
+        </div>
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
 
         {activeTab === 'appearance' && (

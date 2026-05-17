@@ -330,6 +330,37 @@ const zhCN = {
   expandCodeBlock: '展开 ({lines} 行)',
   collapseCodeBlock: '折叠',
 
+  // ─── WebSocket Status ───
+  wsConnected: '● 已连接',
+  wsConnecting: '◐ 连接中...',
+  wsDisconnected: '○ 已断开',
+  wsReconnecting: '⚠️ 重连中',
+  reconnectAttemptN: '第 {n} 次',
+  nextRetryIn: '{n}s 后重试',
+  reconnectSyncHint: '重连后将自动同步断线期间的消息',
+
+  // ─── Settings Advanced ───
+  searchSettings: '搜索设置...',
+  noMatchingSettings: '无匹配设置项',
+  exportSettings: '导出设置',
+  importSettings: '导入设置',
+  importSuccess: '设置导入成功',
+  importFailed: '导入失败：格式无效',
+  resetToDefaults: '重置为默认值',
+  confirmResetSettings: '确定要重置所有外观设置为默认值吗？',
+  settingsReset: '设置已重置',
+
+  // ─── Message Status ───
+  sending: '发送中...',
+  sendFailed: '发送失败',
+  retry: '重试',
+  edited: '(已编辑)',
+  charCount: '{count} 字',
+  justNow: '刚刚',
+  minutesAgo: '{n}分钟前',
+  hoursAgo: '{n}小时前',
+  daysAgo: '{n}天前',
+
 } as const
 
 export type I18nKey = keyof typeof zhCN

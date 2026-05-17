@@ -10,13 +10,23 @@ export interface NetworkStatus {
   wsReconnecting: boolean
   /** Server explicitly stopped (e.g. shutdown) */
   serverStopped: boolean
+  /** Current reconnect attempt count (0 if not reconnecting) */
+  wsReconnectAttempt: number
+  /** Seconds until next reconnect attempt (0 if not reconnecting) */
+  wsNextReconnectIn: number
 }
 
 /**
  * Hook to monitor network status (browser online/offline) and
  * combine it with WebSocket connection state.
  */
-export function useNetworkStatus(wsConnected: boolean, wsReconnecting: boolean, serverStopped: boolean): NetworkStatus {
+export function useNetworkStatus(
+  wsConnected: boolean,
+  wsReconnecting: boolean,
+  serverStopped: boolean,
+  wsReconnectAttempt: number = 0,
+  wsNextReconnectIn: number = 0,
+): NetworkStatus {
   const [online, setOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true)
 
   useEffect(() => {
@@ -32,7 +42,7 @@ export function useNetworkStatus(wsConnected: boolean, wsReconnecting: boolean, 
     }
   }, [])
 
-  return { online, wsConnected, wsReconnecting, serverStopped }
+  return { online, wsConnected, wsReconnecting, serverStopped, wsReconnectAttempt, wsNextReconnectIn }
 }
 
 /**

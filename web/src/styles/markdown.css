@@ -103,6 +103,45 @@
   height: auto;
 }
 
+
+/* KaTeX formula styling */
+.markdown-body .katex-display {
+  margin: 0.8em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.markdown-body .katex {
+  font-size: 1.05em;
+}
+[data-theme="light"] .markdown-body .katex {
+  color: #1e293b;
+}
+
+/* Footnote styling */
+.markdown-body .footnotes {
+  margin-top: 1.5em;
+  padding-top: 0.8em;
+  border-top: 1px solid var(--xbot-border-light);
+  font-size: 0.85em;
+  color: var(--xbot-text-secondary);
+}
+.markdown-body sup a[id^="user-content-fnref-"],
+.markdown-body sup a[href^="#user-content-fn"] {
+  color: var(--xbot-text-link);
+  text-decoration: none;
+  font-weight: 600;
+}
+[data-theme="light"] .markdown-body .footnotes {
+  border-top-color: #d1cdc7;
+  color: #57534e;
+}
+
+/* Lazy-loaded image styling */
+.markdown-body img.xbot-lazy-img {
+  cursor: zoom-in;
+  transition: opacity 0.2s ease;
+}
+
 /* ---- Light Theme Overrides ---- */
 
 [data-theme="light"] .markdown-body code {

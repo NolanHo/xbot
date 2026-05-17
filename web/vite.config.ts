@@ -37,6 +37,7 @@ export default defineConfig({
             if (id.includes('/react-markdown/') || id.includes('/remark-gfm/')) return 'vendor-markdown'
             if (id.includes('/highlight.js/') || id.includes('/lowlight/')) return 'vendor-highlight'
             if (id.includes('/mermaid/')) return 'vendor-mermaid'
+            if (id.includes('/katex/')) return 'vendor-katex'
           }
         },
       },

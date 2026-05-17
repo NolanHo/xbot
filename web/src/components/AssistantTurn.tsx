@@ -1,8 +1,12 @@
 import { useTranslation } from '../i18n'
-import { useState, memo } from 'react'
+import { useState, useMemo, memo } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import remarkFootnotes from 'remark-footnotes'
+import rehypeKatex from 'rehype-katex'
 import { getCodeBlockProps } from './CodeBlock'
+import Lightbox from './Lightbox'
 import MessageActions from './MessageActions'
 import type { WsProgressPayload, IterationSnapshot } from './ProgressPanel'
 import { CompletedIteration, BouncingDots, SubAgentTree } from './ProgressPanel'
@@ -34,10 +38,11 @@ interface AssistantTurnProps {
   onReply?: () => void
   /** Scroll to a message by ID (for reply click) */
   onScrollToMessage?: (id: string) => void
+  /** Streaming content length for progress display */
+  streamingLength?: number
 }
 
 
-const codeBlockComponents = getCodeBlockProps()
 
 /** Collapsible section with a header bar */
 function CollapsibleSection({
@@ -96,8 +101,10 @@ function isThinkingContent(content: string): boolean {
   return false
 }
 
-export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress, onDelete, onRegenerate, onReply, onScrollToMessage }: AssistantTurnProps) {
+export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress, onDelete, onRegenerate, onReply, onScrollToMessage, streamingLength }: AssistantTurnProps) {
   const [copied, setCopied] = useState(false)
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
+  const codeBlockProps = useMemo(() => getCodeBlockProps((src, alt) => setLightbox({ src, alt })), [])
   const { t } = useTranslation()
 
   // Classify messages
@@ -168,7 +175,7 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
             <div className="space-y-2 pl-1">
               {thinkingMsgs.map((msg) => (
                 <div key={msg.id} className="text-sm text-slate-400 italic">
-                  <Markdown components={codeBlockComponents} remarkPlugins={[remarkGfm]}>
+                  <Markdown components={codeBlockProps} remarkPlugins={[remarkGfm, remarkMath, remarkFootnotes as any]} rehypePlugins={[rehypeKatex]}>
                     {msg.content.replace(/^💭\s*/, '')}
                   </Markdown>
                 </div>
@@ -303,7 +310,7 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
             <CollapsibleContent>
               {textMsgs.map((msg) => (
                 <div key={msg.id} className="markdown-body">
-                  <Markdown components={codeBlockComponents} remarkPlugins={[remarkGfm]}>
+                  <Markdown components={codeBlockProps} remarkPlugins={[remarkGfm, remarkMath, remarkFootnotes as any]} rehypePlugins={[rehypeKatex]}>
                     {msg.content}
                   </Markdown>
                 </div>
@@ -325,9 +332,21 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
         {loading && textMsgs.length > 0 && (
           <div className="assistant-turn-streaming-indicator">
             <span className="assistant-turn-cursor" />
+            {streamingLength != null && streamingLength > 0 && (
+              <span className="text-xs text-slate-500 ml-2">{streamingLength} chars</span>
+            )}
           </div>
         )}
+
+        {/* Edited indicator */}
+        {!loading && textMsgs.length > 0 && textMsgs[textMsgs.length - 1]?.edited && (
+          <div className="text-xs text-slate-600 mt-1 italic">(edited)</div>
+        )}
       </div>
+      {/* Lightbox portal */}
+      {lightbox && (
+        <Lightbox src={lightbox.src} alt={lightbox.alt} onClose={() => setLightbox(null)} />
+      )}
     </div>
   )
 })

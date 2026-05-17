@@ -194,6 +194,17 @@ export function exportAsJSON(messages: Message[]): string {
   })), null, 2)
 }
 
+/** Format a timestamp as a relative time string (e.g., "just now", "5m ago"). */
+export function formatRelativeTime(ts: number): string {
+  const now = Date.now()
+  const diff = Math.max(0, Math.floor((now - ts) / 1000))
+  if (diff < 60) return diff < 5 ? 'just now' : `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`
+  return formatTime(Math.floor(ts / 1000))
+}
+
 /**
  * Trigger a browser download for the given content.
  */

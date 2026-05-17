@@ -135,8 +135,21 @@ function containsCheckbox(children: React.ReactNode): boolean {
   return false
 }
 
+/** Interactive checkbox — local toggle state, purely visual */
+const InteractiveCheckbox = memo(function InteractiveCheckbox({ checked: initialChecked }: { checked?: boolean }) {
+  const [checked, setChecked] = useState(!!initialChecked)
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={() => setChecked(!checked)}
+      className="xbot-checkbox xbot-checkbox-interactive"
+    />
+  )
+})
+
 // Returns components for react-markdown's components prop
-export function getCodeBlockProps() {
+export function getCodeBlockProps(onImageClick?: (src: string, alt: string) => void) {
   return {
     code(props: { className?: string; children?: React.ReactNode; inline?: boolean }) {
       const lang = props.className?.replace('language-', '')
@@ -156,15 +169,27 @@ export function getCodeBlockProps() {
         return <MermaidBlock code={codeStr} />
       }
 
+      // Latex/math — skip code block, render as plain text (KaTeX handles $...$ syntax)
+      if (lang === 'latex' || lang === 'math') {
+        return <code className="xbot-inline-code">{codeStr}</code>
+      }
+
       return <CodeBlock className={props.className}>{codeStr}</CodeBlock>
     },
     checkbox(props: { checked?: boolean }) {
+      return <InteractiveCheckbox checked={props.checked} />
+    },
+    img(props: { src?: string; alt?: string }) {
       return (
-        <input
-          type="checkbox"
-          disabled
-          checked={!!props.checked}
-          className="xbot-checkbox"
+        <img
+          src={props.src}
+          alt={props.alt || ''}
+          loading="lazy"
+          className="xbot-lazy-img"
+          onClick={() => {
+            if (props.src && onImageClick) onImageClick(props.src, props.alt || '')
+          }}
+          style={{ cursor: 'zoom-in' }}
         />
       )
     },

@@ -117,7 +117,6 @@ export default function AppearanceTab({ showToast, onNicknameChange, onSavingCha
           onChange={(e) => {
             const v = e.target.value as Language
             setLanguage(v)
-            // Update I18nProvider context to trigger immediate re-render
             setLocale(v)
             handleSave({ theme, font_size: fontSize, nickname, language: v })
           }}
@@ -125,6 +124,78 @@ export default function AppearanceTab({ showToast, onNicknameChange, onSavingCha
           <option value="zh-CN">简体中文</option>
           <option value="en">English</option>
         </select>
+      </div>
+
+      <div className="settings-item mt-4 pt-4 border-t border-slate-700/50">
+        <div className="flex gap-2 flex-wrap">
+          <button
+            className="settings-btn-secondary text-xs"
+            onClick={() => {
+              const data = JSON.stringify({ _version: 1, theme, font_size: fontSize, nickname, language }, null, 2)
+              const blob = new Blob([data], { type: 'application/json' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = 'xbot-settings.json'
+              a.click()
+              URL.revokeObjectURL(url)
+            }}
+          >
+            📤 {t('exportSettings')}
+          </button>
+          <button
+            className="settings-btn-secondary text-xs"
+            onClick={() => {
+              const input = document.createElement('input')
+              input.type = 'file'
+              input.accept = '.json'
+              input.onchange = async (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0]
+                if (!file) return
+                try {
+                  const text = await file.text()
+                  const data = JSON.parse(text)
+                  if (data.theme) setTheme(data.theme as Theme)
+                  if (data.font_size) setFontSize(data.font_size as FontSize)
+                  if (data.nickname !== undefined) setNickname(data.nickname)
+                  if (data.language) setLanguage(data.language as Language)
+                  handleSave({
+                    theme: data.theme || theme,
+                    font_size: data.font_size || fontSize,
+                    nickname: data.nickname ?? nickname,
+                    language: data.language || language,
+                  })
+                  showToast(t('importSuccess'), 'success')
+                } catch {
+                  showToast(t('importFailed'), 'error')
+                }
+              }
+              input.click()
+            }}
+          >
+            📥 {t('importSettings')}
+          </button>
+          <button
+            className="settings-btn-secondary text-xs"
+            onClick={() => {
+              if (!confirm(t('confirmResetSettings'))) return
+              const defaults = DEFAULT_SETTINGS
+              setTheme(defaults.theme)
+              setFontSize(defaults.font_size)
+              setNickname(defaults.nickname)
+              setLanguage(defaults.language)
+              handleSave({
+                theme: defaults.theme,
+                font_size: defaults.font_size,
+                nickname: defaults.nickname,
+                language: defaults.language,
+              })
+              showToast(t('settingsReset'), 'success')
+            }}
+          >
+            🔄 {t('resetToDefaults')}
+          </button>
+        </div>
       </div>
     </div>
   )

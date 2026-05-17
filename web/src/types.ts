@@ -30,6 +30,10 @@ export interface Message {
   iterationHistory?: IterationSnapshot[] | null
   /** Reply reference — links to the message being replied to */
   replyTo?: ReplyInfo
+  /** Sending status — only meaningful for user messages */
+  status?: 'sending' | 'sent' | 'failed'
+  /** Whether this message was edited after initial send */
+  edited?: boolean
 }
 
 /** Turn-based message grouping (Codex style) */

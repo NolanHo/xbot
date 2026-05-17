@@ -17,7 +17,7 @@ import { useNotification } from './hooks/useNotification'
 import ReplyPreview from './components/ReplyPreview'
 import TabBar from './components/TabBar'
 import type { WsProgressPayload, IterationSnapshot } from './components/ProgressPanel'
-import { formatTime, formatFileSize, normalizeIterationHistory, createResetProgress, exportAsMarkdown, exportAsJSON, downloadFile } from './utils'
+import { formatRelativeTime, formatFileSize, normalizeIterationHistory, createResetProgress, exportAsMarkdown, exportAsJSON, downloadFile } from './utils'
 import { getCodeBlockProps } from './components/CodeBlock'
 import ProgressPanel from './components/ProgressPanel'
 import AssistantTurn from './components/AssistantTurn'
@@ -328,6 +328,8 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     connected,
     reconnecting,
     serverStopped,
+    reconnectAttempt,
+    nextReconnectIn,
     send: wsSend,
     disconnect: wsDisconnect,
   } = useWebSocket({ onMessage, lastSeqRef })
@@ -335,7 +337,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
 
 
   // --- Network status (browser online/offline) ---
-  const { online } = useNetworkStatus(connected, reconnecting, serverStopped)
+  const { online } = useNetworkStatus(connected, reconnecting, serverStopped, reconnectAttempt, nextReconnectIn)
   const { permission: notifPermission, requestPermission: requestNotifPermission, notify: sendNotif } = useNotification()
   // --- Desktop notification on new assistant message when backgrounded ---
   const prevMessageCountRef = useRef(0)
@@ -800,8 +802,10 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
               : reconnecting
                 ? 'bg-yellow-900/50 text-yellow-400'
                 : 'bg-red-900/50 text-red-400'
-          }`}>
-            {connected ? t('connected') : reconnecting ? t('connectingStatus') : t('disconnected')}
+          }`} role="status">
+            {connected ? t('connected') : reconnecting
+              ? `${t('reconnecting')} ${reconnectAttempt > 0 ? `(attempt ${reconnectAttempt}${nextReconnectIn > 0 ? `, ${nextReconnectIn}s` : ''})` : ''}`
+              : t('disconnected')}
           </span>
           {/* Context indicator */}
           {contextInfo && contextInfo.max_tokens > 0 && (
@@ -914,7 +918,8 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       )}
       {reconnecting && !connected && (
         <div className="bg-yellow-900/40 border-b border-yellow-800/50 px-4 py-2 text-center text-sm text-yellow-400">
-          {t("reconnecting")}
+          {t("reconnecting")} {reconnectAttempt > 0 && `(attempt ${reconnectAttempt}${nextReconnectIn > 0 ? `, ${nextReconnectIn}s` : ''})`}
+          <div className="text-xs text-yellow-500/70 mt-0.5">{t('reconnectSyncHint')}</div>
         </div>
       )}
       {/* Offline banner */}
@@ -1018,8 +1023,11 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                         <div className="rounded-xl px-4 py-3 bg-blue-600 text-white markdown-body text-sm relative">
                           <UserMessageContent content={turn.message.content} onPreview={(url) => setPreviewImage(url)} />
                           {turn.message.ts && (
-                           <div className="text-xs mt-1 text-right text-blue-200/50">
-                             {formatTime(turn.message.ts)}
+                           <div className="text-xs mt-1 text-right text-blue-200/50 flex items-center justify-end gap-1">
+                             <span>{formatRelativeTime(turn.message.ts * 1000)}</span>
+                             {turn.message.status === 'sending' && <span className="animate-pulse">⏳</span>}
+                             {turn.message.status === 'failed' && <span className="text-red-300">❌ {t('sendFailed')}</span>}
+                             {turn.message.edited && <span className="italic">{t('edited')}</span>}
                            </div>
                           )}
                           {/* User message actions — reply only */}
@@ -1051,6 +1059,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                           handleReplyToMessage(last.id, last.content, 'assistant')
                         }}
                         onScrollToMessage={handleScrollToMessage}
+                        streamingLength={isLatestTurn && isActive ? streamingContentRef.current.length : undefined}
                       />
                     </div>
                   )}

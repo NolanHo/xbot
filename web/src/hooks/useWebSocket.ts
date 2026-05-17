@@ -18,6 +18,10 @@ export interface UseWebSocketReturn {
   connected: boolean
   reconnecting: boolean
   serverStopped: boolean
+  /** Current reconnect attempt number (0 = not reconnecting) */
+  reconnectAttempt: number
+  /** Seconds until next reconnect attempt (0 = no pending reconnect) */
+  nextReconnectIn: number
   /** Send a JSON message through the WebSocket. No-op if not connected. */
   send: (data: WebSocketMessage) => void
   /** Manually initiate a WebSocket connection. */
@@ -36,6 +40,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const [connected, setConnected] = useState(false)
   const [reconnecting, setReconnecting] = useState(true) // true = initial connecting state
   const [serverStopped, setServerStopped] = useState(false)
+  const [reconnectAttempt, setReconnectAttempt] = useState(0)
+  const [nextReconnectIn, setNextReconnectIn] = useState(0)
 
   const wsRef = useRef<WebSocket | null>(null)
   const intentionalCloseRef = useRef(false)
@@ -44,6 +50,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const internalLastSeqRef = useRef<number>(initialSeq ?? 0)
   const lastSeqRef = externalLastSeqRef ?? internalLastSeqRef
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Stable ref for onMessage to avoid re-creating connect on every render.
   const onMessageRef = useRef(onMessage)
@@ -59,6 +66,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       setConnected(true)
       setReconnecting(false)
       setServerStopped(false)
+      setReconnectAttempt(0)
+      setNextReconnectIn(0)
       intentionalCloseRef.current = false
       reconnectDelayRef.current = 1000
       reconnectAttemptsRef.current = 0
@@ -107,9 +116,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current)
       }
+      reconnectAttemptsRef.current++
       const jitter = Math.random() * 0.5 + 0.5 // 0.5x - 1.0x random factor
       const delay = Math.round(reconnectDelayRef.current * jitter)
-      reconnectAttemptsRef.current++
+      setReconnectAttempt(reconnectAttemptsRef.current)
+      setNextReconnectIn(Math.ceil(delay / 1000))
       reconnectTimerRef.current = setTimeout(() => {
         connect()
       }, delay)
@@ -134,6 +145,29 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       }
     }
   }, [])
+
+  // Countdown tick for reconnect display
+  useEffect(() => {
+    if (!reconnecting || nextReconnectIn <= 0) {
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current)
+        countdownRef.current = null
+      }
+      return
+    }
+    countdownRef.current = setInterval(() => {
+      setNextReconnectIn(prev => {
+        if (prev <= 1) {
+          if (countdownRef.current) clearInterval(countdownRef.current)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current)
+    }
+  }, [reconnecting, nextReconnectIn])
 
   // Connect on mount, cleanup on unmount
   useEffect(() => {
@@ -164,6 +198,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     connected,
     reconnecting,
     serverStopped,
+    reconnectAttempt,
+    nextReconnectIn,
     send,
     connect,
     disconnect,

@@ -1,5 +1,5 @@
 import { useTranslation } from './i18n'
-import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense, memo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -138,7 +138,7 @@ function AttachmentCard({ attachment, onPreview }: { attachment: ParsedAttachmen
   )
 }
 
-function UserMessageContent({ content, onPreview }: { content: string; onPreview?: (url: string) => void }) {
+const UserMessageContent = memo(function UserMessageContent({ content, onPreview }: { content: string; onPreview?: (url: string) => void }) {
   const { attachments, cleanContent } = parseAttachments(content)
 
   // If no attachments found, render as normal markdown
@@ -167,7 +167,7 @@ function UserMessageContent({ content, onPreview }: { content: string; onPreview
   }
 
   return <>{elements}</>
-}
+})
 
 export default function ChatPage({ onLogout }: ChatPageProps) {
   const { t } = useTranslation()

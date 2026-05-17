@@ -83,7 +83,6 @@
   border-left: 2px solid rgba(100, 116, 139, 0.3);
 }
 
-
 /* ========================================================================== */
 /* Enhanced Thinking Animation (Orb)                                         */
 /* ========================================================================== */
@@ -97,11 +96,6 @@
   width: 28px;
   height: 28px;
   flex-shrink: 0;
-}
-
-.thinking-orb-sm {
-  width: 22px;
-  height: 22px;
 }
 
 .thinking-orb-core {

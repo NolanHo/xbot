@@ -1,5 +1,5 @@
 import { useTranslation } from '../i18n'
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { formatElapsed, computeDisplayIterations } from '../utils'
 
 interface WsToolProgress {
@@ -145,7 +145,7 @@ export function BouncingDots({ text }: { text?: string }) {
   )
 }
 
-export function CompletedIteration({ snap }: { snap: IterationSnapshot }) {
+export const CompletedIteration = memo(function CompletedIteration({ snap }: { snap: IterationSnapshot }) {
   const hasThinking = !!(snap.thinking || '').trim()
   const hasReasoning = !!(snap.reasoning || '').trim()
   const hasTools = (snap.tools ?? []).length > 0
@@ -187,7 +187,7 @@ export function CompletedIteration({ snap }: { snap: IterationSnapshot }) {
       {isEmpty && <BouncingDots />}
     </div>
   )
-}
+})
 
 
 function formatTokenCount(n: number): string {

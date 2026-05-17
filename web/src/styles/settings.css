@@ -122,20 +122,6 @@
   color: var(--xbot-text-placeholder);
 }
 
-.settings-code-block {
-  display: block;
-  width: 100%;
-  padding: 10px 40px 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--xbot-border-light);
-  background: var(--xbot-bg-code);
-  color: var(--xbot-text-code);
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  line-height: 1.5;
-  word-break: break-all;
-  box-sizing: border-box;
-}
 
 .settings-copy-btn {
   position: absolute;

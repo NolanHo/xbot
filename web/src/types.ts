@@ -15,7 +15,7 @@ export interface ReplyInfo {
   id: string
   /** Truncated preview of the original message content */
   content: string
-  type: string
+  type: 'user' | 'assistant'
 }
 
 /** Unified Message type used across ChatPage and AssistantTurn */

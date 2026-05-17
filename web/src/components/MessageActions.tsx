@@ -33,13 +33,15 @@ export default function MessageActions({ onCopy, onDelete, onRegenerate, onReply
             className="px-2 py-1 rounded text-xs bg-slate-700/60 hover:bg-slate-600/80 text-slate-300 hover:text-white backdrop-blur-sm"
             title="More actions"
             data-testid="more-actions-btn"
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
           >
             ⋯
           </button>
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-50 py-1 min-w-[140px]" role="menu">
+              <div className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-50 py-1 min-w-[140px]" role="menu" onKeyDown={(e) => { if (e.key === 'Escape') setMenuOpen(false) }}>
                 {onReply && (
                   <button
                     onClick={() => { onReply(); setMenuOpen(false) }}

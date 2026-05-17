@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 
 export interface Tab {
   chatId: string
@@ -59,6 +59,12 @@ export function useTabManager(
   const [tabs, setTabs] = useState<Tab[]>(loadTabs)
   const [activeTabId, setActiveTabId] = useState<string>(loadActiveTab)
 
+  // Use refs to avoid stale closures in closeTab
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
+  const activeTabIdRef = useRef(activeTabId)
+  activeTabIdRef.current = activeTabId
+
   // Persist on change
   useEffect(() => { saveTabs(tabs) }, [tabs])
   useEffect(() => { saveActiveTab(activeTabId) }, [activeTabId])
@@ -77,26 +83,28 @@ export function useTabManager(
   }, [onSwitchChat])
 
   const closeTab = useCallback((chatId: string) => {
-    setTabs(prev => {
-      const idx = prev.findIndex(t => t.chatId === chatId)
-      if (idx === -1) return prev
-      const next = prev.filter(t => t.chatId !== chatId)
+    // Read current state from refs to avoid stale closures
+    const currentTabs = tabsRef.current
+    const currentActive = activeTabIdRef.current
 
-      // If closing the active tab, switch to adjacent
-      if (chatId === activeTabId) {
-        if (next.length === 0) {
-          // No tabs left — create new session
-          onNewChat()
-          setActiveTabId('')
-        } else {
-          const newActive = next[Math.min(idx, next.length - 1)]
-          setActiveTabId(newActive.chatId)
-          onSwitchChat(newActive.chatId)
-        }
+    const idx = currentTabs.findIndex(t => t.chatId === chatId)
+    if (idx === -1) return
+
+    const next = currentTabs.filter(t => t.chatId !== chatId)
+    setTabs(next)
+
+    // Only switch active tab if closing the active one
+    if (chatId === currentActive) {
+      if (next.length === 0) {
+        onNewChat()
+        setActiveTabId('')
+      } else {
+        const newActive = next[Math.min(idx, next.length - 1)]
+        setActiveTabId(newActive.chatId)
+        onSwitchChat(newActive.chatId)
       }
-      return next
-    })
-  }, [activeTabId, onSwitchChat, onNewChat])
+    }
+  }, [onSwitchChat, onNewChat])
 
   const renameTab = useCallback((chatId: string, label: string) => {
     setTabs(prev => prev.map(t => t.chatId === chatId ? { ...t, label } : t))

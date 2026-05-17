@@ -215,7 +215,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
   const [currentChatID, setCurrentChatID] = useState<string>('')
-  const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; type: string } | null>(null)
+  const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; type: 'user' | 'assistant' } | null>(null)
   const [contextInfo, setContextInfo] = useState<{ prompt_tokens: number; max_tokens: number; usage_pct: number; source: string } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
@@ -331,9 +331,28 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     disconnect: wsDisconnect,
   } = useWebSocket({ onMessage, lastSeqRef })
 
+
+
   // --- Network status (browser online/offline) ---
   const { online } = useNetworkStatus(connected, reconnecting, serverStopped)
-  const { permission: notifPermission, requestPermission: requestNotifPermission, notify: _sendNotif } = useNotification()
+  const { permission: notifPermission, requestPermission: requestNotifPermission, notify: sendNotif } = useNotification()
+  // --- Desktop notification on new assistant message when backgrounded ---
+  const prevMessageCountRef = useRef(0)
+  useEffect(() => {
+    const currentCount = messages.length
+    if (currentCount <= prevMessageCountRef.current) {
+      prevMessageCountRef.current = currentCount
+      return
+    }
+    prevMessageCountRef.current = currentCount
+    // Only notify for new assistant messages (not user messages or system messages)
+    const lastMsg = messages[messages.length - 1]
+    if (lastMsg && lastMsg.type === 'assistant' && !loading) {
+      sendNotif(t('newMessageNotification'), {
+        body: lastMsg.content.slice(0, 100) || '...',
+      })
+    }
+  }, [messages, loading, sendNotif])
 
 
   // --- Load history (extracted for reuse on chat switch) ---
@@ -577,7 +596,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   }, [messages, wsSend, resetProgress, showToast])
 
   // --- Reply helpers ---
-  const handleReplyToMessage = useCallback((msgId: string, msgContent: string, msgType: string) => {
+  const handleReplyToMessage = useCallback((msgId: string, msgContent: string, msgType: 'user' | 'assistant') => {
     setReplyingTo({ id: msgId, content: msgContent, type: msgType })
     editorRef.current?.focus()
   }, [])

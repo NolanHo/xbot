@@ -675,7 +675,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                 ? 'bg-yellow-900/50 text-yellow-400'
                 : 'bg-red-900/50 text-red-400'
           }`}>
-            {connected ? '● Connected' : reconnecting ? '◐ Connecting...' : '○ Disconnected'}
+            {connected ? t('connected') : reconnecting ? t('connectingStatus') : t('disconnected')}
           </span>
           {/* Context indicator */}
           {contextInfo && contextInfo.max_tokens > 0 && (
@@ -727,7 +727,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           <button
             onClick={handleSearchToggle}
             className="text-sm text-slate-400 hover:text-white transition-colors p-1"
-            title="搜索 (Ctrl+K)" aria-label={t('searchHistory')}
+            title={t('searchKbHint')} aria-label={t('searchHistory')}
           >
             🔍
           </button>
@@ -742,7 +742,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             onClick={handleLogout}
             className="text-sm text-slate-400 hover:text-white transition-colors p-1"
           >
-            Logout
+            {t('logoutBtn')}
           </button>
         </div>
       </header>
@@ -762,18 +762,18 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       {/* Disconnected / Reconnecting banner */}
       {!connected && serverStopped && (
         <div className="bg-red-900/40 border-b border-red-800/50 px-4 py-2 text-center text-sm text-red-400">
-          ⛔ 服务已断开，请刷新页面重新连接
+          {t("serverDisconnected")}
         </div>
       )}
       {reconnecting && !connected && (
         <div className="bg-yellow-900/40 border-b border-yellow-800/50 px-4 py-2 text-center text-sm text-yellow-400">
-          ⚠️ 连接断开，正在尝试重连...
+          {t("reconnecting")}
         </div>
       )}
       {/* Offline banner */}
       {!online && (
         <div className="bg-gray-900/60 border-b border-gray-700/50 px-4 py-2 text-center text-sm text-gray-400" role="status" aria-live="polite">
-          📶 网络已断开，部分功能不可用
+          {t("offlineMessage")}
         </div>
       )}
 
@@ -814,10 +814,10 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             <p className="text-slate-500 text-sm mb-8">{t('sendFirstMessage')}</p>
             <div className="flex flex-col items-center gap-2 text-xs text-slate-600">
               <span className="px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50">
-                按 <kbd className="px-1 py-0.5 rounded bg-slate-700/60 text-slate-400 font-mono text-[10px]">Ctrl+K</kbd> 搜索历史消息
+                {t("searchKbHint")}
               </span>
               <span className="px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50">
-                输入 <kbd className="px-1 py-0.5 rounded bg-slate-700/60 text-slate-400 font-mono text-[10px]">/</kbd> 查看快捷指令
+                {t("commandHint")}
               </span>
             </div>
           </div>
@@ -893,7 +893,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           aria-label={t('scrollToBottom')}
           data-testid="scroll-to-bottom-btn"
         >
-          ↓ 新消息
+          ↓ {t('newMessages')}
         </button>
       )}
 
@@ -996,7 +996,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           <button
             className="image-preview-close"
             onClick={() => setPreviewImage(null)}
-            aria-label="关闭预览"
+            aria-label={t('closePreview')}
           >✕</button>
           <img
             src={previewImage}

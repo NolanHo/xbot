@@ -205,8 +205,8 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
   // Format mode label
   const modeLabel = (mode: string) => {
     switch (mode) {
-      case 'docker': return '🐳 Docker'
-      default: return '🖥️ 本地'
+      case 'docker': return t('dockerMode')
+      default: return t('nativeMode')
     }
   }
 
@@ -221,7 +221,7 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
     return (
       <div className="settings-section">
         <div className="settings-section-title">{t('workspaceEnv')}</div>
-        <div className="text-center py-6 text-slate-500 text-sm">加载中...</div>
+        <div className="text-center py-6 text-slate-500 text-sm">{t("sidebarLoading")}</div>
       </div>
     )
   }
@@ -230,7 +230,7 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
     <div className="settings-section">
       <div className="settings-section-title">{t('workspaceEnv')}</div>
       <p className="text-xs text-slate-500 mb-3">
-        管理远程 Runner，点击卡片切换活跃环境。
+        {t("manageRunners")}
       </p>
 
       {/* Runner cards */}
@@ -280,7 +280,7 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
                           setMenuOpen(null)
                         }}
                       >
-                        📋 {copied === runner.name ? '已复制!' : '复制连接命令'}
+                        📋 {copied === runner.name ? t('copiedCommand') : t('copyConnectCommand')}
                       </button>
                       <button
                         className="runner-menu-item runner-menu-item-danger"
@@ -289,7 +289,7 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
                           setMenuOpen(null)
                         }}
                       >
-                        🗑️ 删除
+                        🗑️ {t("deleteRunner")}
                       </button>
                     </div>
                   )}
@@ -298,12 +298,12 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
 
               {/* Info line */}
               <div className="runner-card-info">
-                <span>{runner.name === BUILTIN_DOCKER_NAME ? '🐳 Docker Sandbox (内置)' : modeLabel(runner.mode)}</span>
+                <span>{runner.name === BUILTIN_DOCKER_NAME ? t('dockerSandbox') : modeLabel(runner.mode)}</span>
                 {runner.name !== BUILTIN_DOCKER_NAME && runner.docker_image && (
                   <span className="runner-card-meta">· {runner.docker_image}</span>
                 )}
                 {runner.name === BUILTIN_DOCKER_NAME && (
-                  <span className="runner-card-meta">· {runner.docker_image || '内置环境'}</span>
+                  <span className="runner-card-meta">· {runner.docker_image || t('builtinEnv')}</span>
                 )}
                 {runner.workspace && (
                   <span className="runner-card-meta">· {shortPath(runner.workspace)}</span>
@@ -321,7 +321,7 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
                       e.stopPropagation()
                       handleCopyCommand(runner)
                     }}
-                    title="复制"
+                    title={t('copyConnectCommand')}
                   >📋</button>
                 </div>
               )}
@@ -334,11 +334,11 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
       {showAddForm ? (
         <div className="runner-add-form">
           <div className="settings-item">
-            <label className="settings-label">名称 *</label>
+            <label className="settings-label">{t("runnerName")} *</label>
             <input
               type="text"
               className="settings-input"
-              placeholder="例如：MacBook Pro"
+              placeholder={t('runnerNamePlaceholder')}
               maxLength={50}
               value={formName}
               onChange={e => setFormName(e.target.value)}
@@ -347,11 +347,11 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
             />
           </div>
           <div className="settings-item">
-            <label className="settings-label">运行模式</label>
+            <label className="settings-label">{t("runMode")}</label>
             <div className="flex gap-2 mt-1">
               {[
-                { value: 'native' as const, label: '🖥️ 原生' },
-                { value: 'docker' as const, label: '🐳 Docker' },
+                { value: 'native' as const, label: t('nativeMode') },
+                { value: 'docker' as const, label: t('dockerMode') },
               ].map(opt => (
                 <button
                   key={opt.value}
@@ -369,7 +369,7 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
           </div>
           {formMode === 'docker' && (
             <div className="settings-item">
-              <label className="settings-label">Docker 镜像</label>
+              <label className="settings-label">{t("dockerImage")}</label>
               <input
                 type="text"
                 className="settings-input"
@@ -380,15 +380,15 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
             </div>
           )}
           <div className="settings-item">
-            <label className="settings-label">工作目录</label>
+            <label className="settings-label">{t("workspace")}</label>
             <input
               type="text"
               className="settings-input"
-              placeholder="例如：/home/user/project（留空则由 Runner 自动设定）"
+              placeholder={t('workspacePlaceholder')}
               value={formWorkspace}
               onChange={e => setFormWorkspace(e.target.value)}
             />
-            <span className="text-xs text-slate-500 mt-1 block">Runner 连接后将使用此目录作为工作区</span>
+            <span className="text-xs text-slate-500 mt-1 block">{t('workspaceHint')}</span>
           </div>
 
           <div className="flex gap-2 mt-3">
@@ -397,13 +397,13 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
               onClick={handleCreate}
               disabled={!formName.trim() || actionLoading}
             >
-              {actionLoading ? '⏳ 创建中...' : '✨ 创建'}
+              {actionLoading ? t('creating') : t('create')}
             </button>
             <button
               className="settings-action-btn"
               onClick={() => { setShowAddForm(false); setFormName('') }}
             >
-              取消
+              {t("cancel")}
             </button>
           </div>
         </div>
@@ -412,7 +412,7 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
           className="settings-action-btn w-full mt-3"
           onClick={() => setShowAddForm(true)}
         >
-          ➕ 添加工作环境
+          ➕ {t("addWorkspace")}
         </button>
       )}
 
@@ -421,13 +421,13 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
         <>
           <div className="runner-delete-backdrop" onClick={() => setDeleteConfirm(null)} />
           <div className="runner-delete-dialog">
-            <div className="runner-delete-title">确认删除</div>
+            <div className="runner-delete-title">{t("confirmDeleteRunner")}</div>
             <p className="runner-delete-text">
-              确定要删除 <strong>{deleteConfirm}</strong> 吗？
+              {t("confirmDeleteRunnerText", { name: deleteConfirm })}
             </p>
             {runners.find(r => r.name === deleteConfirm)?.online && (
               <p className="runner-delete-warning">
-                ⚠️ 此 Runner 当前在线，删除后将断开连接。
+                {t("runnerOnlineWarning")}
               </p>
             )}
             <div className="flex gap-2 mt-4 justify-end">
@@ -436,14 +436,14 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
                 onClick={() => setDeleteConfirm(null)}
                 disabled={actionLoading}
               >
-                取消
+                {t("cancel")}
               </button>
               <button
                 className="settings-action-btn settings-action-danger"
                 onClick={() => handleDelete(deleteConfirm)}
                 disabled={actionLoading}
               >
-                {actionLoading ? '⏳' : '🗑️ 删除'}
+                {actionLoading ? '⏳' : '🗑️ {t("deleteRunner")}'}
               </button>
             </div>
           </div>

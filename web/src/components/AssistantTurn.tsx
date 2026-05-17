@@ -280,7 +280,7 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
                 <div className="flex items-center gap-2 px-2 py-1">
                   <BouncingDots />
                   <span className="text-xs text-slate-500 italic">
-                    {progress.phase === 'thinking' ? '思考中...' : progress.phase === 'tool_exec' ? '执行工具...' : '处理中...'}
+                    {progress.phase === 'thinking' ? t('thinking') : progress.phase === 'tool_exec' ? t('executingTool') : t('processing')}
                   </span>
                 </div>
               ) : null}
@@ -298,7 +298,7 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
         {loading && (!progress || progress.phase === 'done') && (
           <div className="mb-2 rounded border border-slate-700/30 overflow-hidden">
             <div className="px-3 py-2">
-              <BouncingDots text="准备中..." />
+              <BouncingDots text={t('preparing')} />
             </div>
           </div>
         )}

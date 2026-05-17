@@ -175,13 +175,13 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const liveIterationsRef = useRef<IterationSnapshot[]>([])
   // Keep ref in sync so we can read the latest value synchronously
   // (React setState updater callbacks are async and cannot be relied upon).
-  const setLiveIterationsSync = (updater: IterationSnapshot[] | ((prev: IterationSnapshot[]) => IterationSnapshot[])) => {
+  const setLiveIterationsSync = useCallback((updater: IterationSnapshot[] | ((prev: IterationSnapshot[]) => IterationSnapshot[])) => {
     _setLiveIterations(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater
       liveIterationsRef.current = next
       return next
     })
-  }
+  }, [])
   const prevIterationRef = useRef<number>(-1)
   const progressRef = useRef<WsProgressPayload | null>(null) // sync ref to avoid stale closures
   const reasoningRef = useRef<string>('') // accumulated reasoning from stream_content

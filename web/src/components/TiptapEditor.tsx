@@ -35,6 +35,11 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
   const inputHistoryRef = useRef<string[]>([])
   const historyIndexRef = useRef(-1)
 
+  // Stable ref for handleSend to avoid stale closure in editor handleKeyDown.
+  // Tiptap's useEditor only sets editorProps once on creation, so handleKeyDown
+  // captures the initial handleSend. Using a ref ensures the latest version is called.
+  const handleSendRef = useRef<() => void>(() => {})
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ codeBlock: false }),
@@ -60,7 +65,7 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
         // Enter = send (without Shift/Ctrl/Cmd)
         if (event.key === 'Enter' && !event.shiftKey && !(event.ctrlKey || event.metaKey)) {
           event.preventDefault()
-          handleSend()
+          handleSendRef.current()
           return true
         }
 
@@ -165,6 +170,9 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
     setHasContent(false)
     editor.commands.focus()
   }, [editor, onSend])
+
+  // Keep ref in sync with latest handleSend
+  handleSendRef.current = handleSend
 
   return (
     <div className="tiptap-wrapper relative">

@@ -56,11 +56,6 @@ export interface LLMConfig {
   is_global: boolean
 }
 
-export interface ToastState {
-  id: number
-  message: string
-  type: 'info' | 'error' | 'success'
-}
 
 export type ShowToastFn = (message: string, type?: 'info' | 'error' | 'success') => void
 

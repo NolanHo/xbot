@@ -326,11 +326,9 @@ func TestHardWrapRunes_AnsiBreakBeforeRest(t *testing.T) {
 		t.Fatalf("expected >= 2 lines, got %d", len(lines))
 	}
 
-	// Line 0 should end the cyan region cleanly
-	line0 := lines[0]
-	if !strings.HasSuffix(line0, "\x1b[0m") && !strings.Contains(line0, "\x1b[0m ") {
-		// Line 0 has the reset, which is fine
-	}
+	// Line 0 should end the cyan region cleanly — no assertion needed,
+	// as missing reset is acceptable.
+	_ = lines[0]
 
 	// Line 1 should NOT have an escape injected between characters of a word.
 	// Before the fix, line 1 could be "G\x1b[0mHIJKL" with escape between G and H.

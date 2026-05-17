@@ -313,6 +313,23 @@ const en: Record<I18nKey, string> = {
   edit: 'Edit',
   preview: 'Preview',
   returnToLogin: 'Return to login',
+  // ─── Reply ───
+  replyMessage: 'Reply',
+  replyingTo: 'Replying to',
+  cancelReply: 'Cancel reply',
+
+  // ─── Tab Bar ───
+  closeTab: 'Close tab',
+  newTab: 'New session',
+  noOpenTabs: 'No open sessions',
+
+  // ─── Notification ───
+  enableNotification: 'Enable desktop notifications',
+  newMessageNotification: 'New message from xbot',
+  notificationClickToView: 'Click to view',
+  notificationEnabled: 'Notifications enabled',
+  notificationDenied: 'Notification permission denied',
+
 }
 
 export default en

@@ -7,6 +7,7 @@ import MessageActions from './MessageActions'
 import type { WsProgressPayload, IterationSnapshot } from './ProgressPanel'
 import { CompletedIteration, BouncingDots, SubAgentTree } from './ProgressPanel'
 import type { Message } from '../types'
+import ReplyPreview from './ReplyPreview'
 import { formatElapsed, computeDisplayIterations } from '../utils'
 
 
@@ -67,6 +68,9 @@ interface AssistantTurnProps {
   savedProgress?: WsProgressPayload | null
   onDelete?: () => void
   onRegenerate?: () => void
+  onReply?: () => void
+  /** Scroll to a message by ID (for reply click) */
+  onScrollToMessage?: (id: string) => void
 }
 
 
@@ -129,7 +133,7 @@ function isThinkingContent(content: string): boolean {
   return false
 }
 
-export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress, onDelete, onRegenerate }: AssistantTurnProps) {
+export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress, onDelete, onRegenerate, onReply, onScrollToMessage }: AssistantTurnProps) {
   const [copied, setCopied] = useState(false)
   const { t } = useTranslation()
 
@@ -183,9 +187,18 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
             onCopy={handleCopy}
             onDelete={onDelete}
             onRegenerate={onRegenerate}
+            onReply={onReply}
             copied={copied}
           />
         )}
+        {/* Reply preview */}
+        {textMsgs.length > 0 && textMsgs[0].replyTo && onScrollToMessage && (
+          <ReplyPreview
+            replyTo={textMsgs[0].replyTo}
+            onClick={() => onScrollToMessage(textMsgs[0].replyTo!.id)}
+          />
+        )}
+
         {/* Collapsible: Thinking section */}
         {thinkingMsgs.length > 0 && (
           <CollapsibleSection icon="💭" title={t("thinkingProcess")} badge={thinkingMsgs.length} className="thinking-section">

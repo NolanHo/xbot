@@ -311,6 +311,23 @@ const zhCN = {
   edit: '编辑',
   preview: '预览',
   returnToLogin: '返回登录',
+  // ─── Reply ───
+  replyMessage: '回复',
+  replyingTo: '正在回复',
+  cancelReply: '取消回复',
+
+  // ─── Tab Bar ───
+  closeTab: '关闭标签',
+  newTab: '新会话',
+  noOpenTabs: '暂无打开的会话',
+
+  // ─── Notification ───
+  enableNotification: '开启桌面通知',
+  newMessageNotification: 'xbot 新消息',
+  notificationClickToView: '点击查看',
+  notificationEnabled: '通知已开启',
+  notificationDenied: '通知权限被拒绝',
+
 } as const
 
 export type I18nKey = keyof typeof zhCN

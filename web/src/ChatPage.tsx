@@ -11,6 +11,10 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useNetworkStatus } from './hooks/useNetworkStatus'
 import type { TiptapEditorHandle } from './components/TiptapEditor'
 import type { PresetCommand, Message, Turn } from './types'
+import { useTabManager } from './hooks/useTabManager'
+import { useNotification } from './hooks/useNotification'
+import ReplyPreview from './components/ReplyPreview'
+import TabBar from './components/TabBar'
 import type { WsProgressPayload, IterationSnapshot } from './components/ProgressPanel'
 import { formatTime, formatFileSize, normalizeIterationHistory, createResetProgress, exportAsMarkdown, exportAsJSON, downloadFile } from './utils'
 import { getCodeBlockProps } from './components/CodeBlock'
@@ -211,6 +215,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
   const [currentChatID, setCurrentChatID] = useState<string>('')
+  const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; type: string } | null>(null)
   const [contextInfo, setContextInfo] = useState<{ prompt_tokens: number; max_tokens: number; usage_pct: number; source: string } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
@@ -328,6 +333,8 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
 
   // --- Network status (browser online/offline) ---
   const { online } = useNetworkStatus(connected, reconnecting, serverStopped)
+  const { permission: notifPermission, requestPermission: requestNotifPermission, notify: _sendNotif } = useNotification()
+
 
   // --- Load history (extracted for reuse on chat switch) ---
   const loadHistory = useCallback(() => {
@@ -428,6 +435,24 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     loadHistory()
   }, [loadHistory])
 
+  // --- Tab manager for multi-session tabs ---
+  const handleTabSwitch = useCallback((chatId: string) => {
+    setCurrentChatID(chatId)
+    setMessages([])
+    resetProgress()
+    setLoading(false)
+    setTimeout(() => loadHistory(), 100)
+  }, [loadHistory, resetProgress])
+
+  const handleTabNew = useCallback(() => {
+    setMessages([])
+    resetProgress()
+    setLoading(false)
+    setContextInfo(null)
+  }, [resetProgress])
+
+  const tabManager = useTabManager(handleTabSwitch, handleTabNew)
+
   // --- Send message ---
   const handleSend = useCallback((content: string) => {
     // Slash commands
@@ -468,7 +493,9 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       type: 'user',
       content,
       ts: Math.floor(Date.now() / 1000),
+      ...(replyingTo ? { replyTo: { id: replyingTo.id, content: replyingTo.content.slice(0, 80), type: replyingTo.type } } : {}),
     }
+    setReplyingTo(null)
     setMessages((prev) => [...prev, userMsg])
     resetProgress()
     setLoading(true)
@@ -499,7 +526,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     wsSend(payload)
 
     setTimeout(() => scrollToBottom(isNearBottom() ? 'instant' : 'smooth'), 50)
-  }, [scrollToBottom, isNearBottom, pendingFiles, wsSend, resetProgress, showToast])
+  }, [scrollToBottom, isNearBottom, pendingFiles, wsSend, resetProgress, showToast, replyingTo])
 
   // --- Cancel generation ---
   const handleCancel = useCallback(() => {
@@ -509,6 +536,55 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     // Remove streaming placeholder if present
     setMessages(prev => prev.filter(m => m.id !== '__streaming__'))
   }, [wsSend, resetProgress])
+
+
+  // --- Delete message ---
+  const handleDeleteMessage = useCallback((messageId: string) => {
+    const idx = messages.findIndex(m => m.id === messageId)
+    if (idx === -1) return
+    // Remove this message and all after it
+    setMessages(prev => prev.slice(0, idx))
+    // TODO: Backend sync — fetch(`/api/messages/${messageId}`, { method: 'DELETE' })
+    showToast(t('messageDeleted'), 'success')
+  }, [messages, showToast])
+
+  // --- Regenerate message ---
+  const handleRegenerate = useCallback((messageId: string) => {
+    const idx = messages.findIndex(m => m.id === messageId)
+    if (idx === -1) return
+
+    // Find the preceding user message
+    let userIdx = -1
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].type === 'user') {
+        userIdx = i
+        break
+      }
+    }
+    if (userIdx === -1) {
+      showToast(t('regenerateFailed'), 'error')
+      return
+    }
+
+    const userContent = messages[userIdx].content
+    // Remove everything from user message onward
+    setMessages(prev => prev.slice(0, userIdx))
+    resetProgress()
+    setLoading(true)
+    setAutoScroll(true)
+    // Resend the user message
+    wsSend({ type: 'message', content: userContent })
+  }, [messages, wsSend, resetProgress, showToast])
+
+  // --- Reply helpers ---
+  const handleReplyToMessage = useCallback((msgId: string, msgContent: string, msgType: string) => {
+    setReplyingTo({ id: msgId, content: msgContent, type: msgType })
+    editorRef.current?.focus()
+  }, [])
+
+  const handleCancelReply = useCallback(() => {
+    setReplyingTo(null)
+  }, [])
 
   // --- Preset commands ---
   useEffect(() => {
@@ -658,6 +734,23 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     overscan: 5,
   })
 
+  // --- Scroll to message (for reply navigation) ---
+  const handleScrollToMessage = useCallback((msgId: string) => {
+    const turnIndex = turns.findIndex(t => {
+      if (t.type === 'user') return t.message.id === msgId
+      return t.messages.some(m => m.id === msgId)
+    })
+    if (turnIndex >= 0) {
+      virtualizer.scrollToIndex(turnIndex, { align: 'center', behavior: 'smooth' })
+      // Flash highlight
+      const el = messagesContainerRef.current?.querySelector(`[data-msg-id="${msgId}"]`)
+      if (el) {
+        el.classList.add('search-highlight')
+        setTimeout(() => el.classList.remove('search-highlight'), 2000)
+      }
+    }
+  }, [turns, virtualizer])
+
   return (
     <div className="flex flex-col h-screen bg-slate-900"
          onDragOver={handleDragOver}
@@ -751,6 +844,18 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           >
             ⚙️
           </button>
+          {notifPermission === 'default' && (
+            <button
+              onClick={() => requestNotifPermission().then(ok => {
+                showToast(ok ? t('notificationEnabled') : t('notificationDenied'), ok ? 'success' : 'error')
+              })}
+              className="text-sm text-slate-400 hover:text-white transition-colors p-1"
+              title={t('enableNotification')}
+              aria-label={t('enableNotification')}
+            >
+              🔔
+            </button>
+          )}
           <button
             onClick={handleLogout}
             className="text-sm text-slate-400 hover:text-white transition-colors p-1"
@@ -759,6 +864,14 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           </button>
         </div>
       </header>
+
+      {/* Tab bar */}
+      <TabBar
+        tabs={tabManager.tabs}
+        activeTabId={tabManager.activeTabId}
+        onTabClick={tabManager.switchTab}
+        onTabClose={tabManager.closeTab}
+      />
 
       {/* Search panel */}
       <Suspense fallback={null}>
@@ -798,6 +911,8 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             setMessages([])
             resetProgress()
             setLoading(false)
+            // Open tab for this chat
+            tabManager.openTab(chatID, '')
             // Reload history for the new chat after switch
             setTimeout(() => loadHistory(), 100)
           }}
@@ -867,14 +982,37 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                   }}
                 >
                   {turn.type === 'user' ? (
-                    <div className="flex justify-end mb-4" data-msg-id={turn.message.id}>
-                      <div className="max-w-[80%] rounded-xl px-4 py-3 bg-blue-600 text-white markdown-body text-sm">
-                        <UserMessageContent content={turn.message.content} onPreview={(url) => setPreviewImage(url)} />
-                        {turn.message.ts && (
-                         <div className="text-xs mt-1 text-right text-blue-200/50">
-                           {formatTime(turn.message.ts)}
-                         </div>
+                    <div className="flex justify-end mb-4 group relative" data-msg-id={turn.message.id}>
+                      <div className="max-w-[80%]">
+                        {turn.message.replyTo && (
+                          <div className="flex justify-end mb-1">
+                            <div className="max-w-full">
+                              <ReplyPreview
+                                replyTo={turn.message.replyTo}
+                                onClick={() => handleScrollToMessage(turn.message.replyTo!.id)}
+                              />
+                            </div>
+                          </div>
                         )}
+                        <div className="rounded-xl px-4 py-3 bg-blue-600 text-white markdown-body text-sm relative">
+                          <UserMessageContent content={turn.message.content} onPreview={(url) => setPreviewImage(url)} />
+                          {turn.message.ts && (
+                           <div className="text-xs mt-1 text-right text-blue-200/50">
+                             {formatTime(turn.message.ts)}
+                           </div>
+                          )}
+                          {/* User message actions — reply only */}
+                          <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => handleReplyToMessage(turn.message.id, turn.message.content, 'user')}
+                              className="px-2 py-1 rounded text-xs bg-blue-500/60 hover:bg-blue-400/80 text-blue-100 hover:text-white backdrop-blur-sm"
+                              title={t('replyMessage')}
+                              data-testid="user-reply-btn"
+                            >
+                              ↩️
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -885,6 +1023,13 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                         liveIterations={isLatestTurn && isActive ? liveIterations : undefined}
                         loading={isLatestTurn && isActive && loading}
                         savedProgress={turn.messages[turn.messages.length - 1]?.savedProgress ?? null}
+                        onDelete={() => handleDeleteMessage(turn.messages[0].id)}
+                        onRegenerate={() => handleRegenerate(turn.messages[0].id)}
+                        onReply={() => {
+                          const last = turn.messages[turn.messages.length - 1]
+                          handleReplyToMessage(last.id, last.content, 'assistant')
+                        }}
+                        onScrollToMessage={handleScrollToMessage}
                       />
                     </div>
                   )}
@@ -931,8 +1076,23 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
         </div>
       )}
 
+      {/* Reply indicator */}
+      {replyingTo && (
+        <div className="reply-indicator px-4" data-testid="reply-indicator">
+          <div className="reply-indicator-content">
+            <span>↩️ {t('replyingTo')}:</span>
+            <span className="reply-indicator-preview">
+              {replyingTo.content.length > 60 ? replyingTo.content.slice(0, 60) + '...' : replyingTo.content}
+            </span>
+          </div>
+          <button className="reply-indicator-cancel" onClick={handleCancelReply}>
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Input area */}
-      <div className="px-4 py-3 bg-slate-800 border-t border-slate-700">
+      <div className={`px-4 py-3 bg-slate-800 border-t border-slate-700 ${replyingTo ? 'border-t-0' : ''}`}>
         <div className="flex items-end gap-3 max-w-4xl mx-auto">
           <div className="flex-1">
             {/* Pending files preview */}

@@ -10,6 +10,14 @@ export interface PresetCommand {
   sort: number
 }
 
+/** Reply reference information for quoted messages */
+export interface ReplyInfo {
+  id: string
+  /** Truncated preview of the original message content */
+  content: string
+  type: string
+}
+
 /** Unified Message type used across ChatPage and AssistantTurn */
 export interface Message {
   id: string
@@ -20,6 +28,8 @@ export interface Message {
   savedProgress?: WsProgressPayload | null
   // Full iteration history (persisted across refreshes)
   iterationHistory?: IterationSnapshot[] | null
+  /** Reply reference — links to the message being replied to */
+  replyTo?: ReplyInfo
 }
 
 /** Turn-based message grouping (Codex style) */

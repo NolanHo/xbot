@@ -114,3 +114,56 @@
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; }
 }
+
+/* ========================================================================== */
+/* Reduced Motion Preference                                                  */
+/* ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Message appear animation (opacity only — safe for virtual list) */
+@keyframes msg-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.msg-fade-in {
+  animation: msg-appear 0.3s ease-out;
+}
+
+/* Panel slide animations for enter/exit */
+@keyframes panel-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes panel-slide-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+

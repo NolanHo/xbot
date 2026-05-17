@@ -1,7 +1,8 @@
 body {
+  transition: background-color 0.2s ease, color 0.2s ease;
   margin: 0;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--xbot-bg-primary);
+  color: var(--xbot-text-primary);
   font-family: system-ui, -apple-system, sans-serif;
 }
 
@@ -9,6 +10,49 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+/* ========================================================================== */
+/* CSS Custom Properties — Theme System                                       */
+/* ========================================================================== */
+
+:root {
+  /* Dark theme (default) */
+  --xbot-bg-primary: #0f172a;
+  --xbot-bg-secondary: #1e293b;
+  --xbot-bg-header: #1e293b;
+  --xbot-bg-surface: rgba(30, 41, 59, 0.6);
+  --xbot-bg-elevated: #334155;
+  --xbot-bg-hover: rgba(51, 65, 85, 0.5);
+  --xbot-text-primary: #e2e8f0;
+  --xbot-text-secondary: #94a3b8;
+  --xbot-text-muted: #64748b;
+  --xbot-border: #334155;
+  --xbot-border-light: #475569;
+  --xbot-accent: #6366f1;
+  --xbot-accent-blue: #3b82f6;
+  --xbot-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --xbot-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.2);
+  --xbot-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] {
+  --xbot-bg-primary: #f5f5f0;
+  --xbot-bg-secondary: #eae9e4;
+  --xbot-bg-header: #ffffff;
+  --xbot-bg-surface: #ffffff;
+  --xbot-bg-elevated: #e2e8f0;
+  --xbot-bg-hover: rgba(205, 201, 195, 0.4);
+  --xbot-text-primary: #1c1917;
+  --xbot-text-secondary: #57534e;
+  --xbot-text-muted: #a8a29e;
+  --xbot-border: #d6d3d1;
+  --xbot-border-light: #cdc9c3;
+  --xbot-accent: #6366f1;
+  --xbot-accent-blue: #2563eb;
+  --xbot-shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.05);
+  --xbot-shadow-md: 0 4px 12px rgba(28, 25, 23, 0.08);
+  --xbot-shadow-lg: 0 8px 24px rgba(28, 25, 23, 0.12);
+}
+
 }
 
 /* Scrollbar styling */

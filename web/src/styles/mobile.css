@@ -229,3 +229,20 @@
     box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);
   }
 }
+
+/* ---- Sidebar Light Theme Overrides (mobile) ---- */
+[data-theme="light"] .chat-sidebar-toggle {
+  background: rgba(241, 245, 249, 0.95);
+  border-color: rgba(203, 213, 225, 0.5);
+  color: #334155;
+}
+[data-theme="light"] .chat-sidebar-toggle:hover {
+  background: rgba(226, 232, 240, 0.95);
+}
+[data-theme="light"] .chat-sidebar-overlay {
+  background: rgba(0, 0, 0, 0.3);
+}
+[data-theme="light"] .chat-sidebar-mobile {
+  background: #f7f5f2;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.1);
+}

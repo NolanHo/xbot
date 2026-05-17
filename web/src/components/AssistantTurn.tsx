@@ -33,7 +33,7 @@ function CollapsibleMessage({ children }: { children: React.ReactNode }) {
       >
         {children}
         {collapsed && (
-          <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-slate-800/90 to-transparent pointer-events-none" />
+          <div className="collapsible-fade-mask" />
         )}
       </div>
       <button

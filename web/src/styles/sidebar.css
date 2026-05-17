@@ -1,8 +1,4 @@
 /* ========================================================================== */
-/* ChatSidebar Component                                                    */
-/* ========================================================================== */
-
-/* ========================================================================== */
 /* ChatSidebar Component                                                      */
 /* ========================================================================== */
 
@@ -84,4 +80,75 @@
 }
 .sidebar-refresh-btn:disabled {
   cursor: default;
+}
+
+/* ---- Light theme overrides ---- */
+[data-theme="light"] .sidebar-btn {
+  color: #78716c;
+}
+[data-theme="light"] .sidebar-btn:hover {
+  background: #ddd9d4;
+  color: #1c1917;
+}
+
+[data-theme="light"] .sidebar-item:hover {
+  background: rgba(205, 201, 195, 0.4);
+}
+[data-theme="light"] .sidebar-item-active {
+  background: rgba(99, 102, 241, 0.08);
+  border-left-color: #6366f1;
+}
+
+[data-theme="light"] .sidebar-delete-btn {
+  color: #a8a29e;
+}
+[data-theme="light"] .sidebar-delete-btn:hover {
+  color: #dc2626;
+}
+
+[data-theme="light"] .sidebar-rename-input {
+  background: #f7f5f2;
+  border-color: #cdc9c3;
+  color: #1c1917;
+}
+[data-theme="light"] .sidebar-rename-input:focus {
+  border-color: #6366f1;
+}
+
+[data-theme="light"] .sidebar-refresh-btn {
+  color: #a8a29e;
+}
+[data-theme="light"] .sidebar-refresh-btn:hover {
+  color: #57534e;
+}
+
+/* Sidebar search input */
+.sidebar-search {
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid rgba(51, 65, 85, 0.4);
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.15s;
+}
+.sidebar-search::placeholder {
+  color: #64748b;
+}
+.sidebar-search:focus {
+  border-color: #6366f1;
+}
+
+[data-theme="light"] .sidebar-search {
+  background: #f7f5f2;
+  border-color: #cdc9c3;
+  color: #1c1917;
+}
+[data-theme="light"] .sidebar-search::placeholder {
+  color: #a8a29e;
+}
+[data-theme="light"] .sidebar-search:focus {
+  border-color: #6366f1;
 }

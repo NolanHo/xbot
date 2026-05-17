@@ -20,6 +20,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
   const [collapsed, setCollapsed] = useState(() => window.innerWidth < 640)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
 
   // Responsive mobile detection
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640)
@@ -110,6 +111,11 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
 
   // Mobile overlay mode (isMobile is now reactive state)
 
+  // Filter chats by search query
+  const filteredChats = searchQuery.trim()
+    ? chats.filter(c => (c.label || '未命名').toLowerCase().includes(searchQuery.toLowerCase()) || (c.preview || '').toLowerCase().includes(searchQuery.toLowerCase()))
+    : chats
+
   if (collapsed) {
     return (
       <button
@@ -135,12 +141,22 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
               <button onClick={() => setCollapsed(true)} className="sidebar-btn" title="收起">✕</button>
             </div>
           </div>
+          {/* Search */}
+          <div className="px-3 py-1 border-b border-slate-700/50">
+            <input
+              className="sidebar-search"
+              placeholder="搜索会话..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
           {/* List */}
           <div className="flex-1 overflow-y-auto py-1">
             {loading ? (
               <div className="text-center py-4 text-slate-500 text-xs">加载中...</div>
             ) : (
-              chats.map((chat) => (
+              filteredChats.map((chat) => (
                 <div
                   key={chat.chat_id}
                   className={`sidebar-item ${chat.is_current ? 'sidebar-item-active' : ''}`}
@@ -188,6 +204,16 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
           <button onClick={handleCreate} className="sidebar-btn" title="新建会话">+</button>
           <button onClick={() => setCollapsed(true)} className="sidebar-btn" title="收起">◀</button>
         </div>
+      </div>
+
+      {/* Search */}
+      <div className="px-3 py-1">
+        <input
+          className="sidebar-search"
+          placeholder="搜索会话..."
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+        />
       </div>
 
       {/* Chat List */}

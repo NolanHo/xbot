@@ -193,13 +193,14 @@ func (app *cliApp) refreshRemoteValuesCache() {
 			return fmt.Sprintf("%d", config.DefaultMaxContextTokens)
 		}()
 	}
-	// Experimental: auto_worktree
-	if _, ok := vals["auto_worktree"]; !ok {
-		vals["auto_worktree"] = strconv.FormatBool(app.cfg.Agent.Experimental.AutoWorktree)
-	}
 	app.valuesCacheMu.Lock()
 	app.valuesCache = vals
 	app.valuesCacheMu.Unlock()
+
+	// Sync all DB values back to app.cfg so saveCLIConfig persists them.
+	// This ensures CLI-side config stays in sync with user_settings DB
+	// regardless of which setting was changed.
+	agent.ApplyRuntimeSettingsLocal(app.cfg, vals)
 
 	// Merge layout keys from local config.json if missing (RPC may fail on first call)
 	layoutKeys := []string{"sidebar_width", "sidebar_enabled", "sidebar_position", "chat_max_width", "chat_center", "layout_mode"}

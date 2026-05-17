@@ -215,6 +215,19 @@ func ApplyRuntimeSettings(cfg *config.Config, ag *Agent, senderID string, values
 	}
 }
 
+// ApplyRuntimeSettingsLocal applies setting changes to the in-memory config only
+// (no agent backend side effects). Used by the CLI process to update its local cfg
+// copy before persisting to config.json.
+func ApplyRuntimeSettingsLocal(cfg *config.Config, values map[string]string) {
+	for k, v := range values {
+		handler, ok := SettingHandlerRegistry[k]
+		if !ok || handler.ApplyConfig == nil {
+			continue
+		}
+		handler.ApplyConfig(cfg, v)
+	}
+}
+
 // MissingSettingHandlerKeys returns keys from channel.CLIRuntimeSettingKeys
 // that are missing from SettingHandlerRegistry.
 func MissingSettingHandlerKeys() []string {

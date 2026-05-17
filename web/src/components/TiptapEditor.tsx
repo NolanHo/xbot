@@ -7,6 +7,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import { Markdown } from 'tiptap-markdown'
 import { common, createLowlight } from 'lowlight'
 import { useEffect, useRef, useState, useImperativeHandle, useCallback, forwardRef } from 'react'
+import { useTranslation } from '../i18n'
 
 const lowlight = createLowlight(common)
 
@@ -29,6 +30,7 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
   function TiptapEditor({ onSend, disabled, connected, currentModel, onCancel }, ref) {
   const [hasContent, setHasContent] = useState(false)
   const connectedRef = useRef(connected)
+  const { t } = useTranslation()
   useEffect(() => { connectedRef.current = connected }, [connected])
 
   // Input history (newest first, like bash history)
@@ -36,15 +38,17 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
   const historyIndexRef = useRef(-1)
 
   // Stable ref for handleSend to avoid stale closure in editor handleKeyDown.
-  // Tiptap's useEditor only sets editorProps once on creation, so handleKeyDown
-  // captures the initial handleSend. Using a ref ensures the latest version is called.
   const handleSendRef = useRef<() => void>(() => {})
+
+  // Refs to access t() in Tiptap editor config (created once)
+  const tRef = useRef(t)
+  useEffect(() => { tRef.current = t }, [t])
 
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ codeBlock: false }),
       Placeholder.configure({
-        placeholder: () => connectedRef.current ? '输入消息... (Shift+Enter 换行)' : '连接中...',
+        placeholder: () => connectedRef.current ? tRef.current('inputPlaceholder') : tRef.current('connecting'),
       }),
       CodeBlockLowlight.configure({ lowlight }),
       TaskList,
@@ -182,8 +186,8 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
         onClick={handleSend}
         disabled={!connected || disabled || !hasContent}
         className="tiptap-send-btn"
-        title="发送"
-        aria-label="发送消息"
+        title={t('send')}
+        aria-label={t('sendMessage')}
       >
         ➤
       </button>

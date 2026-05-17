@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useTranslation } from '../i18n'
 
 interface ConfirmDialogProps {
   open: boolean
@@ -12,12 +13,13 @@ interface ConfirmDialogProps {
 export default function ConfirmDialog({
   open,
   message,
-  confirmLabel = '确定',
-  cancelLabel = '取消',
+  confirmLabel,
+  cancelLabel,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const confirmBtnRef = useRef<HTMLButtonElement>(null)
+  const { t } = useTranslation()
 
   useEffect(() => {
     if (open) confirmBtnRef.current?.focus()
@@ -37,17 +39,17 @@ export default function ConfirmDialog({
         <p className="confirm-dialog-message">{message}</p>
         <div className="confirm-dialog-actions">
           <button
-            className="confirm-dialog-btn confirm-dialog-btn-cancel" aria-label="取消"
+            className="confirm-dialog-btn confirm-dialog-btn-cancel" aria-label={t('cancel')}
             onClick={onCancel}
           >
-            {cancelLabel}
+            {cancelLabel || t('cancel')}
           </button>
           <button
             ref={confirmBtnRef}
-            className="confirm-dialog-btn confirm-dialog-btn-confirm" aria-label="确定"
+            className="confirm-dialog-btn confirm-dialog-btn-confirm" aria-label={t('confirm')}
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {confirmLabel || t('confirm')}
           </button>
         </div>
       </div>

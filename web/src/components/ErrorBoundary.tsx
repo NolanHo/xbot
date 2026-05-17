@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { getTranslation } from '../i18n'
 
 interface ErrorBoundaryProps {
   children: ReactNode
@@ -39,16 +40,18 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
         return this.props.fallback(this.state.error, this.handleRetry)
       }
 
+      const t = getTranslation()
+
       return (
         <div className="flex flex-col items-center justify-center min-h-screen gap-4 p-8"
              style={{ background: 'var(--xbot-bg-primary)', color: 'var(--xbot-text-primary)' }}>
           <div className="text-4xl">😵</div>
-          <h2 className="text-lg font-semibold">页面出错了</h2>
+          <h2 className="text-lg font-semibold">{t('errorBoundaryTitle')}</h2>
           <p className="text-sm max-w-md text-center" style={{ color: 'var(--xbot-text-secondary)' }}>
-            发生了意外错误，请尝试刷新页面。
+            {t('errorBoundaryMessage')}
           </p>
           <details className="text-xs max-w-lg w-full" style={{ color: 'var(--xbot-text-muted)' }}>
-            <summary className="cursor-pointer mb-2">错误详情</summary>
+            <summary className="cursor-pointer mb-2">{t('errorDetails')}</summary>
             <pre className="p-3 rounded-lg overflow-auto text-xs" style={{ background: 'var(--xbot-bg-secondary)', maxHeight: '200px' }}>
               {this.state.error.message}
               {this.state.error.stack && `\n\n${this.state.error.stack}`}
@@ -60,14 +63,14 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
               className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
               style={{ background: 'var(--xbot-accent-blue)', color: '#fff' }}
             >
-              重试
+              {t('errorBoundaryRetry')}
             </button>
             <button
               onClick={() => window.location.reload()}
               className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
               style={{ background: 'var(--xbot-bg-elevated)', color: 'var(--xbot-text-primary)' }}
             >
-              刷新页面
+              {t('refreshPage')}
             </button>
           </div>
         </div>

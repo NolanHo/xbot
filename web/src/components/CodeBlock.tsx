@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, memo } from 'react'
 import { hljs, ensureLanguage, isLanguageRegistered, escapeHtml } from '../highlight'
 import { MermaidBlock } from './MermaidBlock'
+import { useTranslation } from '../i18n'
 
 interface CodeBlockProps {
   className?: string
@@ -10,6 +11,7 @@ interface CodeBlockProps {
 const CodeBlock = memo(function CodeBlock({ className, children }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
   const [langReady, setLangReady] = useState(false)
+  const { t } = useTranslation()
 
   const codeText = typeof children === 'string' ? children.trim() : String(children ?? '')
 
@@ -78,8 +80,8 @@ const CodeBlock = memo(function CodeBlock({ className, children }: CodeBlockProp
     <div className="xbot-codeblock">
       <div className="xbot-codeblock-header">
         <span>{lang || 'code'}{lineCount > 1 && <span className="ml-2 text-slate-600 text-[10px]">{lineCount} lines</span>}</span>
-        <button onClick={handleCopy} className="xbot-codeblock-copy" aria-label="复制代码" data-testid="codeblock-copy-btn">
-          {copied ? '✓ Copied' : 'Copy'}
+        <button onClick={handleCopy} className="xbot-codeblock-copy" aria-label={t('copyCode')} data-testid="codeblock-copy-btn">
+          {copied ? t('copied') : 'Copy'}
         </button>
       </div>
       <pre className="xbot-codeblock-pre">
@@ -122,7 +124,6 @@ export function getCodeBlockProps() {
 
       // Mermaid diagram — render as SVG instead of code block
       if (lang === 'mermaid') {
-        // Dynamic import to avoid loading mermaid bundle unless needed
         return <MermaidBlock code={codeStr} />
       }
 
@@ -149,7 +150,6 @@ export function getCodeBlockProps() {
         )
       }
 
-      // react-markdown checkbox plugin uses className "task-list-item checked" for [x]
       if (props.className && /task-list-item/.test(props.className)) {
         return (
           <li
@@ -172,8 +172,6 @@ export function getCodeBlockProps() {
       return <a href={props.href} target="_blank" rel="noopener noreferrer">{props.children}</a>
     },
     pre(props: { children?: React.ReactNode }) {
-      // Unwrap react-markdown's outer <pre> — the code component already
-      // renders its own container (.xbot-codeblock / .mermaid-wrapper / etc.)
       return <>{props.children}</>
     },
     table(props: { children?: React.ReactNode }) {

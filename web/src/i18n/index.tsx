@@ -6,6 +6,7 @@
  */
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 import zhCN, { type I18nKey } from './zh-CN'
+export type { I18nKey }
 import en from './en'
 
 // ── Locale map ──

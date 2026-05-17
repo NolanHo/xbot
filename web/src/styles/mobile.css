@@ -183,7 +183,7 @@
     border-radius: 50%;
     background: rgba(30, 41, 59, 0.95);
     border: 1px solid rgba(100, 116, 139, 0.3);
-    color: #e2e8f0;
+    color: var(--xbot-text-primary);
     font-size: 18px;
     display: flex;
     align-items: center;
@@ -223,7 +223,7 @@
     width: 280px;
     max-width: 85vw;
     height: 100%;
-    background: #0f172a;
+    background: var(--xbot-bg-primary);
     display: flex;
     flex-direction: column;
     box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);

@@ -83,10 +83,10 @@
   vertical-align: top;
 }
 .markdown-body tbody tr:hover {
-  background: #1e293b55;
+  background: var(--xbot-bg-secondary)55;
 }
 .markdown-body tbody tr:nth-child(even) {
-  background: #0f172a88;
+  background: var(--xbot-bg-primary)88;
 }
 
 /* Mermaid diagram container */

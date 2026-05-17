@@ -12,9 +12,9 @@
   flex: 1;
   padding: 6px 12px;
   border-radius: 8px;
-  border: 1px solid #334155;
+  border: 1px solid var(--xbot-border);
   background: transparent;
-  color: #94a3b8;
+  color: var(--xbot-text-secondary);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
@@ -22,22 +22,22 @@
 }
 
 .market-tab:hover {
-  color: #e2e8f0;
+  color: var(--xbot-text-primary);
   background: rgba(51, 65, 85, 0.4);
 }
 
 .market-tab.active {
-  color: #e2e8f0;
-  background: #334155;
-  border-color: #475569;
+  color: var(--xbot-text-primary);
+  background: var(--xbot-bg-elevated);
+  border-color: var(--xbot-border-light);
 }
 
 .market-spinner {
   display: inline-block;
   width: 24px;
   height: 24px;
-  border: 2px solid #475569;
-  border-top-color: #94a3b8;
+  border: 2px solid var(--xbot-border-light);
+  border-top-color: var(--xbot-text-secondary);
   border-radius: 50%;
   animation: market-spin 0.6s linear infinite;
 }
@@ -54,12 +54,12 @@
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid #1e293b;
-  background: #0f172a;
+  background: var(--xbot-bg-primary);
   transition: border-color 0.2s;
 }
 
 .market-entry:hover {
-  border-color: #334155;
+  border-color: var(--xbot-border);
 }
 
 .market-entry-header {
@@ -80,7 +80,7 @@
 .market-entry-name {
   font-size: 13px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--xbot-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -88,14 +88,14 @@
 
 .market-entry-author {
   font-size: 11px;
-  color: #64748b;
+  color: var(--xbot-text-muted);
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 .market-entry-desc {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--xbot-text-secondary);
   margin-top: 4px;
   line-height: 1.4;
   display: -webkit-box;
@@ -107,9 +107,9 @@
 .market-install-btn {
   padding: 4px 12px;
   border-radius: 6px;
-  border: 1px solid #3b82f6;
+  border: 1px solid var(--xbot-accent-blue);
   background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
+  color: var(--xbot-text-link);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
@@ -124,9 +124,9 @@
 .market-uninstall-btn {
   padding: 4px 12px;
   border-radius: 6px;
-  border: 1px solid #7f1d1d;
+  border: 1px solid var(--xbot-border-danger);
   background: rgba(127, 29, 29, 0.2);
-  color: #fca5a5;
+  color: var(--xbot-text-danger);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
@@ -159,7 +159,7 @@
 }
 
 .market-sub-tab.active {
-  border-bottom-color: #3b82f6;
+  border-bottom-color: var(--xbot-accent-blue);
   color: #93c5fd;
 }
 
@@ -176,7 +176,7 @@
 }
 
 .market-entry-status.unpublished {
-  color: #94a3b8;
+  color: var(--xbot-text-secondary);
   background: rgba(100, 116, 139, 0.15);
 }
 
@@ -200,7 +200,7 @@
 /* ---- Light theme overrides ---- */
 [data-theme="light"] .market-tab {
   border-color: #cbd5e1;
-  color: #64748b;
+  color: var(--xbot-text-muted);
 }
 
 [data-theme="light"] .market-tab:hover {
@@ -216,11 +216,11 @@
 
 [data-theme="light"] .market-spinner {
   border-color: #cbd5e1;
-  border-top-color: #64748b;
+  border-top-color: var(--xbot-text-muted);
 }
 
 [data-theme="light"] .market-entry {
-  border-color: #e2e8f0;
+  border-color: var(--xbot-text-primary);
   background: #f8fafc;
 }
 
@@ -233,7 +233,7 @@
 }
 
 [data-theme="light"] .market-entry-desc {
-  color: #64748b;
+  color: var(--xbot-text-muted);
 }
 
 [data-theme="light"] .market-install-btn {
@@ -247,7 +247,7 @@
 }
 
 [data-theme="light"] .market-uninstall-btn {
-  border-color: #fca5a5;
+  border-color: var(--xbot-text-danger);
   background: rgba(254, 226, 226, 0.4);
   color: #dc2626;
 }
@@ -257,12 +257,12 @@
 }
 
 [data-theme="light"] .market-sub-tab {
-  color: #64748b;
+  color: var(--xbot-text-muted);
   border-bottom-color: transparent;
 }
 
 [data-theme="light"] .market-sub-tab.active {
-  border-bottom-color: #3b82f6;
+  border-bottom-color: var(--xbot-accent-blue);
   color: #1e293b;
 }
 
@@ -272,7 +272,7 @@
 }
 
 [data-theme="light"] .market-entry-status.unpublished {
-  color: #94a3b8;
+  color: var(--xbot-text-secondary);
   background: rgba(100, 116, 139, 0.1);
 }
 

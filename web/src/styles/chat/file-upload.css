@@ -19,7 +19,7 @@
 }
 
 .file-upload-btn:hover:not(:disabled) {
-  background: #475569;
+  background: var(--xbot-border-light);
   color: var(--xbot-text-primary);
 }
 
@@ -72,7 +72,7 @@
 /* ---- Light theme overrides ---- */
 [data-theme="light"] .file-upload-btn {
   background: #e2e8f0;
-  color: #475569;
+  color: var(--xbot-border-light);
 }
 [data-theme="light"] .file-upload-btn:hover:not(:disabled) {
   background: #cbd5e1;

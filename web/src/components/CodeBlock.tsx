@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, memo } from 'react'
 import { hljs, ensureLanguage, isLanguageRegistered, escapeHtml } from '../highlight'
 import { MermaidBlock } from './MermaidBlock'
 import { useTranslation } from '../i18n'
+import { CODEBLOCK_COLLAPSE_LINES } from '../constants'
 
 interface CodeBlockProps {
   className?: string
@@ -11,6 +12,7 @@ interface CodeBlockProps {
 const CodeBlock = memo(function CodeBlock({ className, children }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
   const [langReady, setLangReady] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const { t } = useTranslation()
 
   const codeText = typeof children === 'string' ? children.trim() : String(children ?? '')
@@ -18,6 +20,10 @@ const CodeBlock = memo(function CodeBlock({ className, children }: CodeBlockProp
   // Extract language from className (react-markdown passes "language-xxx")
   const langMatch = className?.match(/language-(\w+)/)
   const lang = langMatch ? langMatch[1] : ''
+
+  const lines = codeText.split('\n')
+  const lineCount = lines.length
+  const shouldCollapse = lineCount > CODEBLOCK_COLLAPSE_LINES
 
   // Track whether the language has been loaded (for lazy languages)
   useEffect(() => {
@@ -74,19 +80,42 @@ const CodeBlock = memo(function CodeBlock({ className, children }: CodeBlockProp
     }
   }
 
-  const lineCount = codeText.split('\n').length
-
   return (
     <div className="xbot-codeblock">
       <div className="xbot-codeblock-header">
-        <span>{lang || 'code'}{lineCount > 1 && <span className="ml-2 text-slate-600 text-[10px]">{lineCount} lines</span>}</span>
-        <button onClick={handleCopy} className="xbot-codeblock-copy" aria-label={t('copyCode')} data-testid="codeblock-copy-btn">
-          {copied ? t('copied') : 'Copy'}
-        </button>
+        <span>
+          {lang || 'code'}
+          {lineCount > 1 && <span className="xbot-codeblock-linecount">{lineCount} lines</span>}
+        </span>
+        <div className="xbot-codeblock-actions">
+          {shouldCollapse && (
+            <button
+              onClick={() => setCollapsed(!collapsed)}
+              className="xbot-codeblock-collapse-btn"
+              aria-expanded={!collapsed}
+              data-testid="codeblock-collapse-btn"
+            >
+              {collapsed ? t('expandCodeBlock', { lines: String(lineCount) }) : t('collapseCodeBlock')}
+            </button>
+          )}
+          <button onClick={handleCopy} className="xbot-codeblock-copy" aria-label={t('copyCode')} data-testid="codeblock-copy-btn">
+            {copied ? t('copied') : 'Copy'}
+          </button>
+        </div>
       </div>
-      <pre className="xbot-codeblock-pre">
-        <code dangerouslySetInnerHTML={{ __html: highlighted }} />
-      </pre>
+      <div className={`xbot-codeblock-body ${collapsed && shouldCollapse ? 'xbot-codebody-collapsed' : ''}`}>
+        <pre className="xbot-codeblock-pre">
+          {/* Line numbers column */}
+          <code className="xbot-codeblock-linenums" aria-hidden="true">
+            {lines.map((_, i) => (
+              <div key={i}>{i + 1}</div>
+            ))}
+          </code>
+          {/* Code column */}
+          <code className="xbot-codeblock-code" dangerouslySetInnerHTML={{ __html: highlighted }} />
+        </pre>
+        {collapsed && shouldCollapse && <div className="xbot-codeblock-collapsed-mask" />}
+      </div>
     </div>
   )
 })

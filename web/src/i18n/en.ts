@@ -329,6 +329,8 @@ const en: Record<I18nKey, string> = {
   notificationClickToView: 'Click to view',
   notificationEnabled: 'Notifications enabled',
   notificationDenied: 'Notification permission denied',
+  expandCodeBlock: 'Expand ({lines} lines)',
+  collapseCodeBlock: 'Collapse',
 
 }
 

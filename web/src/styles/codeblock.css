@@ -2,8 +2,6 @@
 /* Code Block Styles                                                         */
 /* ========================================================================== */
 
-/* ============ Code blocks — see "Enhanced Code Block" section below for main styles ============ */
-
 /* Inline code (dark mode default) */
 .xbot-inline-code {
   background: var(--xbot-bg-secondary);
@@ -23,10 +21,6 @@
 }
 
 /* ---- Enhanced Code Block (dark) ---- */
-
-/* ========================================================================== */
-/* Enhanced Code Block                                                         */
-/* ========================================================================== */
 
 .xbot-codeblock {
   position: relative;
@@ -53,7 +47,20 @@
   color: var(--xbot-text-muted);
 }
 
-.xbot-codeblock-copy {
+.xbot-codeblock-linecount {
+  margin-left: 8px;
+  font-size: 10px;
+  color: var(--xbot-text-muted);
+}
+
+.xbot-codeblock-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.xbot-codeblock-copy,
+.xbot-codeblock-collapse-btn {
   background: rgba(71, 85, 105, 0.3);
   border: none;
   color: var(--xbot-text-secondary);
@@ -62,30 +69,73 @@
   cursor: pointer;
   font-size: 11px;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
-.xbot-codeblock-copy:hover {
+.xbot-codeblock-copy:hover,
+.xbot-codeblock-collapse-btn:hover {
   background: rgba(71, 85, 105, 0.5);
   color: var(--xbot-text-primary);
 }
 
+/* ─── Code Body (line numbers + code side by side) ─── */
+
+.xbot-codeblock-body {
+  position: relative;
+}
+
 .xbot-codeblock-pre {
   margin: 0;
-  padding: 12px 16px;
+  padding: 12px 16px 12px 0;
   overflow-x: auto;
   background: #0d1117;
   font-size: 13px;
   line-height: 1.6;
+  display: flex;
 }
 
-.xbot-codeblock-pre code {
+.xbot-codeblock-linenums {
+  flex-shrink: 0;
+  padding: 0 12px 0 16px;
+  text-align: right;
+  color: rgba(100, 116, 139, 0.5);
+  user-select: none;
+  border-right: 1px solid rgba(51, 65, 85, 0.2);
+  margin-right: 12px;
+  font-size: inherit;
+  line-height: inherit;
+  font-family: inherit;
+  background: transparent;
+}
+
+.xbot-codeblock-code {
+  flex: 1;
+  min-width: 0;
   background: transparent;
   padding: 0;
   font-size: 0.875em;
   border-radius: 0;
 }
 
-/* Inline code enhancement */
+/* ─── Code Block Collapse ─── */
+
+.xbot-codebody-collapsed {
+  max-height: 360px; /* ~15 lines at 24px line-height */
+  overflow: hidden;
+}
+
+.xbot-codeblock-collapsed-mask {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: linear-gradient(transparent, #0d1117);
+  pointer-events: none;
+}
+
+/* ─── Inline code enhancement ─── */
+
 .xbot-inline-code {
   background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.6));
   padding: 1px 6px;
@@ -99,7 +149,6 @@
 
 /* ---- Light Theme Overrides ---- */
 
-/* Light mode hljs override (github-light key colors) */
 [data-theme="light"] .hljs {
   color: #24292e;
   background: transparent;
@@ -198,14 +247,25 @@
   background: #edeae5;
 }
 
-[data-theme="light"] .xbot-codeblock-copy {
+[data-theme="light"] .xbot-codeblock-copy,
+[data-theme="light"] .xbot-codeblock-collapse-btn {
   color: #78716c;
   background: rgba(28, 25, 23, 0.06);
 }
 
-[data-theme="light"] .xbot-codeblock-copy:hover {
+[data-theme="light"] .xbot-codeblock-copy:hover,
+[data-theme="light"] .xbot-codeblock-collapse-btn:hover {
   color: #3d3833;
   background: rgba(28, 25, 23, 0.12);
+}
+
+[data-theme="light"] .xbot-codeblock-linenums {
+  color: rgba(100, 100, 100, 0.4);
+  border-right-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .xbot-codeblock-collapsed-mask {
+  background: linear-gradient(transparent, #edeae5);
 }
 
 [data-theme="light"] .xbot-inline-code {

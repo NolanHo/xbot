@@ -327,6 +327,8 @@ const zhCN = {
   notificationClickToView: '点击查看',
   notificationEnabled: '通知已开启',
   notificationDenied: '通知权限被拒绝',
+  expandCodeBlock: '展开 ({lines} 行)',
+  collapseCodeBlock: '折叠',
 
 } as const
 

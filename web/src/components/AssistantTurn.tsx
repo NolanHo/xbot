@@ -4,6 +4,8 @@ import remarkGfm from 'remark-gfm'
 import { getCodeBlockProps } from './CodeBlock'
 import type { WsProgressPayload, IterationSnapshot } from './ProgressPanel'
 import { CompletedIteration, BouncingDots, SubAgentTree } from './ProgressPanel'
+import type { Message } from '../types'
+import { formatElapsed } from '../utils'
 
 
 const COLLAPSE_THRESHOLD = 20 // lines
@@ -44,14 +46,6 @@ function CollapsibleMessage({ children }: { children: React.ReactNode }) {
     </div>
   )
 }
-interface Message {
-  id: string
-  type: 'user' | 'assistant' | 'system'
-  content: string
-  ts?: number
-  iterationHistory?: IterationSnapshot[] | null
-}
-
 
 // Memoized thinking display — only re-renders when content actually changes
 const ThinkingBlock = memo(({ content }: { content: string }) => (
@@ -72,11 +66,6 @@ interface AssistantTurnProps {
 
 
 const codeBlockComponents = getCodeBlockProps()
-
-function formatElapsed(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
-}
 
 /** Collapsible section with a header bar */
 function CollapsibleSection({
@@ -135,7 +124,7 @@ function isThinkingContent(content: string): boolean {
   return false
 }
 
-export default function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress }: AssistantTurnProps) {
+export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress }: AssistantTurnProps) {
   // Classify messages
   const thinkingMsgs: Message[] = []
   const textMsgs: Message[] = []
@@ -356,4 +345,4 @@ export default function AssistantTurn({ messages, progress, liveIterations, load
       </div>
     </div>
   )
-}
+})

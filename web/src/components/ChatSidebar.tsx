@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 
 interface ChatInfo {
   chat_id: string
@@ -21,13 +21,28 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
+  // Responsive mobile detection
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 640)
+  const isMobileRef = useRef(isMobile)
+  useEffect(() => {
+    isMobileRef.current = isMobile
+  }, [isMobile])
+  useEffect(() => {
+    const mql = window.matchMedia('(max-width: 640px)')
+    const handler = (e: MediaQueryListEvent) => {
+      setIsMobile(e.matches)
+    }
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  }, [])
+
   const fetchChats = useCallback(async () => {
     setLoading(true)
     try {
       const resp = await fetch('/api/chats')
       const data = await resp.json()
       if (data.ok) setChats(data.chats || [])
-    } catch { /* ignored */ }
+    } catch (err) { console.warn('[ChatSidebar] fetchChats failed:', err) }
     setLoading(false)
   }, [])
 
@@ -38,8 +53,8 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
       await fetch(`/api/chats/${encodeURIComponent(chatID)}/switch`, { method: 'POST' })
       onSwitchChat(chatID)
       // Auto-collapse on mobile after switch
-      if (window.innerWidth < 640) setCollapsed(true)
-    } catch { /* ignored */ }
+      if (isMobileRef.current) setCollapsed(true)
+    } catch (err) { console.warn('[ChatSidebar] switchChat failed:', err) }
   }
 
   const handleCreate = async () => {
@@ -54,9 +69,9 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
         await fetch(`/api/chats/${encodeURIComponent(data.chat_id)}/switch`, { method: 'POST' })
         onSwitchChat(data.chat_id)
         fetchChats()
-        if (window.innerWidth < 640) setCollapsed(true)
+        if (isMobileRef.current) setCollapsed(true)
       }
-    } catch { /* ignored */ }
+    } catch (err) { console.warn('[ChatSidebar] createChat failed:', err) }
   }
 
   const handleDelete = async (e: React.MouseEvent, chatID: string) => {
@@ -75,7 +90,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
       } else {
         fetchChats()
       }
-    } catch { /* ignored */ }
+    } catch (err) { console.warn('[ChatSidebar] deleteChat failed:', err) }
   }
 
   const handleRename = async (e: React.KeyboardEvent, chatID: string) => {
@@ -89,12 +104,11 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
         body: JSON.stringify({ label }),
       })
       fetchChats()
-    } catch { /* ignored */ }
+    } catch (err) { console.warn('[ChatSidebar] renameChat failed:', err) }
     setRenamingId(null)
   }
 
-  // Mobile overlay mode
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 640
+  // Mobile overlay mode (isMobile is now reactive state)
 
   if (collapsed) {
     return (
@@ -112,7 +126,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
   if (isMobile) {
     return (
       <div className="chat-sidebar-overlay" onClick={(e) => { if (e.target === e.currentTarget) setCollapsed(true) }}>
-        <div className="chat-sidebar-mobile">
+        <div className="chat-sidebar-mobile" role="navigation" aria-label="会话列表">
           {/* Header */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700/50">
             <span className="text-sm font-medium text-slate-300">💬 会话</span>
@@ -166,7 +180,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
 
   // Desktop: inline sidebar
   return (
-    <div className="flex flex-col w-56 bg-slate-900/80 border-r border-slate-700/50 shrink-0">
+    <div className="flex flex-col w-56 bg-slate-900/80 border-r border-slate-700/50 shrink-0" role="navigation" aria-label="会话列表">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700/50">
         <span className="text-sm font-medium text-slate-300">💬 会话</span>

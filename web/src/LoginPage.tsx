@@ -18,7 +18,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     fetch('/api/auth/config')
       .then(r => r.json())
       .then(data => { setInviteOnly(!!data.invite_only) })
-      .catch(() => {})
+      .catch((err) => { console.warn('[LoginPage] failed to fetch auth config:', err) })
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {

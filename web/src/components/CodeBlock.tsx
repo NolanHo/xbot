@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo, memo } from 'react'
 import hljs from 'highlight.js/lib/core'
 import { MermaidBlock } from './MermaidBlock'
 import javascript from 'highlight.js/lib/languages/javascript'
@@ -45,12 +45,21 @@ hljs.registerLanguage('cpp', cpp)
 hljs.registerLanguage('c', cpp)
 hljs.registerLanguage('diff', diff)
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
 interface CodeBlockProps {
   className?: string
   children?: string
 }
 
-function CodeBlock({ className, children }: CodeBlockProps) {
+const CodeBlock = memo(function CodeBlock({ className, children }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
 
   const codeText = typeof children === 'string' ? children.trim() : String(children ?? '')
@@ -59,16 +68,20 @@ function CodeBlock({ className, children }: CodeBlockProps) {
   const langMatch = className?.match(/language-(\w+)/)
   const lang = langMatch ? langMatch[1] : ''
 
-  let highlighted = codeText
-  try {
-    if (lang && hljs.getLanguage(lang)) {
-      highlighted = hljs.highlight(codeText, { language: lang }).value
-    } else {
-      highlighted = hljs.highlightAuto(codeText).value
+  const highlighted = useMemo(() => {
+    // Skip highlighting for long code or missing language
+    if (!lang || codeText.length > 5000) {
+      return escapeHtml(codeText)
     }
-  } catch {
-    highlighted = codeText
-  }
+    try {
+      if (hljs.getLanguage(lang)) {
+        return hljs.highlight(codeText, { language: lang }).value
+      }
+    } catch {
+      // fallback to escaped plain text
+    }
+    return escapeHtml(codeText)
+  }, [codeText, lang])
 
   const handleCopy = async () => {
     try {
@@ -103,7 +116,7 @@ function CodeBlock({ className, children }: CodeBlockProps) {
       </pre>
     </div>
   )
-}
+})
 
 // Check if a React node tree contains a checkbox element
 function containsCheckbox(children: React.ReactNode): boolean {

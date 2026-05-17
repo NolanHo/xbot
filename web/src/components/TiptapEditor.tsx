@@ -176,6 +176,7 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
         disabled={!connected || disabled || !hasContent}
         className="tiptap-send-btn"
         title="发送"
+        aria-label="发送消息"
       >
         ➤
       </button>

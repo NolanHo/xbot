@@ -1,21 +1,24 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+
+import { useWebSocket, type WebSocketMessage } from './hooks/useWebSocket'
 import type { TiptapEditorHandle } from './components/TiptapEditor'
-import type { PresetCommand } from './types'
+import type { PresetCommand, Message, Turn } from './types'
+import type { WsProgressPayload, IterationSnapshot } from './components/ProgressPanel'
+import { formatTime, formatFileSize, normalizeIterationHistory, createResetProgress } from './utils'
+import { getCodeBlockProps } from './components/CodeBlock'
 import ProgressPanel from './components/ProgressPanel'
 import AssistantTurn from './components/AssistantTurn'
 import ChatSidebar from './components/ChatSidebar'
+import TiptapEditor from './components/TiptapEditor'
+import SearchPanel from './components/SearchPanel'
+import AskUserPanel from './components/AskUserPanel'
+import FileUpload, { uploadFile, usePasteUpload, type PendingFile } from './components/FileUpload'
 
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import type { WsProgressPayload, IterationSnapshot } from './components/ProgressPanel'
-import { getCodeBlockProps } from './components/CodeBlock'
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'))
 
 const codeBlockComponents = getCodeBlockProps()
-
-
-import TiptapEditor from './components/TiptapEditor'
-import SettingsPanel from './components/SettingsPanel'
-import FileUpload, { uploadFile, usePasteUpload, type PendingFile } from './components/FileUpload'
 
 // --- Lazy rendering: only render when element enters viewport ---
 // Use `eager` to skip IntersectionObserver (for turns near bottom that need instant render).
@@ -52,102 +55,7 @@ interface ChatPageProps {
   onLogout: () => void
 }
 
-interface Message {
-  id: string
-  type: 'user' | 'assistant' | 'system'
-  content: string
-  ts?: number
-  // Saved progress snapshot when this message was finalized (for showing intermediate process)
-  savedProgress?: WsProgressPayload | null
-  // Full iteration history (persisted across refreshes)
-  iterationHistory?: IterationSnapshot[] | null
-}
 
-function normalizeIterationHistory(input: unknown): IterationSnapshot[] {
-  if (!Array.isArray(input) || input.length === 0) return []
-
-  const toNumber = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
-
-  const normalized: IterationSnapshot[] = []
-  for (const raw of input) {
-    if (!raw || typeof raw !== 'object') continue
-    const snap = raw as Record<string, unknown>
-
-    const iteration = toNumber(snap.iteration ?? snap.Iteration)
-    if (iteration == null) continue
-
-    const thinkingRaw = snap.thinking ?? snap.Thinking
-    const thinking = typeof thinkingRaw === 'string' ? thinkingRaw : undefined
-
-    const reasoningRaw = snap.reasoning ?? snap.Reasoning
-    const reasoning = typeof reasoningRaw === 'string' ? reasoningRaw : undefined
-
-    const rawTools = Array.isArray(snap.tools) ? snap.tools : (Array.isArray(snap.Tools) ? snap.Tools : [])
-    const tools = rawTools
-      .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
-      .map((t) => {
-        const name = typeof (t.name ?? t.Name) === 'string' ? String(t.name ?? t.Name) : ''
-        const label = typeof (t.label ?? t.Label) === 'string' ? String(t.label ?? t.Label) : undefined
-        const status = typeof (t.status ?? t.Status) === 'string' ? String(t.status ?? t.Status) : 'done'
-
-        const elapsedMsLower = toNumber(t.elapsed_ms)
-        const elapsedNsLegacy = toNumber(t.Elapsed)
-        const elapsedMs = elapsedMsLower ?? (elapsedNsLegacy != null ? Math.round(elapsedNsLegacy / 1_000_000) : undefined)
-
-        return {
-          name,
-          label,
-          status,
-          elapsed_ms: elapsedMs,
-        }
-      })
-
-    normalized.push({
-      iteration,
-      thinking,
-      reasoning,
-      tools,
-    })
-  }
-
-  const byIteration = new Map<number, IterationSnapshot>()
-  for (const snap of normalized) {
-    if (typeof snap?.iteration !== 'number') continue
-    byIteration.set(snap.iteration, {
-      iteration: snap.iteration,
-      thinking: snap.thinking,
-      reasoning: snap.reasoning,
-      tools: Array.isArray(snap.tools) ? snap.tools : [],
-    })
-  }
-
-  const sorted = Array.from(byIteration.values()).sort((a, b) => a.iteration - b.iteration)
-  const seenThinking = new Set<string>()
-
-  return sorted.map((snap) => {
-    const thinking = (snap.thinking || '').trim()
-    const dedupedThinking = thinking && !seenThinking.has(thinking) ? snap.thinking : undefined
-    if (thinking && !seenThinking.has(thinking)) {
-      seenThinking.add(thinking)
-    }
-    return {
-      ...snap,
-      thinking: dedupedThinking,
-    }
-  })
-}
-
-function formatTime(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-// --- Turn-based message grouping (Codex style) ---
-type Turn =
-  | { type: 'user'; message: Message }
-  | { type: 'assistant'; messages: Message[] }
 
 function groupMessagesIntoTurns(messages: Message[]): Turn[] {
   const turns: Turn[] = []
@@ -168,12 +76,6 @@ function groupMessagesIntoTurns(messages: Message[]): Turn[] {
     turns.push({ type: 'assistant', messages: currentAssistant })
   }
   return turns
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
 // --- Attachment parsing & rendering ---
@@ -202,6 +104,10 @@ function parseAttachments(content: string): { attachments: ParsedAttachment[]; c
     const sizeMatch = attrs.match(/size="(\d+)"/)
     const name = nameMatch?.[1] || (type === 'image' ? '图片' : '文件')
     const url = urlMatch?.[1]
+    if (url && !/^https?:\/\//i.test(url)) {
+      // Skip non-HTTP(S) URLs (e.g. javascript:, data:, file:)
+      return match
+    }
     const size = sizeMatch ? parseInt(sizeMatch[1], 10) : undefined
     const idx = attachments.length
     attachments.push({ type: type as 'image' | 'file', name, url, size, raw: match })
@@ -290,7 +196,6 @@ function UserMessageContent({ content }: { content: string }) {
 
 export default function ChatPage({ onLogout }: ChatPageProps) {
   const [messages, setMessages] = useState<Message[]>([])
-  const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<WsProgressPayload | null>(null)
   const [liveIterations, _setLiveIterations] = useState<IterationSnapshot[]>([])
@@ -308,9 +213,15 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const progressRef = useRef<WsProgressPayload | null>(null) // sync ref to avoid stale closures
   const reasoningRef = useRef<string>('') // accumulated reasoning from stream_content
   const streamingContentRef = useRef<string>('') // accumulated content from stream_content
-  const lastSeqRef = useRef<number>(0) // last processed event seq (for dedup & sync)
+  const resetProgress = createResetProgress({
+    setProgress: (v) => setProgress(v),
+    setLiveIterations: setLiveIterationsSync,
+    prevIterationRef,
+    progressRef,
+    reasoningRef,
+    streamingContentRef,
+  })
   const [autoScroll, setAutoScroll] = useState(true)
-  const [reconnecting, setReconnecting] = useState(true) // true = initial connecting state
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const [dragActive, setDragActive] = useState(false)
@@ -325,11 +236,6 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const [currentChatID, setCurrentChatID] = useState<string>('')
   const [contextInfo, setContextInfo] = useState<{ prompt_tokens: number; max_tokens: number; usage_pct: number; source: string } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<Array<{ id: number; role: string; snippet: string; created_at: string }>>([])
-  const [searchLoading, setSearchLoading] = useState(false)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-  const askUserInputRef = useRef<HTMLInputElement>(null)
   const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' = 'info') => {
     const id = Date.now()
     setToasts(prev => [...prev, { id, message, type }])
@@ -367,16 +273,11 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           setAvailableModels(data.models || [])
         }
       })
-      .catch(() => {})
+      .catch((err) => { console.warn('[ChatPage] failed to load LLM config:', err) })
   }, [])
 
-  const wsRef = useRef<WebSocket | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const reconnectDelayRef = useRef(1000)
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const serverStopped = useRef(false)
-  const intentionalClose = useRef(false)
 
   // --- Scroll management ---
   const isNearBottom = useCallback(() => {
@@ -419,8 +320,264 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           })
         }
       })
-      .catch(() => {})
+      .catch((err) => { console.warn('[ChatPage] failed to fetch context info:', err) })
   }, [])
+
+  // --- WebSocket hook ---
+  const {
+    connected,
+    reconnecting,
+    serverStopped,
+    send: wsSend,
+    disconnect: wsDisconnect,
+    lastSeqRef,
+  } = useWebSocket({
+    onMessage: useCallback((data: WebSocketMessage) => {
+      switch (data.type) {
+        case 'progress':
+          setLoading(true)
+          break
+
+        case 'progress_structured':
+          {
+            let p: WsProgressPayload = data.progress as WsProgressPayload
+            const prevIter = prevIterationRef.current
+            const prevProgress = progressRef.current
+
+            if (prevProgress && p.iteration === prevProgress.iteration) {
+              const nextThinking = (p.thinking || '').trim()
+              const prevThinking = (prevProgress.thinking || '').trim()
+              p = {
+                ...p,
+                thinking: nextThinking.length > 0 ? p.thinking : prevProgress.thinking,
+                completed_tools: (p.completed_tools?.length ?? 0) > 0
+                  ? p.completed_tools
+                  : (prevProgress.completed_tools ?? []),
+              }
+              if (nextThinking.length === 0 && prevThinking.length > 0) {
+                p.thinking = prevProgress.thinking
+              }
+            }
+
+            if (prevIter >= 0 && p.iteration > prevIter && prevProgress) {
+              const allTools = [
+                ...(prevProgress.completed_tools ?? []),
+                ...(prevProgress.active_tools ?? []),
+              ].map(t => ({
+                name: t.name,
+                label: t.label,
+                status: t.status,
+                elapsed_ms: t.elapsed_ms,
+              }))
+              const snapThinking = reasoningRef.current.trim() || prevProgress.thinking || ''
+              setLiveIterationsSync(prev => {
+                const merged = normalizeIterationHistory([
+                  ...prev,
+                  {
+                    iteration: prevIter,
+                    thinking: snapThinking,
+                    tools: allTools,
+                  },
+                ])
+                return merged
+              })
+              reasoningRef.current = ''
+            }
+
+            if (p.iteration > 0 && (p.completed_tools?.length ?? 0) > 0) {
+              const inferredPrev = p.iteration - 1
+              setLiveIterationsSync(prev => {
+                const hasPrev = prev.some((s) => s.iteration === inferredPrev)
+                if (hasPrev) return prev
+                return normalizeIterationHistory([
+                  ...prev,
+                  {
+                    iteration: inferredPrev,
+                    tools: (p.completed_tools ?? []).map((t) => ({
+                      name: t.name,
+                      label: t.label,
+                      status: t.status,
+                      elapsed_ms: t.elapsed_ms,
+                    })),
+                  },
+                ])
+              })
+            }
+
+            prevIterationRef.current = p.iteration
+            progressRef.current = p
+            setProgress(p)
+          }
+          setLoading(true)
+          break
+
+        case 'stream_content': {
+          const reasoning = (data.progress as Record<string, string>)?.reasoning_stream_content || ''
+          const content = (data.progress as Record<string, string>)?.stream_content || ''
+          if (!reasoning && !content) break
+
+          if (reasoning) {
+            reasoningRef.current = reasoning
+            if (progressRef.current) {
+              progressRef.current = { ...progressRef.current, thinking: reasoningRef.current }
+              setProgress({ ...progressRef.current })
+            } else {
+              const p: WsProgressPayload = {
+                phase: 'thinking',
+                iteration: prevIterationRef.current >= 0 ? prevIterationRef.current : 0,
+                thinking: reasoningRef.current,
+                active_tools: [],
+                completed_tools: [],
+              }
+              progressRef.current = p
+              prevIterationRef.current = p.iteration
+              setProgress(p)
+            }
+          }
+
+          if (content) {
+            streamingContentRef.current = content
+            setMessages(prev => {
+              const last = prev[prev.length - 1]
+              if (last && last.id === '__streaming__') {
+                if (last.content === content) return prev
+                return [...prev.slice(0, -1), { ...last, content: content }]
+              }
+              return [...prev, {
+                id: '__streaming__',
+                type: 'assistant' as const,
+                content: content,
+              }]
+            })
+          }
+
+          setLoading(true)
+          break
+        }
+
+        case 'text':
+        case 'card': {
+          const accumulatedReasoning = reasoningRef.current.trim()
+          const progressSnap = progressRef.current
+            ? {
+                ...progressRef.current,
+                thinking: progressRef.current.thinking || accumulatedReasoning,
+                active_tools: [],
+              } as WsProgressPayload
+            : accumulatedReasoning
+              ? ({
+                  phase: 'done' as const,
+                  iteration: prevIterationRef.current >= 0 ? prevIterationRef.current : 0,
+                  thinking: accumulatedReasoning,
+                  active_tools: [],
+                  completed_tools: [],
+                } as WsProgressPayload)
+              : null
+
+          const snapThinking = accumulatedReasoning || progressSnap?.thinking || ''
+          const currentSnap = progressSnap ? (() => {
+            const allTools = [
+              ...(progressSnap.completed_tools ?? []),
+            ].map(t => ({
+              name: t.name,
+              label: t.label,
+              status: t.status,
+              elapsed_ms: t.elapsed_ms,
+              summary: t.summary,
+            }))
+            return {
+              iteration: prevIterationRef.current,
+              thinking: snapThinking,
+              tools: allTools,
+            }
+          })() : null
+
+          const currentLive = liveIterationsRef.current ?? []
+          let localHistory: IterationSnapshot[] = [...currentLive]
+          if (currentSnap) localHistory.push(currentSnap)
+          localHistory = normalizeIterationHistory(localHistory)
+
+          setLiveIterationsSync([])
+
+          localHistory = normalizeIterationHistory(localHistory)
+
+          let finalHistory = localHistory
+          if (data.progress_history) {
+            try {
+              const serverHistory = normalizeIterationHistory(JSON.parse(data.progress_history as string))
+              if (serverHistory.length > 0) {
+                finalHistory = serverHistory
+              }
+            } catch {
+              // keep local snapshots
+            }
+          }
+
+          resetProgress()
+          lastSeqRef.current = 0
+          setLoading(false)
+
+          const finalContent = streamingContentRef.current || (data.content as string) || ''
+          streamingContentRef.current = ''
+
+          setMessages((prev) => {
+            const filtered = prev.filter(m => m.id !== '__streaming__')
+            const msg: Message = {
+              id: (data.id as string) || `ws-${Date.now()}`,
+              type: data.type === 'card' ? 'system' : 'assistant',
+              content: finalContent,
+              ts: data.ts as number | undefined,
+              savedProgress: progressSnap,
+              iterationHistory: finalHistory.length > 0 ? finalHistory : undefined,
+            }
+            return [...filtered, msg]
+          })
+          fetchContextInfo()
+          break
+        }
+
+        case 'user_echo': {
+          if (data.original_content) {
+            setMessages((prev) => prev.map((m) =>
+              m.type === 'user' && m.content === (data.original_content as string)
+                ? { ...m, content: data.content as string }
+                : m
+            ))
+          }
+          break
+        }
+
+        case 'ask_user': {
+          const questions = (data.progress as Record<string, unknown>)?.questions || []
+          if (Array.isArray(questions) && questions.length > 0) {
+            setAskUser({ questions: questions as { question: string; options?: string[] }[], answers: {}, currentQ: 0 })
+          }
+          break
+        }
+
+        case 'runner_status': {
+          try {
+            const detail = data.content ? JSON.parse(data.content as string) : {}
+            window.dispatchEvent(new CustomEvent('runner-status-change', {
+              detail: { runnerName: detail.runner_name, online: detail.online },
+            }))
+          } catch { /* ignore */ }
+          break
+        }
+
+        case 'sync_progress': {
+          try {
+            const detail = data.content ? JSON.parse(data.content as string) : {}
+            if (detail.message) showToast(detail.message, detail.phase === 'done' ? 'success' : 'info')
+          } catch { /* ignore */ }
+          break
+        }
+
+        default:
+          break
+      }
+    }, [fetchContextInfo, resetProgress, setLiveIterationsSync, showToast]),
+  })
 
   // --- Load history (extracted for reuse on chat switch) ---
   const loadHistory = useCallback(() => {
@@ -507,7 +664,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           }, 100)
         }
       })
-      .catch(() => {})
+      .catch((err) => { console.warn('[ChatPage] failed to load history:', err) })
     fetchContextInfo()
   }, [scrollToBottom, fetchContextInfo])
 
@@ -516,412 +673,8 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     loadHistory()
   }, [loadHistory])
 
-  // --- Search: debounce 300ms ---
-  useEffect(() => {
-    if (!searchOpen || !searchQuery.trim()) {
-      setSearchResults([])
-      return
-    }
-    const controller = new AbortController()
-    const timer = setTimeout(async () => {
-      setSearchLoading(true)
-      try {
-        const resp = await fetch(`/api/search?q=${encodeURIComponent(searchQuery.trim())}&limit=20`, {
-          signal: controller.signal,
-        })
-        const data = await resp.json()
-        if (data.ok) {
-          setSearchResults(data.results || [])
-        }
-      } catch (e) {
-        if (e instanceof DOMException && e.name === 'AbortError') return
-      }
-      setSearchLoading(false)
-    }, 300)
-    return () => {
-      clearTimeout(timer)
-      controller.abort()
-    }
-  }, [searchQuery, searchOpen])
-
-  // --- Search: Ctrl+K shortcut ---
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault()
-        setSearchOpen(prev => {
-          const next = !prev
-          if (next) {
-            setTimeout(() => searchInputRef.current?.focus(), 0)
-          }
-          return next
-        })
-        if (!searchOpen) {
-          setSearchQuery('')
-          setSearchResults([])
-        }
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [searchOpen])
-
-  // --- WebSocket connection with reconnect ---
-  const connectWS = useCallback(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws`
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      setConnected(true)
-      setReconnecting(false)
-      serverStopped.current = false
-      intentionalClose.current = false
-      reconnectDelayRef.current = 1000
-      // Send sync handshake with last_seq from history API.
-      // Server replays missed events (covers GAP between history load and WS connect).
-      ws.send(JSON.stringify({ type: 'sync', last_seq: lastSeqRef.current }))
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current)
-        reconnectTimerRef.current = null
-      }
-    }
-
-    ws.onerror = (e) => {
-      console.warn('[WS] error', e)
-    }
-
-    ws.onclose = (e) => {
-      setConnected(false)
-
-      // Normal closure (1000) or going away (1001) = server shutdown, don't reconnect
-      // Skip if this is an intentional close (logout / component unmount)
-      if (e.code === 1000 || e.code === 1001) {
-        if (!intentionalClose.current) {
-          serverStopped.current = true
-        }
-        setReconnecting(false)
-        return
-      }
-
-      setReconnecting(true)
-
-      // Exponential backoff reconnect with jitter
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current)
-      }
-      const jitter = Math.random() * 0.5 + 0.5 // 0.5x - 1.0x random factor
-      const delay = Math.round(reconnectDelayRef.current * jitter)
-      reconnectTimerRef.current = setTimeout(() => {
-        connectWS()
-      }, delay)
-      reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, 30000)
-    }
-
-    ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data)
-
-        // Seq-based dedup: ignore events we've already processed.
-        // Events from replay (sync) or duplicate pushes are safely skipped.
-        if (data.seq && data.seq <= lastSeqRef.current) {
-          return
-        }
-        if (data.seq) {
-          lastSeqRef.current = data.seq
-        }
-
-        switch (data.type) {
-          case 'progress':
-            // Legacy progress (string content) — keep loading, show dots
-            setLoading(true)
-            break
-
-          case 'progress_structured':
-            // Structured progress — accumulate completed iterations, update current
-            {
-              let p: WsProgressPayload = data.progress
-              const prevIter = prevIterationRef.current
-              const prevProgress = progressRef.current
-
-              // Guard against same-iteration regressions: some events may carry
-              // empty thinking/completed_tools and would otherwise erase visible state.
-              if (prevProgress && p.iteration === prevProgress.iteration) {
-                const nextThinking = (p.thinking || '').trim()
-                const prevThinking = (prevProgress.thinking || '').trim()
-                p = {
-                  ...p,
-                  thinking: nextThinking.length > 0 ? p.thinking : prevProgress.thinking,
-                  completed_tools: (p.completed_tools?.length ?? 0) > 0
-                    ? p.completed_tools
-                    : (prevProgress.completed_tools ?? []),
-                }
-                if (nextThinking.length === 0 && prevThinking.length > 0) {
-                  p.thinking = prevProgress.thinking
-                }
-              }
-
-              // When iteration advances, snapshot the previous iteration and append.
-              // Prefer reasoningRef over prevProgress.thinking — progress_structured
-              // may have overwritten thinking with empty string.
-              if (prevIter >= 0 && p.iteration > prevIter && prevProgress) {
-                const allTools = [
-                  ...(prevProgress.completed_tools ?? []),
-                  ...(prevProgress.active_tools ?? []),
-                ].map(t => ({
-                  name: t.name,
-                  label: t.label,
-                  status: t.status,
-                  elapsed_ms: t.elapsed_ms,
-                }))
-                const snapThinking = reasoningRef.current.trim() || prevProgress.thinking || ''
-                setLiveIterationsSync(prev => {
-                  const merged = normalizeIterationHistory([
-                    ...prev,
-                    {
-                      iteration: prevIter,
-                      thinking: snapThinking,
-                      tools: allTools,
-                    },
-                  ])
-                  return merged
-                })
-                // Clear reasoning for the new iteration
-                reasoningRef.current = ''
-              }
-
-              // Frontend safety net: if backend event for iteration N already carries
-              // completed_tools of iteration N-1, persist that snapshot immediately.
-              if (p.iteration > 0 && (p.completed_tools?.length ?? 0) > 0) {
-                const inferredPrev = p.iteration - 1
-                setLiveIterationsSync(prev => {
-                  const hasPrev = prev.some((s) => s.iteration === inferredPrev)
-                  if (hasPrev) return prev
-                  return normalizeIterationHistory([
-                    ...prev,
-                    {
-                      iteration: inferredPrev,
-                      tools: (p.completed_tools ?? []).map((t) => ({
-                        name: t.name,
-                        label: t.label,
-                        status: t.status,
-                        elapsed_ms: t.elapsed_ms,
-                      })),
-                    },
-                  ])
-                })
-              }
-
-              prevIterationRef.current = p.iteration
-              progressRef.current = p
-              setProgress(p)
-            }
-            setLoading(true)
-            break
-
-          case 'stream_content': {
-            const reasoning = data.progress?.reasoning_stream_content || ''
-            const content = data.progress?.stream_content || ''
-            if (!reasoning && !content) break
-
-            // Accumulate reasoning
-            // NOTE: backend sends accumulated full text, so we REPLACE not append
-            if (reasoning) {
-              reasoningRef.current = reasoning
-              if (progressRef.current) {
-                progressRef.current = { ...progressRef.current, thinking: reasoningRef.current }
-                setProgress({ ...progressRef.current })
-              } else {
-                const p: WsProgressPayload = {
-                  phase: 'thinking',
-                  iteration: prevIterationRef.current >= 0 ? prevIterationRef.current : 0,
-                  thinking: reasoningRef.current,
-                  active_tools: [],
-                  completed_tools: [],
-                }
-                progressRef.current = p
-                prevIterationRef.current = p.iteration
-                setProgress(p)
-              }
-            }
-
-            // Accumulate content — show as streaming text in the assistant turn
-            // NOTE: backend sends accumulated full text (not delta), so we REPLACE not append
-            if (content) {
-              streamingContentRef.current = content
-              setMessages(prev => {
-                // Find or create a streaming placeholder message at the end
-                const last = prev[prev.length - 1]
-                if (last && last.id === '__streaming__') {
-                  // Only update if content actually changed to reduce re-renders
-                  if (last.content === content) return prev
-                  return [...prev.slice(0, -1), { ...last, content: content }]
-                }
-                return [...prev, {
-                  id: '__streaming__',
-                  type: 'assistant' as const,
-                  content: content,
-                }]
-              })
-            }
-
-            setLoading(true)
-            break
-          }
-
-          case 'text':
-          case 'card': {
-            // Final message — snapshot current iteration + all completed iterations
-            const accumulatedReasoning = reasoningRef.current.trim()
-            const progressSnap = progressRef.current
-              ? {
-                  ...progressRef.current,
-                  thinking: progressRef.current.thinking || accumulatedReasoning,
-                  active_tools: [],
-                } as WsProgressPayload
-              : accumulatedReasoning
-                ? ({
-                    phase: 'done' as const,
-                    iteration: prevIterationRef.current >= 0 ? prevIterationRef.current : 0,
-                    thinking: accumulatedReasoning,
-                    active_tools: [],
-                    completed_tools: [],
-                  } as WsProgressPayload)
-                : null
-
-            // Build current iteration snapshot — prefer reasoningRef over progress thinking
-            // to avoid losing reasoning that progress_structured may have overwritten
-            const snapThinking = accumulatedReasoning || progressSnap?.thinking || ''
-            const currentSnap = progressSnap ? (() => {
-              const allTools = [
-                ...(progressSnap.completed_tools ?? []),
-              ].map(t => ({
-                name: t.name,
-                label: t.label,
-                status: t.status,
-                elapsed_ms: t.elapsed_ms,
-                summary: t.summary,
-              }))
-              return {
-                iteration: prevIterationRef.current,
-                thinking: snapThinking,
-                tools: allTools,
-              }
-            })() : null
-
-            const currentLive = liveIterationsRef.current ?? []
-            let localHistory: IterationSnapshot[] = [...currentLive]
-            if (currentSnap) localHistory.push(currentSnap)
-            localHistory = normalizeIterationHistory(localHistory)
-
-            setLiveIterationsSync([])
-
-            localHistory = normalizeIterationHistory(localHistory)
-
-            let finalHistory = localHistory
-            if (data.progress_history) {
-              try {
-                const serverHistory = normalizeIterationHistory(JSON.parse(data.progress_history))
-                if (serverHistory.length > 0) {
-                  finalHistory = serverHistory
-                }
-              } catch {
-                // keep local snapshots
-              }
-            }
-
-            setProgress(null)
-            prevIterationRef.current = -1
-            progressRef.current = null
-            reasoningRef.current = ''
-            lastSeqRef.current = 0
-            setLoading(false)
-
-            // Use accumulated streaming content if available, otherwise use server content
-            const finalContent = streamingContentRef.current || data.content || ''
-            streamingContentRef.current = ''
-
-            // Replace streaming placeholder with final message
-            setMessages((prev) => {
-              const filtered = prev.filter(m => m.id !== '__streaming__')
-              const msg: Message = {
-                id: data.id || `ws-${Date.now()}`,
-                type: data.type === 'card' ? 'system' : 'assistant',
-                content: finalContent,
-                ts: data.ts,
-                savedProgress: progressSnap,
-                iterationHistory: finalHistory.length > 0 ? finalHistory : undefined,
-              }
-              return [...filtered, msg]
-            })
-            // Update context info after receiving final message
-            fetchContextInfo()
-            break
-          }
-
-          case 'user_echo': {
-            // Update optimistic user message with complete content (including file info)
-            if (data.original_content) {
-              setMessages((prev) => prev.map((m) =>
-                m.type === 'user' && m.content === data.original_content
-                  ? { ...m, content: data.content }
-                  : m
-              ))
-            }
-            break
-          }
-
-          case 'ask_user': {
-            const questions = data.progress?.questions || []
-            if (questions.length > 0) {
-              setAskUser({ questions, answers: {}, currentQ: 0 })
-            }
-            break
-          }
-
-          case 'runner_status': {
-            try {
-              const detail = data.content ? JSON.parse(data.content) : {}
-              window.dispatchEvent(new CustomEvent('runner-status-change', {
-                detail: { runnerName: detail.runner_name, online: detail.online },
-              }))
-            } catch { /* ignore */ }
-            break
-          }
-
-          case 'sync_progress': {
-            try {
-              const detail = data.content ? JSON.parse(data.content) : {}
-              if (detail.message) showToast(detail.message, detail.phase === 'done' ? 'success' : 'info')
-            } catch { /* ignore */ }
-            break
-          }
-
-          default:
-            break
-        }
-      } catch {
-        // ignore parse errors
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    connectWS()
-    return () => {
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current)
-      }
-      intentionalClose.current = true
-      wsRef.current?.close()
-    }
-  }, [connectWS])
-
   // --- Send message ---
   const handleSend = useCallback((content: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
-
     // Slash commands
     const trimmed = content.trim()
     if (trimmed.startsWith('/')) {
@@ -929,25 +682,15 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       if (cmd === '/clear') {
         // Clear both frontend state and backend history
         setMessages([])
-        setProgress(null)
-        setLiveIterationsSync([])
-        prevIterationRef.current = -1
-        progressRef.current = null
-        reasoningRef.current = ''
-        streamingContentRef.current = ''
+        resetProgress()
         setLoading(false)
-        fetch('/api/history', { method: 'DELETE' }).catch(() => {})
+        fetch('/api/history', { method: 'DELETE' }).catch((err) => { console.warn('[ChatPage] failed to clear history:', err) })
         showToast('对话已清空', 'info')
         return
       }
       if (cmd === '/new') {
         setMessages([])
-        setProgress(null)
-        setLiveIterationsSync([])
-        prevIterationRef.current = -1
-        progressRef.current = null
-        reasoningRef.current = ''
-        streamingContentRef.current = ''
+        resetProgress()
         setLoading(false)
         showToast('新对话', 'info')
         return
@@ -972,12 +715,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       ts: Math.floor(Date.now() / 1000),
     }
     setMessages((prev) => [...prev, userMsg])
-    setProgress(null)
-    setLiveIterationsSync([])
-    prevIterationRef.current = -1
-    progressRef.current = null
-    reasoningRef.current = ''
-    streamingContentRef.current = ''
+    resetProgress()
     setLoading(true)
     setAutoScroll(true)
 
@@ -1003,25 +741,19 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       setPendingFiles([])
     }
 
-    wsRef.current.send(JSON.stringify(payload))
+    wsSend(payload)
 
     setTimeout(() => scrollToBottom(isNearBottom() ? 'instant' : 'smooth'), 50)
   }, [scrollToBottom, isNearBottom, pendingFiles])
 
   // --- Cancel generation ---
   const handleCancel = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
-    wsRef.current.send(JSON.stringify({ type: 'cancel' }))
+    wsSend({ type: 'cancel' })
     setLoading(false)
-    setProgress(null)
-    setLiveIterationsSync([])
-    prevIterationRef.current = -1
-    progressRef.current = null
-    reasoningRef.current = ''
-    streamingContentRef.current = ''
+    resetProgress()
     // Remove streaming placeholder if present
     setMessages(prev => prev.filter(m => m.id !== '__streaming__'))
-  }, [])
+  }, [wsSend, resetProgress])
 
   // --- Preset commands ---
   useEffect(() => {
@@ -1035,7 +767,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           } catch { /* ignore */ }
         }
       })
-      .catch(() => {})
+      .catch((err) => { console.warn('[ChatPage] failed to load settings:', err) })
   }, [])
 
   const handlePresetClick = useCallback((preset: PresetCommand) => {
@@ -1048,12 +780,8 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
 
   // --- Logout ---
   const handleLogout = async () => {
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current)
-    }
-    intentionalClose.current = true
+    wsDisconnect()
     await fetch('/api/auth/logout', { method: 'POST' })
-    wsRef.current?.close()
     onLogout()
   }
 
@@ -1097,25 +825,28 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     }
   }, [handleFileUploaded, showToast])
 
-  const submitAnswer = useCallback((value: string) => {
-    if (!value.trim()) return
-    const newAnswers = { ...askUser!.answers, [askUser!.currentQ]: value.trim() }
-    if (askUser!.currentQ < askUser!.questions.length - 1) {
-      setAskUser({ ...askUser!, answers: newAnswers, currentQ: askUser!.currentQ + 1 })
-      // Focus input after advancing to next question
-      setTimeout(() => askUserInputRef.current?.focus(), 0)
-    } else {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'ask_user_response', answers: newAnswers, cancelled: false }))
-      } else {
-        showToast('连接已断开，请刷新页面', 'error')
-      }
-      setAskUser(null)
-    }
-  }, [askUser, showToast])
+  // --- AskUser callbacks ---
+  const handleAskUserSubmit = useCallback((answers: Record<string, string>) => {
+    wsSend({ type: 'ask_user_response', answers, cancelled: false })
+    setAskUser(null)
+  }, [wsSend])
+
+  const handleAskUserCancel = useCallback((answers: Record<string, string>) => {
+    wsSend({
+      type: 'ask_user_response',
+      answers,
+      cancelled: true,
+    })
+    setAskUser(null)
+  }, [wsSend])
 
   // --- Paste handler (for images) ---
   const handlePaste = usePasteUpload(handleFileUploaded, loading)
+
+  // --- Search toggle callback (stable for SearchPanel) ---
+  const handleSearchToggle = useCallback(() => {
+    setSearchOpen(prev => !prev)
+  }, [])
 
   return (
     <div className={`flex flex-col h-screen bg-slate-900${dragActive ? ' drag-active' : ''}`}
@@ -1184,7 +915,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => { const next = !searchOpen; setSearchOpen(next); if (next) { setSearchQuery(''); setSearchResults([]); setTimeout(() => searchInputRef.current?.focus(), 0) } }}
+            onClick={handleSearchToggle}
             className="text-sm text-slate-400 hover:text-white transition-colors p-1"
             title="搜索 (Ctrl+K)"
           >
@@ -1207,58 +938,15 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       </header>
 
       {/* Search panel */}
-      {searchOpen && (
-        <div className="bg-slate-800/95 border-b border-slate-700 px-4 py-3 backdrop-blur-sm">
-          <div className="max-w-2xl mx-auto">
-            <div className="relative">
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Escape') setSearchOpen(false) }}
-                placeholder="搜索消息历史..."
-                autoFocus
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-              />
-              {searchLoading && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">搜索中...</span>}
-            </div>
-            {searchResults.length > 0 && (
-              <div className="mt-2 max-h-64 overflow-y-auto space-y-1">
-                {searchResults.map(hit => (
-                  <div
-                    key={hit.id}
-                    className="px-3 py-2 rounded-lg bg-slate-700/50 hover:bg-slate-700 cursor-pointer text-sm"
-                    onClick={() => {
-                      setSearchOpen(false)
-                      const el = messagesContainerRef.current?.querySelector(`[data-msg-id="hist-${hit.id}"]`)
-                      if (el) {
-                        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                        el.classList.add('search-highlight')
-                        setTimeout(() => el.classList.remove('search-highlight'), 2000)
-                      }
-                    }}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium text-slate-400">{hit.role === 'user' ? '👤' : '🤖'}</span>
-                      {hit.created_at && <span className="text-xs text-slate-500">{new Date(hit.created_at).toLocaleString('zh-CN')}</span>}
-                    </div>
-                    <div className="text-slate-300 text-xs line-clamp-2 whitespace-pre-wrap break-words">
-                      {hit.snippet}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {searchQuery && !searchLoading && searchResults.length === 0 && (
-              <div className="mt-2 text-center text-xs text-slate-500">未找到匹配结果</div>
-            )}
-          </div>
-        </div>
-      )}
+      <SearchPanel
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onToggle={handleSearchToggle}
+        messagesContainerRef={messagesContainerRef}
+      />
 
       {/* Disconnected / Reconnecting banner */}
-      {!connected && serverStopped.current && (
+      {!connected && serverStopped && (
         <div className="bg-red-900/40 border-b border-red-800/50 px-4 py-2 text-center text-sm text-red-400">
           ⛔ 服务已断开，请刷新页面重新连接
         </div>
@@ -1275,24 +963,14 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           onSwitchChat={(chatID: string) => {
             setCurrentChatID(chatID)
             setMessages([])
-            setProgress(null)
-            setLiveIterationsSync([])
-            prevIterationRef.current = -1
-            progressRef.current = null
-            reasoningRef.current = ''
-            streamingContentRef.current = ''
+            resetProgress()
             setLoading(false)
             // Reload history for the new chat after switch
             setTimeout(() => loadHistory(), 100)
           }}
           onNewChat={() => {
             setMessages([])
-            setProgress(null)
-            setLiveIterationsSync([])
-            prevIterationRef.current = -1
-            progressRef.current = null
-            reasoningRef.current = ''
-            streamingContentRef.current = ''
+            resetProgress()
             setLoading(false)
             setContextInfo(null)
           }}
@@ -1305,6 +983,8 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
         ref={messagesContainerRef}
         onScroll={handleContainerScroll}
         className="flex-1 overflow-y-auto px-4 py-4 space-y-4 chat-messages"
+        role="main"
+        aria-label="消息"
       >
         {messages.length === 0 && !loading && (
           <div className="text-center py-20">
@@ -1376,6 +1056,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
         <button
           onClick={() => { setAutoScroll(true); requestAnimationFrame(() => scrollToBottom('smooth')) }}
           className="scroll-to-bottom-btn"
+          aria-label="滚动到底部"
         >
           ↓ 新消息
         </button>
@@ -1466,108 +1147,22 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
 
       {/* AskUser interaction panel */}
       {askUser && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 askuser-backdrop" onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            // Cancel on backdrop click
-            if (wsRef.current?.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({
-                type: 'ask_user_response',
-                answers: askUser.answers,
-                cancelled: true,
-              }))
-            } else {
-              showToast('连接已断开，请刷新页面', 'error')
-            }
-            setAskUser(null)
-          }
-        }}>
-          <div className="bg-slate-800 border border-slate-600 rounded-2xl shadow-2xl max-w-lg w-full mx-4 askuser-panel">
-            <div className="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                <span className="text-lg">🤔</span>
-                Agent 需要你的输入
-              </h3>
-              <span className="text-xs text-slate-400">
-                {askUser.currentQ + 1} / {askUser.questions.length}
-              </span>
-            </div>
-            <div className="px-5 py-4">
-              <p className="text-sm text-slate-200 mb-4">{askUser.questions[askUser.currentQ].question}</p>
-              {askUser.questions[askUser.currentQ].options && askUser.questions[askUser.currentQ].options!.length > 0 ? (
-                <div className="space-y-2">
-                  {askUser.questions[askUser.currentQ].options!.map((opt, i) => (
-                    <button
-                      key={i}
-                      onClick={() => submitAnswer(opt)}
-                      className="w-full text-left px-4 py-2.5 rounded-lg border border-slate-600 text-sm text-slate-200 hover:bg-blue-500/10 hover:border-blue-500/50 transition-colors"
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    ref={askUserInputRef}
-                    autoFocus
-                    placeholder="输入你的回答..."
-                    className="flex-1 px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-sm text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        submitAnswer((e.target as HTMLInputElement).value)
-                      }
-                    }}
-                  />
-                  <button
-                    onClick={() => submitAnswer(askUserInputRef.current?.value || '')}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors"
-                  >
-                    提交
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="px-5 py-3 border-t border-slate-700 flex justify-between items-center">
-              {askUser.currentQ > 0 ? (
-                <button
-                  onClick={() => setAskUser({ ...askUser, currentQ: askUser.currentQ - 1 })}
-                  className="text-xs text-slate-400 hover:text-white transition-colors"
-                >
-                  ← 上一题
-                </button>
-              ) : (
-                <div />
-              )}
-              <button
-                onClick={() => {
-                  if (wsRef.current?.readyState === WebSocket.OPEN) {
-                    wsRef.current.send(JSON.stringify({
-                      type: 'ask_user_response',
-                      answers: askUser.answers,
-                      cancelled: true,
-                    }))
-                  } else {
-                    showToast('连接已断开，请刷新页面', 'error')
-                  }
-                  setAskUser(null)
-                }}
-                className="text-xs text-red-400 hover:text-red-300 transition-colors"
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        </div>
+        <AskUserPanel
+          askUser={askUser}
+          onSubmit={handleAskUserSubmit}
+          onCancel={handleAskUserCancel}
+        />
       )}
 
       {/* Settings panel */}
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onNicknameChange={(n) => setNickname(n)}
-        onPresetsChange={setPresets}
-      />
+      <Suspense fallback={null}>
+        <SettingsPanel
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onNicknameChange={(n) => setNickname(n)}
+          onPresetsChange={setPresets}
+        />
+      </Suspense>
     </div>
   )
 }

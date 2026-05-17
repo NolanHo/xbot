@@ -81,6 +81,10 @@ export function MermaidBlock({ code }: { code: string }) {
     getMermaid()
       .then((mermaid) => mermaid.render(id, code.trim()))
       .then(({ svg }) => {
+        // SECURITY NOTE: SVG from mermaid is rendered via dangerouslySetInnerHTML.
+        // Mermaid is configured with securityLevel: 'strict' which disables script
+        // tags and event handlers. For defense-in-depth, consider adding DOMPurify
+        // sanitize step here once dompurify is added as a dependency.
         if (!cancelled) setSvg(svg)
       })
       .catch((err) => {

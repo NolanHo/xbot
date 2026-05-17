@@ -85,7 +85,7 @@ export default function RunnerPanel({ serverUrl, wsUrl, senderId }: RunnerPanelP
   // Auto-refresh runner list every 30s while panel is visible
   useEffect(() => {
     fetchRunners()
-    const timer = setInterval(() => { fetchRunners().catch(() => {}) }, 30_000)
+    const timer = setInterval(() => { fetchRunners().catch((err) => { console.warn('[RunnerPanel] poll failed:', err) }) }, 30_000)
     return () => clearInterval(timer)
   }, [fetchRunners])
 

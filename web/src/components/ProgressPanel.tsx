@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { formatElapsed } from '../utils'
 
 interface WsToolProgress {
   name: string
@@ -52,10 +53,6 @@ interface ProgressPanelProps {
   loading: boolean
 }
 
-function formatElapsed(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(1)}s`
-}
 
 // --- SubAgent Tree Component ---
 

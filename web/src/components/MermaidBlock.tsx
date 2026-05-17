@@ -1,8 +1,14 @@
 import { useEffect, useRef, useId, useState } from 'react'
+import DOMPurify from 'dompurify'
 
 let mermaidModule: typeof import('mermaid').default | null = null
 let mermaidLoadPromise: Promise<typeof import('mermaid').default> | null = null
 let lastMermaidTheme: string | null = null
+
+const PURIFY_CONFIG = {
+  USE_PROFILES: { svg: true },
+  ADD_TAGS: ['foreignObject'],
+}
 
 async function getMermaid(): Promise<typeof import('mermaid').default> {
   if (!mermaidLoadPromise) {
@@ -81,11 +87,9 @@ export function MermaidBlock({ code }: { code: string }) {
     getMermaid()
       .then((mermaid) => mermaid.render(id, code.trim()))
       .then(({ svg }) => {
-        // SECURITY NOTE: SVG from mermaid is rendered via dangerouslySetInnerHTML.
-        // Mermaid is configured with securityLevel: 'strict' which disables script
-        // tags and event handlers. For defense-in-depth, consider adding DOMPurify
-        // sanitize step here once dompurify is added as a dependency.
-        if (!cancelled) setSvg(svg)
+        // SVG from mermaid is sanitized via DOMPurify with SVG profile enabled,
+        // providing defense-in-depth beyond mermaid's securityLevel: 'strict'.
+        if (!cancelled) setSvg(DOMPurify.sanitize(svg, PURIFY_CONFIG) as string)
       })
       .catch((err) => {
         if (!cancelled) {

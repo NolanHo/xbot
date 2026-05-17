@@ -43,6 +43,8 @@ interface AssistantTurnProps {
   onScrollToMessage?: (id: string) => void
   /** Streaming content length for progress display */
   streamingLength?: number
+  /** Double-click to reply */
+  onDoubleClickReply?: () => void
 }
 
 
@@ -104,7 +106,7 @@ function isThinkingContent(content: string): boolean {
   return false
 }
 
-export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress, onDelete, onRegenerate, onReply, onScrollToMessage, streamingLength }: AssistantTurnProps) {
+export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress, onDelete, onRegenerate, onReply, onScrollToMessage, streamingLength, onDoubleClickReply }: AssistantTurnProps) {
   const [copied, setCopied] = useState(false)
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
   const codeBlockProps = useMemo(() => getCodeBlockProps((src, alt) => setLightbox({ src, alt })), [])
@@ -153,7 +155,7 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
 
   return (
     <div className="flex justify-start">
-      <div className="assistant-turn-container group relative" data-testid="assistant-turn">
+      <div className="assistant-turn-container group relative" data-testid="assistant-turn" onDoubleClick={onDoubleClickReply}>
         {/* Message actions — visible on hover */}
         {textMsgs.length > 0 && !loading && (
           <MessageActions

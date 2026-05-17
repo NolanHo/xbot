@@ -23,6 +23,8 @@ import ProgressPanel from './components/ProgressPanel'
 import AssistantTurn from './components/AssistantTurn'
 import ChatSidebar from './components/ChatSidebar'
 import TiptapEditor from './components/TiptapEditor'
+import SwipeableMessage from './components/SwipeableMessage'
+import ContextMenu, { type ContextMenuItem } from './components/ContextMenu'
 import AskUserPanel from './components/AskUserPanel'
 import FileUpload, { uploadFile, usePasteUpload, type PendingFile } from './components/FileUpload'
 
@@ -220,6 +222,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const [contextInfo, setContextInfo] = useState<{ prompt_tokens: number; max_tokens: number; usage_pct: number; source: string } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null)
 
   // Unified toast via context
   const { showToast } = useToast()
@@ -726,6 +729,12 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     },
     {
       key: 'Escape',
+      enabled: contextMenu !== null,
+      handler: () => setContextMenu(null),
+      description: 'Close context menu',
+    },
+    {
+      key: 'Escape',
       enabled: searchOpen,
       handler: () => setSearchOpen(false),
       description: 'Close search panel',
@@ -1008,44 +1017,77 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                   }}
                 >
                   {turn.type === 'user' ? (
-                    <div className="flex justify-end mb-4 group relative" data-msg-id={turn.message.id}>
-                      <div className="max-w-[80%]">
-                        {turn.message.replyTo && (
-                          <div className="flex justify-end mb-1">
-                            <div className="max-w-full">
-                              <ReplyPreview
-                                replyTo={turn.message.replyTo}
-                                onClick={() => handleScrollToMessage(turn.message.replyTo!.id)}
-                              />
+                    <SwipeableMessage
+                      onSwipeLeft={() => handleDeleteMessage(turn.message.id)}
+                      onSwipeRight={() => handleReplyToMessage(turn.message.id, turn.message.content, 'user')}
+                      className="flex justify-end mb-4"
+                    >
+                      <div className="group relative" data-msg-id={turn.message.id}>
+                        <div className="max-w-[80%] ml-auto">
+                          {turn.message.replyTo && (
+                            <div className="flex justify-end mb-1">
+                              <div className="max-w-full">
+                                <ReplyPreview
+                                  replyTo={turn.message.replyTo}
+                                  onClick={() => handleScrollToMessage(turn.message.replyTo!.id)}
+                                />
+                              </div>
                             </div>
-                          </div>
-                        )}
-                        <div className="rounded-xl px-4 py-3 bg-blue-600 text-white markdown-body text-sm relative">
-                          <UserMessageContent content={turn.message.content} onPreview={(url) => setPreviewImage(url)} />
-                          {turn.message.ts && (
-                           <div className="text-xs mt-1 text-right text-blue-200/50 flex items-center justify-end gap-1">
-                             <span>{formatRelativeTime(turn.message.ts * 1000)}</span>
-                             {turn.message.status === 'sending' && <span className="animate-pulse">⏳</span>}
-                             {turn.message.status === 'failed' && <span className="text-red-300">❌ {t('sendFailed')}</span>}
-                             {turn.message.edited && <span className="italic">{t('edited')}</span>}
-                           </div>
                           )}
-                          {/* User message actions — reply only */}
-                          <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => handleReplyToMessage(turn.message.id, turn.message.content, 'user')}
-                              className="px-2 py-1 rounded text-xs bg-blue-500/60 hover:bg-blue-400/80 text-blue-100 hover:text-white backdrop-blur-sm"
-                              title={t('replyMessage')}
-                              data-testid="user-reply-btn"
-                            >
-                              ↩️
-                            </button>
+                          <div className="rounded-xl px-4 py-3 bg-blue-600 text-white markdown-body text-sm relative"
+                               onContextMenu={(e) => {
+                                 e.preventDefault()
+                                 setContextMenu({
+                                   x: e.clientX,
+                                   y: e.clientY,
+                                   items: [
+                                     { label: t('replyMessage'), icon: '↩️', onClick: () => handleReplyToMessage(turn.message.id, turn.message.content, 'user') },
+                                     { label: t('deleteMessage'), icon: '🗑️', onClick: () => handleDeleteMessage(turn.message.id), danger: true },
+                                   ],
+                                 })
+                               }}
+                          >
+                            <UserMessageContent content={turn.message.content} onPreview={(url) => setPreviewImage(url)} />
+                            {turn.message.ts && (
+                             <div className="text-xs mt-1 text-right text-blue-200/50 flex items-center justify-end gap-1">
+                               <span>{formatRelativeTime(turn.message.ts * 1000)}</span>
+                               {turn.message.status === 'sending' && <span className="animate-pulse">⏳</span>}
+                               {turn.message.status === 'failed' && <span className="text-red-300">❌ {t('sendFailed')}</span>}
+                               {turn.message.edited && <span className="italic">{t('edited')}</span>}
+                             </div>
+                            )}
+                            {/* User message actions — reply only */}
+                            <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => handleReplyToMessage(turn.message.id, turn.message.content, 'user')}
+                                className="px-2 py-1 rounded text-xs bg-blue-500/60 hover:bg-blue-400/80 text-blue-100 hover:text-white backdrop-blur-sm"
+                                title={t('replyMessage')}
+                                data-testid="user-reply-btn"
+                              >
+                                ↩️
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </SwipeableMessage>
                   ) : (
-                    <div className="mb-4" data-msg-id={turn.messages[0].id}>
+                    <div className="mb-4" data-msg-id={turn.messages[0].id}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        const last = turn.messages[turn.messages.length - 1]
+                        setContextMenu({
+                          x: e.clientX,
+                          y: e.clientY,
+                          items: [
+                            { label: t('replyMessage'), icon: '↩️', onClick: () => handleReplyToMessage(last.id, last.content, 'assistant') },
+                            { label: t('regenerate'), icon: '🔄', onClick: () => handleRegenerate(turn.messages[0].id) },
+                            { label: t('copyContent'), icon: '📋', onClick: () => { navigator.clipboard.writeText(turn.messages.map(m => m.content).join('\n\n')) } },
+                            { label: t('deleteMessage'), icon: '🗑️', onClick: () => handleDeleteMessage(turn.messages[0].id), danger: true },
+                          ],
+                        })
+                      }}
+                    >
                       <AssistantTurn
                         messages={turn.messages}
                         progress={isLatestTurn && isActive ? progress : null}
@@ -1055,6 +1097,10 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                         onDelete={() => handleDeleteMessage(turn.messages[0].id)}
                         onRegenerate={() => handleRegenerate(turn.messages[0].id)}
                         onReply={() => {
+                          const last = turn.messages[turn.messages.length - 1]
+                          handleReplyToMessage(last.id, last.content, 'assistant')
+                        }}
+                        onDoubleClickReply={() => {
                           const last = turn.messages[turn.messages.length - 1]
                           handleReplyToMessage(last.id, last.content, 'assistant')
                         }}
@@ -1191,6 +1237,14 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
 	      </Suspense>
 
       {/* Image preview lightbox */}
+      {/* Context menu for right-click / long-press */}
+      <ContextMenu
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
+        items={contextMenu?.items ?? []}
+        visible={contextMenu !== null}
+        onClose={() => setContextMenu(null)}
+      />
       {previewImage && (
         <div
           className="image-preview-overlay"

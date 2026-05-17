@@ -28,6 +28,8 @@ export interface UseWebSocketReturn {
   lastSeqRef: React.MutableRefObject<number>
 }
 
+const MAX_RECONNECT_ATTEMPTS = 20
+
 export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const { onMessage, initialSeq, lastSeqRef: externalLastSeqRef } = options
 
@@ -38,6 +40,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null)
   const intentionalCloseRef = useRef(false)
   const reconnectDelayRef = useRef(1000)
+  const reconnectAttemptsRef = useRef(0)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const internalLastSeqRef = useRef<number>(initialSeq ?? 0)
   const lastSeqRef = externalLastSeqRef ?? internalLastSeqRef
@@ -58,6 +61,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       setServerStopped(false)
       intentionalCloseRef.current = false
       reconnectDelayRef.current = 1000
+      reconnectAttemptsRef.current = 0
       // Send sync handshake with last_seq from history API.
       ws.send(JSON.stringify({ type: 'sync', last_seq: lastSeqRef.current }))
       if (reconnectTimerRef.current) {
@@ -83,6 +87,20 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         return
       }
 
+      // Service restart (1012) — should reconnect with fresh delay
+      if (e.code === 1012) {
+        reconnectDelayRef.current = 1000
+        reconnectAttemptsRef.current = 0
+      }
+
+      // Check max reconnect attempts
+      if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        console.warn('[WS] max reconnect attempts reached, giving up')
+        setServerStopped(true)
+        setReconnecting(false)
+        return
+      }
+
       setReconnecting(true)
 
       // Exponential backoff reconnect with jitter
@@ -91,6 +109,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
       }
       const jitter = Math.random() * 0.5 + 0.5 // 0.5x - 1.0x random factor
       const delay = Math.round(reconnectDelayRef.current * jitter)
+      reconnectAttemptsRef.current++
       reconnectTimerRef.current = setTimeout(() => {
         connect()
       }, delay)

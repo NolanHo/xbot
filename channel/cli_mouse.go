@@ -156,7 +156,7 @@ func (m *cliModel) handleMouseClick(msg tea.MouseClickMsg) (bool, tea.Model, tea
 		return m.clickSidebarDeleteSession(zone.Index)
 	case "sidebarNewSession":
 		return m.clickSidebarNewSession()
-		case "sidebarBgTask":
+	case "sidebarBgTask":
 		return m.clickSidebarBgTask(zone.Index)
 	case "bgtaskItem":
 		return m.clickBgTasksItem(zone.Index)
@@ -800,7 +800,7 @@ func (m *cliModel) trackMainLayoutZones(zb *mouseZoneBuilder) {
 					zb.addX(relY+borderOffset, sbXStart+sidebarContentOffset+sidebarDeleteXStart[relY], sbXStart+sidebarContentOffset+sidebarDeleteXEnd[relY], "sidebarDeleteSession", sessionIdx)
 				}
 			}
-		if sidebarNewSessionY >= 0 {
+			if sidebarNewSessionY >= 0 {
 				zb.addX(sidebarNewSessionY+borderOffset, sbXStart, sbXEnd, "sidebarNewSession", 0)
 			}
 			// Bg task zones in sidebar's Active section
@@ -1446,8 +1446,8 @@ func (m *cliModel) clickSidebarDeleteSession(index int) (bool, tea.Model, tea.Cm
 		m.showTempStatus("Cannot delete the active session")
 		return true, m, nil
 	}
-cmd := m.deleteLocalSession(entry)
- return true, m, cmd
+	cmd := m.deleteLocalSession(entry)
+	return true, m, cmd
 }
 
 // clickSidebarBgTask handles clicking a background task item in the sidebar.

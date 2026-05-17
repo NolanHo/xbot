@@ -671,16 +671,16 @@ func (m *cliModel) updateBgTasksPanel(msg tea.KeyPressMsg) (bool, tea.Model, tea
 	totalItems := len(m.panelBgTasks)
 
 	// Log viewing sub-mode
-		if m.panelBgViewing {
+	if m.panelBgViewing {
 		switch {
 		case msg.Code == tea.KeyEsc || msg.String() == "ctrl+c":
 			// If navigator stack has a parent (e.g. sidebar direct-click),
 			// pop back to it (which closes the panel to main view).
 			// Otherwise, just exit log view back to task list.
 			if !m.popPanel() {
-			m.panelBgViewing = false
-			m.panelScrollY = 0
-			m.panelBgLogLines = nil
+				m.panelBgViewing = false
+				m.panelScrollY = 0
+				m.panelBgLogLines = nil
 			}
 			return true, m, nil
 		case msg.Code == tea.KeyUp:
@@ -690,18 +690,18 @@ func (m *cliModel) updateBgTasksPanel(msg tea.KeyPressMsg) (bool, tea.Model, tea
 			}
 			m.panelBgLogFollow = false
 			return true, m, nil
-			case msg.Code == tea.KeyDown:
+		case msg.Code == tea.KeyDown:
 			m.panelScrollY += 5
 			m.panelBgLogFollow = false
 			return true, m, nil
-			case msg.Code == tea.KeyPgUp:
+		case msg.Code == tea.KeyPgUp:
 			m.panelScrollY -= m.panelVisibleHeight()
 			if m.panelScrollY < 0 {
 				m.panelScrollY = 0
 			}
 			m.panelBgLogFollow = false
 			return true, m, nil
-			default:
+		default:
 			// PgDn: bubbletea doesn't have a constant, match by string
 			if msg.String() == "pgdown" {
 				m.panelScrollY += m.panelVisibleHeight()

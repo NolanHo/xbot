@@ -2161,9 +2161,21 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*ch
 	}
 
 	out := Run(ctx, cfg)
+
+	// Drain remaining bg notifications BEFORE clearing bgRunActive.
+	// This ensures that while we're processing these notifications, bgNotifyLoop
+	// still sees bgRunActive==1 and buffers any new arrivals (which we'll drain
+	// again below). Notifications are processed synchronously so they're injected
+	// into bus.Inbound before processMessage returns, allowing chatProcessLoop to
+	// pick them up immediately.
+	a.drainRemainingBgNotifications()
+
 	atomic.StoreInt32(&a.bgRunActive, 0)
 
-	// Drain any bg notifications that arrived after Run's last iteration.
+	// Drain again: any notifications that arrived between the first drain
+	// and the atomic store were buffered in bgRunPending. Process them now
+	// via the idle path (bgRunActive is now 0, so bgNotifyLoop handles new
+	// arrivals directly).
 	a.drainRemainingBgNotifications()
 
 	if out.Error != nil {

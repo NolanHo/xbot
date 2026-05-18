@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"xbot/config"
+
 	"xbot/agent/hooks"
 	"xbot/bus"
 	"xbot/channel"
@@ -2289,29 +2291,19 @@ func (a *Agent) buildPrompt(ctx context.Context, msg bus.InboundMessage, tenantS
 	if detectDir == "" {
 		detectDir = workspaceRoot
 	}
-
-	// Read auto_worktree from user_settings DB dynamically so runtime
-	// changes take effect without restart. Fallback to Agent startup value.
-	autoWorktree := a.autoWorktree
-	if a.settingsSvc != nil {
-		if vals, err := a.settingsSvc.GetSettings(msg.Channel, msg.SenderID); err == nil {
-			if v, ok := vals["auto_worktree"]; ok {
-				autoWorktree = strings.EqualFold(v, "true") || v == "1"
-			}
-		}
-	}
-
-	if autoWorktree {
-		// Auto worktree: create a worktree for this session on first visit only.
-		// Once registered in the WorktreeRegistry, we never touch the CWD again —
-		// the agent is free to cd wherever it wants within the worktree.
+	// Peer awareness / auto worktree: register this session for collaboration.
+	// When auto_worktree is enabled, every session gets its own git worktree (no primary).
+	// When disabled, RegisterPeer provides lightweight in-memory session tracking.
+	// Uses config.json (master authority) — changes take effect on restart.
+	// AutoDetectAndInit already skips re-creation if the session is already registered.
+	cfgPath := filepath.Join(a.xbotHome, "config.json")
+	if cfg := config.LoadFromFile(cfgPath); cfg != nil && cfg.Agent.Experimental.AutoWorktree {
 		if tools.GlobalWorktreeRegistry.GetBySession(sessKey) == nil {
 			if entry := tools.AutoDetectAndInit(detectDir, sessKey); entry != nil && entry.WorktreeDir != "" {
 				tenantSession.SetCurrentDir(entry.WorktreeDir)
 			}
 		}
 	} else {
-		// Peer awareness without file isolation: register session in-memory only.
 		tools.GlobalWorktreeRegistry.RegisterPeer(sessKey, detectDir)
 	}
 

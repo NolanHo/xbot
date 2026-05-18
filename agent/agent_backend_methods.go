@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"xbot/config"
 	"xbot/protocol"
@@ -20,12 +21,14 @@ func (a *Agent) SetCWD(ch, chatID, dir string) error {
 	if err != nil {
 		return err
 	}
-	// Set CWD — but don't overwrite an already-persisted CWD.
-	// The CLI syncs its terminal CWD on startup, which should only take effect
-	// when the session has no CWD yet (fresh session). A persisted CWD from a
-	// previous cd command or worktree path must survive restarts.
+	// Set CWD — but don't overwrite an existing worktree path.
+	// Worktree CWD is set by AutoDetectAndInit in buildPrompt and persists
+	// across restarts. CLI callers sync their terminal CWD on startup, which
+	// should only take effect when the session has no CWD yet or the existing
+	// CWD is not a worktree path (i.e. the user changed their terminal dir
+	// between invocations of the same non-worktree session).
 	existingCWD := sess.GetCurrentDir()
-	if existingCWD == "" {
+	if existingCWD == "" || !strings.Contains(existingCWD, ".xbot-worktrees") {
 		sess.SetCurrentDir(dir)
 	}
 	// Always refresh plugin contexts so script plugins see the correct workDir

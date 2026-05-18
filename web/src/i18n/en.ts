@@ -479,6 +479,87 @@ const en: Record<I18nKey, string> = {
   jumpToBookmark: 'Jump',
   removeBookmark: 'Remove Bookmark',
 
+  // ─── Reactions (Round 14) ───
+  reactions: 'Reactions',
+  addReaction: 'Add reaction',
+  reactionLike: '👍 Like',
+  reactionLove: '❤️ Love',
+  reactionLaugh: '😂 Laugh',
+  reactionWow: '😮 Wow',
+  reactionSad: '😢 Sad',
+  reactionAngry: '😠 Angry',
+  reactionCount: '{count}',
+  reactionTooltip: '{emoji} {count} people',
+
+  // ─── Threads (Round 14) ───
+  thread: 'Thread',
+  threads: 'Threads',
+  newThread: 'New thread',
+  replyInThread: 'Reply in thread',
+  threadReplies: '{count} replies',
+  threadParticipants: '{count} participants',
+  closeThread: 'Close thread',
+  threadEmpty: 'No replies in this thread',
+  threadLastReply: 'Last reply',
+  threadCreated: 'Thread created',
+  deleteThread: 'Delete thread',
+
+  // ─── Notifications (Round 14) ───
+  notificationCenter: 'Notification Center',
+  notificationSettings: 'Notification Settings',
+  markAllRead: 'Mark all read',
+  noNotifications: 'No notifications',
+  notificationSound: 'Notification Sound',
+  notificationSoundOn: 'Sound on',
+  notificationSoundOff: 'Sound off',
+  notificationType: 'Notification Type',
+  notifyOnMention: 'On mention',
+  notifyOnReply: 'On reply',
+  notifyOnNewMessage: 'On new message',
+  notifyOnWsChange: 'Connection change',
+  notificationPreview: 'Notification Preview',
+  notificationPermissionRequired: 'Notification permission required',
+  clearNotifications: 'Clear notifications',
+  unreadCount: '{count} unread',
+
+  // ─── Snapshot (Round 14) ───
+  snapshot: 'Snapshot',
+  takeSnapshot: 'Screenshot',
+  snapshotCopied: 'Snapshot copied to clipboard',
+  snapshotFailed: 'Screenshot failed',
+  snapshotTitle: 'Message Snapshot',
+  snapshotTimestamp: 'Snapshot time',
+
+  // ─── Search Enhancements (Round 14) ───
+  searchFilter: 'Filter',
+  searchFilterAll: 'All',
+  searchFilterUser: 'User messages',
+  searchFilterAssistant: 'Assistant messages',
+  searchFilterDate: 'Date range',
+  searchFilterToday: 'Today',
+  searchFilterWeek: 'This week',
+  searchFilterMonth: 'This month',
+  searchFilterCustom: 'Custom',
+  searchHistoryR14: 'Search History',
+  clearSearchHistory: 'Clear search history',
+  searchContext: 'Context',
+  showContext: 'Show context',
+  hideContext: 'Hide context',
+  contextLines: '{count} lines context',
+
+  // ─── Sound Feedback (Round 14) ───
+  soundFeedback: 'Sound Feedback',
+  soundOn: '🔊 Sound on',
+  soundOff: '🔇 Sound off',
+  soundVolume: 'Volume',
+  soundType: 'Sound Type',
+  soundSent: 'Sent sound',
+  soundReceive: 'Receive sound',
+  soundNotify: 'Notify sound',
+  soundBeep: 'Beep',
+  soundChime: 'Chime',
+  soundPop: 'Pop',
+
 }
 
 export default en

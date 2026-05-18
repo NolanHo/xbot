@@ -477,6 +477,87 @@ const zhCN = {
   jumpToBookmark: '跳转',
   removeBookmark: '取消收藏',
 
+  // ─── Reactions (Round 14) ───
+  reactions: '反应',
+  addReaction: '添加反应',
+  reactionLike: '👍 赞',
+  reactionLove: '❤️ 爱心',
+  reactionLaugh: '😂 笑',
+  reactionWow: '😮 惊讶',
+  reactionSad: '😢 难过',
+  reactionAngry: '😠 生气',
+  reactionCount: '{count}',
+  reactionTooltip: '{emoji} {count} 人',
+
+  // ─── Threads (Round 14) ───
+  thread: '话题',
+  threads: '话题',
+  newThread: '新话题',
+  replyInThread: '在话题中回复',
+  threadReplies: '{count} 条回复',
+  threadParticipants: '{count} 位参与者',
+  closeThread: '关闭话题',
+  threadEmpty: '话题暂无回复',
+  threadLastReply: '最后回复',
+  threadCreated: '话题已创建',
+  deleteThread: '删除话题',
+
+  // ─── Notifications (Round 14) ───
+  notificationCenter: '通知中心',
+  notificationSettings: '通知设置',
+  markAllRead: '全部已读',
+  noNotifications: '暂无通知',
+  notificationSound: '通知音效',
+  notificationSoundOn: '音效已开启',
+  notificationSoundOff: '音效已关闭',
+  notificationType: '通知类型',
+  notifyOnMention: '被提及',
+  notifyOnReply: '被回复',
+  notifyOnNewMessage: '新消息',
+  notifyOnWsChange: '连接状态变化',
+  notificationPreview: '通知预览',
+  notificationPermissionRequired: '需要开启通知权限',
+  clearNotifications: '清空通知',
+  unreadCount: '{count} 条未读',
+
+  // ─── Snapshot (Round 14) ───
+  snapshot: '快照',
+  takeSnapshot: '截图',
+  snapshotCopied: '快照已复制到剪贴板',
+  snapshotFailed: '截图失败',
+  snapshotTitle: '消息快照',
+  snapshotTimestamp: '截图时间',
+
+  // ─── Search Enhancements (Round 14) ───
+  searchFilter: '过滤器',
+  searchFilterAll: '全部',
+  searchFilterUser: '用户消息',
+  searchFilterAssistant: '助手消息',
+  searchFilterDate: '日期范围',
+  searchFilterToday: '今天',
+  searchFilterWeek: '本周',
+  searchFilterMonth: '本月',
+  searchFilterCustom: '自定义',
+  searchHistoryR14: '搜索记录',
+  clearSearchHistory: '清除搜索历史',
+  searchContext: '上下文',
+  showContext: '显示上下文',
+  hideContext: '隐藏上下文',
+  contextLines: '{count} 行上下文',
+
+  // ─── Sound Feedback (Round 14) ───
+  soundFeedback: '声音反馈',
+  soundOn: '🔊 声音已开启',
+  soundOff: '🔇 声音已关闭',
+  soundVolume: '音量',
+  soundType: '音效类型',
+  soundSent: '发送音效',
+  soundReceive: '接收音效',
+  soundNotify: '通知音效',
+  soundBeep: '提示音',
+  soundChime: '铃声',
+  soundPop: '弹出音',
+
 } as const
 
 export type I18nKey = keyof typeof zhCN

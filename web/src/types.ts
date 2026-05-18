@@ -34,6 +34,52 @@ export interface Message {
   status?: 'sending' | 'sent' | 'failed'
   /** Whether this message was edited after initial send */
   edited?: boolean
+  /** Reactions on this message (frontend-only state) */
+  reactions?: Reaction[]
+  /** Thread replies (frontend-only state) */
+  threadMessages?: ThreadMessage[]
+  /** Thread count for quick display */
+  threadCount?: number
+}
+
+/** Reaction on a message */
+export interface Reaction {
+  id: string
+  emoji: string
+  /** User IDs who reacted */
+  users: string[]
+  /** Current user reacted */
+  byMe: boolean
+}
+
+/** Message in a thread */
+export interface ThreadMessage {
+  id: string
+  parentId: string
+  type: 'user' | 'assistant'
+  content: string
+  ts: number
+  author?: string
+}
+
+/** Notification item for notification center */
+export interface NotificationItem {
+  id: string
+  type: 'message' | 'reply' | 'mention' | 'ws_connected' | 'ws_disconnected' | 'ws_reconnecting' | 'system'
+  title: string
+  body: string
+  ts: number
+  read: boolean
+  messageId?: string
+}
+
+/** Sound feedback configuration */
+export interface SoundConfig {
+  enabled: boolean
+  volume: number  // 0-1
+  sentSound: 'beep' | 'chime' | 'pop' | 'none'
+  receiveSound: 'beep' | 'chime' | 'pop' | 'none'
+  notifySound: 'beep' | 'chime' | 'pop' | 'none'
 }
 
 /** Turn-based message grouping (Codex style) */

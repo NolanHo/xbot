@@ -6,10 +6,11 @@ interface MessageActionsProps {
   onDelete?: () => void
   onRegenerate?: () => void
   onReply?: () => void
+  onSnapshot?: () => void
   copied: boolean
 }
 
-export default function MessageActions({ onCopy, onDelete, onRegenerate, onReply, copied }: MessageActionsProps) {
+export default function MessageActions({ onCopy, onDelete, onRegenerate, onReply, onSnapshot, copied }: MessageActionsProps) {
   const { t } = useTranslation()
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -26,7 +27,7 @@ export default function MessageActions({ onCopy, onDelete, onRegenerate, onReply
       </button>
 
       {/* More actions menu */}
-      {(onDelete || onRegenerate || onReply) && (
+      {(onDelete || onRegenerate || onReply || onSnapshot) && (
         <div className="relative">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
@@ -42,7 +43,7 @@ export default function MessageActions({ onCopy, onDelete, onRegenerate, onReply
             <>
               <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
               <div className="absolute right-0 top-full mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-xl z-50 py-1 min-w-[140px]" role="menu" onKeyDown={(e) => { if (e.key === 'Escape') setMenuOpen(false) }}>
-                {onReply && (
+                 {onReply && (
                   <button
                     onClick={() => { onReply(); setMenuOpen(false) }}
                     className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2"
@@ -50,6 +51,16 @@ export default function MessageActions({ onCopy, onDelete, onRegenerate, onReply
                     data-testid="reply-btn"
                   >
                     ↩️ {t('replyMessage')}
+                  </button>
+                )}
+                {onSnapshot && (
+                  <button
+                    onClick={() => { onSnapshot(); setMenuOpen(false) }}
+                    className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2"
+                    role="menuitem"
+                    data-testid="snapshot-btn"
+                  >
+                    📸 {t('takeSnapshot')}
                   </button>
                 )}
                 {onRegenerate && (

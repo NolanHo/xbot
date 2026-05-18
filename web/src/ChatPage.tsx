@@ -11,7 +11,7 @@ import { useToast } from './contexts/ToastContext'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useNetworkStatus } from './hooks/useNetworkStatus'
 import type { TiptapEditorHandle } from './components/TiptapEditor'
-import type { PresetCommand, Message, Turn } from './types'
+import type { PresetCommand, Message, Turn, ThreadMessage } from './types'
 import { useTabManager } from './hooks/useTabManager'
 import { useNotification } from './hooks/useNotification'
 import ReplyPreview from './components/ReplyPreview'
@@ -32,6 +32,10 @@ import { AudioPlayer, VideoPlayer } from './components/MediaPlayer'
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'))
 const CommandPalette = lazy(() => import('./components/CommandPalette'))
 import OnboardingTip from './components/OnboardingTip'
+import ThreadPanel from './components/ThreadPanel'
+import NotificationPanel from './components/NotificationPanel'
+import { useSoundFeedback } from './hooks/useSoundFeedback'
+import { useNotificationContext } from './contexts/NotificationContext'
 
 const codeBlockComponents = getCodeBlockProps()
 
@@ -244,9 +248,39 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null)
+  const [threadOpen, setThreadOpen] = useState(false)
+  const [threadParentMsg, setThreadParentMsg] = useState<Message | null>(null)
+  const [threadMessages, setThreadMessages] = useState<Record<string, ThreadMessage[]>>({})
+  const [notificationOpen, setNotificationOpen] = useState(false)
+  const { play: playSound } = useSoundFeedback()
+  const { addNotification } = useNotificationContext()
 
   // Unified toast via context
   const { showToast } = useToast()
+
+
+
+  // --- Thread handlers ---
+  const handleOpenThread = useCallback((msg: Message) => {
+    setThreadParentMsg(msg)
+    setThreadOpen(true)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleSendThreadReply = useCallback((parentId: string, content: string) => {
+    const newMsg: ThreadMessage = {
+      id: `thread-${Date.now()}`,
+      parentId,
+      type: 'user',
+      content,
+      ts: Date.now() / 1000,
+      author: 'You',
+    }
+    setThreadMessages(prev => ({
+      ...prev,
+      [parentId]: [...(prev[parentId] || []), newMsg],
+    }))
+  }, [])
 
   // --- Export callbacks ---
   const handleExportMarkdown = useCallback(() => {
@@ -367,7 +401,22 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const prevMessageCountRef = useRef(0)
   useEffect(() => {
     const currentCount = messages.length
-    if (currentCount <= prevMessageCountRef.current) {
+    if (currentCount > prevMessageCountRef.current && prevMessageCountRef.current > 0) {
+      const lastMsg = messages[messages.length - 1]
+      if (lastMsg?.type === 'assistant') {
+        playSound('receive')
+        addNotification({ type: 'message', title: 'New Reply', body: lastMsg.content.slice(0, 100), messageId: lastMsg.id })
+      }
+    }
+    prevMessageCountRef.current = currentCount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length, playSound, addNotification])
+
+  // --- Desktop notification on new assistant message when backgrounded (original logic) ---
+  const prevMsgCountRef2 = useRef(0)
+  useEffect(() => {
+    const currentCount = messages.length
+    if (currentCount <= prevMsgCountRef2.current) {
       prevMessageCountRef.current = currentCount
       return
     }
@@ -1067,6 +1116,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                                    y: e.clientY,
                                    items: [
                                      { label: t('replyMessage'), icon: '↩️', onClick: () => handleReplyToMessage(turn.message.id, turn.message.content, 'user') },
+                                     { label: t('replyInThread'), icon: '💬', onClick: () => handleOpenThread(turn.message) },
                                      { label: t('deleteMessage'), icon: '🗑️', onClick: () => handleDeleteMessage(turn.message.id), danger: true },
                                    ],
                                  })
@@ -1106,6 +1156,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                           y: e.clientY,
                           items: [
                             { label: t('replyMessage'), icon: '↩️', onClick: () => handleReplyToMessage(last.id, last.content, 'assistant') },
+                            { label: t('replyInThread'), icon: '💬', onClick: () => handleOpenThread(last) },
                             { label: t('regenerate'), icon: '🔄', onClick: () => handleRegenerate(turn.messages[0].id) },
                             { label: t('copyContent'), icon: '📋', onClick: () => { navigator.clipboard.writeText(turn.messages.map(m => m.content).join('\n\n')) } },
                             { label: t('deleteMessage'), icon: '🗑️', onClick: () => handleDeleteMessage(turn.messages[0].id), danger: true },
@@ -1131,6 +1182,26 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                         }}
                         onScrollToMessage={handleScrollToMessage}
                         streamingLength={isLatestTurn && isActive ? streamingContentRef.current.length : undefined}
+                        onToggleReaction={(emoji: string) => {
+                          const last = turn.messages[turn.messages.length - 1]
+                          if (!last) return
+                          const existing = last.reactions || []
+                          const reaction = existing.find(r => r.emoji === emoji)
+                          let updated: typeof existing
+                          if (reaction) {
+                            if (reaction.byMe) {
+                              const newUsers = reaction.users.filter(u => u !== 'me')
+                              updated = newUsers.length === 0
+                                ? existing.filter(r => r.emoji !== emoji)
+                                : existing.map(r => r.emoji === emoji ? { ...r, users: newUsers, byMe: false } : r)
+                            } else {
+                              updated = existing.map(r => r.emoji === emoji ? { ...r, users: [...r.users, 'me'], byMe: true } : r)
+                            }
+                          } else {
+                            updated = [...existing, { id: `r-${last.id}-${emoji}`, emoji, users: ['me'], byMe: true }]
+                          }
+                          setMessages(prev => prev.map(m => m.id === last.id ? { ...m, reactions: updated } : m))
+                        }}
                       />
                     </div>
                   )}
@@ -1291,6 +1362,21 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
         </div>
       )}
       <OnboardingTip />
+
+      {/* Thread panel */}
+      <ThreadPanel
+        open={threadOpen}
+        onClose={() => setThreadOpen(false)}
+        parentMessage={threadParentMsg}
+        threadMessages={threadParentMsg ? (threadMessages[threadParentMsg.id] || []) : []}
+        onSendReply={(content) => threadParentMsg && handleSendThreadReply(threadParentMsg.id, content)}
+      />
+
+      {/* Notification center panel */}
+      <NotificationPanel
+        open={notificationOpen}
+        onClose={() => setNotificationOpen(false)}
+      />
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { ShowToastFn, Theme, FontSize, Language, UserSettings } from './shared'
 import { lsGet, fetchSettings, saveSettings, FONT_SIZE_MAP, DEFAULT_SETTINGS } from './shared'
 import { useTranslation } from '../../i18n'
+import { useSoundFeedback } from '../../hooks/useSoundFeedback'
 
 interface AppearanceTabProps {
   showToast: ShowToastFn
@@ -17,6 +18,7 @@ export default function AppearanceTab({ showToast, onNicknameChange, onSavingCha
   const [language, setLanguage] = useState<Language>(() => lsGet('language', DEFAULT_SETTINGS.language))
   const [imageBrightness, setImageBrightness] = useState<number>(() => lsGet('image_brightness', DEFAULT_SETTINGS.image_brightness) ?? 1)
   const { t, setLocale } = useTranslation()
+  const { config: soundConfig, updateConfig: updateSoundConfig, toggleEnabled: toggleSoundEnabled } = useSoundFeedback()
 
   // Load settings from server on mount
   useEffect(() => {
@@ -157,6 +159,84 @@ export default function AppearanceTab({ showToast, onNicknameChange, onSavingCha
           <span className="text-xs text-slate-400 w-10 text-right">{imageBrightness.toFixed(1)}</span>
         </div>
         <p className="text-xs text-slate-500 mt-1">{t('imageBrightnessHint')}</p>
+      </div>
+
+      {/* Sound Feedback Settings */}
+      <div className="settings-item mt-4 pt-4 border-t border-slate-700/50">
+        <div className="flex items-center justify-between mb-2">
+          <label className="settings-label">{t('soundFeedback')}</label>
+          <button
+            className={`px-3 py-1 text-xs rounded-full transition-colors ${soundConfig.enabled ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-400'}`}
+            onClick={toggleSoundEnabled}
+            data-testid="sound-toggle"
+          >
+            {soundConfig.enabled ? t('soundOn') : t('soundOff')}
+          </button>
+        </div>
+
+        {soundConfig.enabled && (
+          <div className="space-y-3 mt-2">
+            {/* Volume */}
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-slate-400 w-16">{t('soundVolume')}</label>
+              <input
+                type="range"
+                min="0.1"
+                max="1"
+                step="0.1"
+                value={soundConfig.volume}
+                onChange={(e) => updateSoundConfig({ volume: Number(e.target.value) })}
+                className="flex-1 accent-indigo-500"
+              />
+              <span className="text-xs text-slate-400 w-8 text-right">{Math.round(soundConfig.volume * 100)}%</span>
+            </div>
+
+            {/* Sent sound */}
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-slate-400 w-16">{t('soundSent')}</label>
+              <select
+                className="settings-select text-xs flex-1"
+                value={soundConfig.sentSound}
+                onChange={(e) => updateSoundConfig({ sentSound: e.target.value as 'beep' | 'chime' | 'pop' | 'none' })}
+              >
+                <option value="beep">{t('soundBeep')}</option>
+                <option value="chime">{t('soundChime')}</option>
+                <option value="pop">{t('soundPop')}</option>
+                <option value="none">🔇 {t('mute')}</option>
+              </select>
+            </div>
+
+            {/* Receive sound */}
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-slate-400 w-16">{t('soundReceive')}</label>
+              <select
+                className="settings-select text-xs flex-1"
+                value={soundConfig.receiveSound}
+                onChange={(e) => updateSoundConfig({ receiveSound: e.target.value as 'beep' | 'chime' | 'pop' | 'none' })}
+              >
+                <option value="beep">{t('soundBeep')}</option>
+                <option value="chime">{t('soundChime')}</option>
+                <option value="pop">{t('soundPop')}</option>
+                <option value="none">🔇 {t('mute')}</option>
+              </select>
+            </div>
+
+            {/* Notify sound */}
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-slate-400 w-16">{t('soundNotify')}</label>
+              <select
+                className="settings-select text-xs flex-1"
+                value={soundConfig.notifySound}
+                onChange={(e) => updateSoundConfig({ notifySound: e.target.value as 'beep' | 'chime' | 'pop' | 'none' })}
+              >
+                <option value="beep">{t('soundBeep')}</option>
+                <option value="chime">{t('soundChime')}</option>
+                <option value="pop">{t('soundPop')}</option>
+                <option value="none">🔇 {t('mute')}</option>
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="settings-item mt-4 pt-4 border-t border-slate-700/50">

@@ -11,6 +11,7 @@ import Lightbox from './Lightbox'
 const remarkPluginsList = [remarkGfm, remarkMath]
 const rehypePluginsList = [rehypeKatex]
 import MessageActions from './MessageActions'
+import MessageReactions from './MessageReactions'
 import type { WsProgressPayload, IterationSnapshot } from './ProgressPanel'
 import { CompletedIteration, BouncingDots, SubAgentTree } from './ProgressPanel'
 import type { Message } from '../types'
@@ -45,6 +46,8 @@ interface AssistantTurnProps {
   streamingLength?: number
   /** Double-click to reply */
   onDoubleClickReply?: () => void
+  /** Toggle a reaction on this message */
+  onToggleReaction?: (emoji: string) => void
 }
 
 
@@ -106,7 +109,7 @@ function isThinkingContent(content: string): boolean {
   return false
 }
 
-export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress, onDelete, onRegenerate, onReply, onScrollToMessage, streamingLength, onDoubleClickReply }: AssistantTurnProps) {
+export default memo(function AssistantTurn({ messages, progress, liveIterations, loading, savedProgress, onDelete, onRegenerate, onReply, onScrollToMessage, streamingLength, onDoubleClickReply, onToggleReaction }: AssistantTurnProps) {
   const [copied, setCopied] = useState(false)
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
   const codeBlockProps = useMemo(() => getCodeBlockProps((src, alt) => setLightbox({ src, alt })), [])
@@ -164,6 +167,13 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
             onRegenerate={onRegenerate}
             onReply={onReply}
             copied={copied}
+          />
+        )}
+        {/* Reactions */}
+        {textMsgs.length > 0 && !loading && onToggleReaction && (
+          <MessageReactions
+            reactions={textMsgs[textMsgs.length - 1].reactions || []}
+            onToggle={onToggleReaction}
           />
         )}
         {/* Reply preview */}

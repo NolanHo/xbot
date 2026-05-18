@@ -13,8 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"xbot/config"
-
 	"xbot/agent/hooks"
 	"xbot/bus"
 	"xbot/channel"
@@ -2283,7 +2281,7 @@ func (a *Agent) buildPrompt(ctx context.Context, msg bus.InboundMessage, tenantS
 
 	// Auto worktree detection: if multiple sessions share the same git repo,
 	// automatically create an isolated worktree to prevent file conflicts.
-	// Gated behind experimental.auto_worktree config (default: false).
+	// Gated behind auto_worktree user setting (default: false).
 	sessKey := sessionKey(msg.Channel, msg.ChatID)
 	sbUID := sandboxUserID(msg)
 	workspaceRoot := a.workspaceRoot(sbUID)
@@ -2291,24 +2289,10 @@ func (a *Agent) buildPrompt(ctx context.Context, msg bus.InboundMessage, tenantS
 	if detectDir == "" {
 		detectDir = workspaceRoot
 	}
-	// Peer awareness / auto worktree: register this session for collaboration.
-	// When auto_worktree is enabled, every session gets its own git worktree (no primary).
-	// When disabled, RegisterPeer provides lightweight in-memory session tracking.
-	cfgPath := filepath.Join(a.xbotHome, "config.json")
-	if cfg := config.LoadFromFile(cfgPath); cfg != nil && cfg.Agent.Experimental.AutoWorktree {
-		if entry := tools.AutoDetectAndInit(detectDir, sessKey); entry != nil && entry.WorktreeDir != "" {
-			tenantSession.SetCurrentDir(entry.WorktreeDir)
-		}
-	} else {
-		tools.GlobalWorktreeRegistry.RegisterPeer(sessKey, detectDir)
-	}
 
-	// When auto_worktree is enabled, attempt automatic worktree isolation.
-	// AutoDetectAndInit creates a worktree for this session if another session
-	// is already primary in the same repo. It also updates the session CWD
-	// so all subsequent tool operations use the isolated worktree path.
-	// Read from user_settings dynamically so runtime changes take effect immediately.
-	autoWorktree := a.autoWorktree // fallback from startup config
+	// Read auto_worktree from user_settings DB dynamically so runtime
+	// changes take effect without restart. Fallback to Agent startup value.
+	autoWorktree := a.autoWorktree
 	if a.settingsSvc != nil {
 		if vals, err := a.settingsSvc.GetSettings(msg.Channel, msg.SenderID); err == nil {
 			if v, ok := vals["auto_worktree"]; ok {
@@ -2316,11 +2300,15 @@ func (a *Agent) buildPrompt(ctx context.Context, msg bus.InboundMessage, tenantS
 			}
 		}
 	}
+
 	if autoWorktree {
+		// Every session gets its own git worktree — all agents are equal peers.
 		if entry := tools.AutoDetectAndInit(detectDir, sessKey); entry != nil && entry.WorktreeDir != "" {
-			// Switch session CWD to the worktree so tools operate in isolation.
 			tenantSession.SetCurrentDir(entry.WorktreeDir)
 		}
+	} else {
+		// Peer awareness without file isolation: register session in-memory only.
+		tools.GlobalWorktreeRegistry.RegisterPeer(sessKey, detectDir)
 	}
 
 	// Fixup: strip trailing unpaired tool_calls left by a cancelled Run.

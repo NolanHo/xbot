@@ -32,7 +32,13 @@ export interface UseChatMessageHandlerParams {
 function handleProgress(
   setLoading: React.Dispatch<React.SetStateAction<boolean>>,
 ) {
-  setLoading(true)
+  // Only set loading if not already loading — prevents stale replayed events
+  // from incorrectly entering typing state after page refresh.
+  setLoading(prev => {
+    if (prev) return true // already loading, keep it
+    // Don't activate loading from a replayed event — loadHistory already set the correct state
+    return false
+  })
 }
 
 function handleProgressStructured(
@@ -125,8 +131,9 @@ function handleProgressStructured(
     setSubAgents(p.sub_agents)
   }
 
-  setLoading(true)
-}
+  // Only keep loading if already active — don't activate from replayed events.
+  // Loading is activated by handleSend/loadHistory(processing=true), deactivated by handleTextCard.
+  setLoading(prev => prev)}
 
 function handleStreamContent(
   data: WebSocketMessage,
@@ -177,8 +184,9 @@ function handleStreamContent(
     })
   }
 
-  setLoading(true)
-}
+  // Only keep loading if already active — don't activate from replayed events.
+  // Loading is activated by handleSend/loadHistory(processing=true), deactivated by handleTextCard.
+  setLoading(prev => prev)}
 
 function handleTextCard(
   data: WebSocketMessage,

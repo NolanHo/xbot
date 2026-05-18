@@ -157,8 +157,8 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
   const shouldShowCurrentThinking = currentThinking.length > 0 && !seenThinkings.has(currentThinking)
 
   return (
-    <div className="flex justify-start">
-      <div className="assistant-turn-container group relative" data-testid="assistant-turn" onDoubleClick={onDoubleClickReply}>
+    <div className="flex justify-start w-full">
+      <div className="assistant-turn-container group relative flex-1 min-w-0" data-testid="assistant-turn" onDoubleClick={onDoubleClickReply}>
         {/* Message actions — visible on hover */}
         {textMsgs.length > 0 && !loading && (
           <MessageActions
@@ -310,6 +310,7 @@ export default memo(function AssistantTurn({ messages, progress, liveIterations,
             icon="📋"
             title={t("iterationProcess")}
             badge={messages[messages.length - 1].iterationHistory!.length}
+            defaultOpen={true}
           >
             <div className="divide-y divide-slate-700/30">
               {messages[messages.length - 1].iterationHistory!.map((snap) => (

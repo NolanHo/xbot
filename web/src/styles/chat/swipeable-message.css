@@ -69,4 +69,6 @@
   position: relative;
   z-index: 1;
   will-change: transform;
+  display: flex;
+  justify-content: flex-end;
 }

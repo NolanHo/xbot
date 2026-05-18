@@ -59,7 +59,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
     try {
       await fetch(`/api/chats/${encodeURIComponent(chatID)}/switch`, { method: 'POST' })
       onSwitchChat(chatID)
-      // Auto-collapse on mobile after switch
+      fetchChats()
       if (isMobileRef.current) setCollapsed(true)
     } catch (err) { console.warn('[ChatSidebar] switchChat failed:', err) }
   }
@@ -73,6 +73,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
       })
       const data = await resp.json()
       if (data.ok && data.chat_id) {
+        // Switch to the new chat (this triggers loadHistory via onSwitchChat)
         await fetch(`/api/chats/${encodeURIComponent(data.chat_id)}/switch`, { method: 'POST' })
         onSwitchChat(data.chat_id)
         fetchChats()
@@ -90,16 +91,21 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
     setConfirmDelete(null)
     try {
       await fetch(`/api/chats/${encodeURIComponent(chatID)}`, { method: 'DELETE' })
-      // If deleting current chat, switch to first remaining
-      if (chatID === currentChatID) {
-        fetchChats()
-        const remaining = chats.filter(c => c.chat_id !== chatID)
-        if (remaining.length > 0) {
-          await fetch(`/api/chats/${encodeURIComponent(remaining[0].chat_id)}/switch`, { method: 'POST' })
-          onSwitchChat(remaining[0].chat_id)
+      // Refresh chat list first, then decide what to switch to
+      const resp = await fetch('/api/chats')
+      const data = await resp.json()
+      if (data.ok) {
+        const remaining: ChatInfo[] = (data.chats || []).filter((c: ChatInfo) => c.chat_id !== chatID)
+        setChats(remaining)
+        if (chatID === currentChatID) {
+          if (remaining.length > 0) {
+            await fetch(`/api/chats/${encodeURIComponent(remaining[0].chat_id)}/switch`, { method: 'POST' })
+            onSwitchChat(remaining[0].chat_id)
+          } else {
+            // No chats left — create a new one
+            _onNewChat()
+          }
         }
-      } else {
-        fetchChats()
       }
     } catch (err) { console.warn('[ChatSidebar] deleteChat failed:', err) }
   }

@@ -123,7 +123,7 @@
 }
 
 [data-theme="light"] .assistant-turn-section {
-  border-bottom-color: var(--xbot-text-primary);
+  border-bottom-color: #cbd5e1;
 }
 
 [data-theme="light"] .assistant-turn-section-header {
@@ -160,18 +160,18 @@
   left: 0;
   right: 0;
   height: 60px;
-  background: linear-gradient(transparent, var(--color-surface, #1e293b));
+  background: linear-gradient(transparent, #1e293b);
   pointer-events: none;
 }
 
 [data-theme="light"] .collapsible-fade-mask {
-  background: linear-gradient(transparent, var(--color-surface, #f8fafc));
+  background: linear-gradient(transparent, #f8fafc);
 }
 
 .collapsible-toggle {
   margin-top: 4px;
   font-size: 0.75rem;
-  color: var(--color-text-muted, #64748b);
+  color: #64748b;
   background: none;
   border: none;
   cursor: pointer;
@@ -183,7 +183,7 @@
 }
 
 .collapsible-toggle:hover {
-  color: var(--color-text-secondary, #94a3b8);
+  color: #94a3b8;
 }
 
 .collapsible-chevron {

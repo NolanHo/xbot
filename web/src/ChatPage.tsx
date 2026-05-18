@@ -442,6 +442,15 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       .then((r) => r.json())
       .then((data) => {
         if (loadHistoryIdRef.current !== currentId) return // race protection: discard stale response
+        // Debug: log raw messages to diagnose assistant message visibility issues
+        if (data.ok && data.messages) {
+          const assistantMsgs = data.messages.filter((m: { role: string }) => m.role === 'assistant')
+          console.log('[loadHistory] total:', data.messages.length, 'assistant:', assistantMsgs.length,
+            'processing:', data.processing,
+            assistantMsgs.map((m: { id: number; content?: string; tool_calls?: string; detail?: string }) => ({
+              id: m.id, hasContent: !!(m.content && m.content.trim()), hasToolCalls: !!m.tool_calls, hasDetail: !!m.detail
+            })))
+        }
         if (data.ok && data.messages) {
           const hist: Message[] = data.messages
             .filter((m: { role: string; content?: string; tool_calls?: string; detail?: string; display_only?: number }) => {
@@ -466,8 +475,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             })
           setMessages(hist)
           const isProcessing = data.processing === true
-          const lastIsUser = hist.length > 0 && hist[hist.length - 1].type === 'user'
-          if (isProcessing && lastIsUser) {
+          if (isProcessing) {
             setLoading(true)
           } else {
             // Backend is idle — force clear any stale loading state (e.g. after page refresh)
@@ -547,7 +555,9 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     setTodos([])
     setSubAgents([])
     setLoading(false)
-    setTimeout(() => loadHistory(), 100)
+    streamingContentRef.current = ''
+    reasoningRef.current = ''
+    loadHistory()
   }, [loadHistory, resetProgress])
 
   const handleTabNew = useCallback(() => {
@@ -1041,18 +1051,21 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             setTodos([])
             setSubAgents([])
             setLoading(false)
-            // Open tab for this chat
+            streamingContentRef.current = ''
+            reasoningRef.current = ''
             tabManager.openTab(chatID, '')
-            // Reload history for the new chat after switch
-            setTimeout(() => loadHistory(), 100)
+            loadHistory()
           }}
           onNewChat={() => {
+            setCurrentChatID('')
             setMessages([])
             resetProgress()
             setTodos([])
             setSubAgents([])
             setLoading(false)
             setContextInfo(null)
+            streamingContentRef.current = ''
+            reasoningRef.current = ''
           }}
           currentChatID={currentChatID}
           onExportMarkdown={handleExportMarkdown}

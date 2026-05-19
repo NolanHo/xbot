@@ -13,9 +13,6 @@ import (
 // ==================== Background Task Notification ====================
 
 func TestInjectInbound_IsCronFalse(t *testing.T) {
-	// injectInbound must NOT set IsCron=true, otherwise processMessage
-	// routes through processCronMessage which skips persistence.
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	a := &Agent{
@@ -46,12 +43,10 @@ func TestInjectInbound_IsCronFalse(t *testing.T) {
 	}
 }
 
-// TestDrainRemainingBgNotifications_Synchronous verifies that
-// drainRemainingBgNotifications processes notifications synchronously
-// (not via goroutines). This is critical for preventing the race condition
-// where notifications arrive after Run() exits but before bgRunActive=0,
-// and need to be injected into bus.Inbound before processMessage returns.
-func TestDrainRemainingBgNotifications_Synchronous(t *testing.T) {
+// TestDrainSessionBgNotifications_Synchronous verifies that
+// drainSessionBgNotifications processes notifications synchronously and
+// only drains notifications matching the given session key.
+func TestDrainSessionBgNotifications_Synchronous(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -62,15 +57,11 @@ func TestDrainRemainingBgNotifications_Synchronous(t *testing.T) {
 		bgTaskMgr: mgr,
 	}
 
-	// Use Start() to create a task with proper sessionKey.
-	// execFn completes immediately so the notification is sent to NotifyCh.
 	_ = mgr.Start("cli:test-chat", "user-1", "echo hello", func(ctx context.Context, outputBuf func(string)) (int, error) {
 		outputBuf("hello output")
 		return 0, nil
 	})
 
-	// Wait for the notification from NotifyCh — this is the synchronization
-	// point that guarantees all task fields are fully written (no data race).
 	var notif tools.BgNotification
 	select {
 	case notif = <-mgr.NotifyCh:
@@ -78,16 +69,12 @@ func TestDrainRemainingBgNotifications_Synchronous(t *testing.T) {
 		t.Fatal("timed out waiting for notification from NotifyCh")
 	}
 
-	// Buffer the notification (as bgNotifyLoop would do)
 	a.bgRunPendingMu.Lock()
 	a.bgRunPending = append(a.bgRunPending, notif)
 	a.bgRunPendingMu.Unlock()
 
-	// Drain should process synchronously — by the time drain returns,
-	// the notification should already be in bus.Inbound
-	a.drainRemainingBgNotifications()
+	a.drainSessionBgNotifications("cli:test-chat")
 
-	// Verify the notification was processed and injected into bus.Inbound
 	select {
 	case msg := <-a.bus.Inbound:
 		if msg.ChatID != "test-chat" {
@@ -96,27 +83,22 @@ func TestDrainRemainingBgNotifications_Synchronous(t *testing.T) {
 		if msg.Channel != "cli" {
 			t.Errorf("Channel = %q, want %q", msg.Channel, "cli")
 		}
-		if msg.IsCron {
-			t.Error("bg notification should not be cron")
-		}
 	default:
-		t.Fatal("drainRemainingBgNotifications should have synchronously injected the notification into bus.Inbound, but no message was found")
+		t.Fatal("drainSessionBgNotifications should have synchronously injected notification into bus.Inbound")
 	}
 
-	// Verify bgRunPending is now empty
 	a.bgRunPendingMu.Lock()
 	remaining := a.bgRunPending
 	a.bgRunPendingMu.Unlock()
 	if len(remaining) != 0 {
-		t.Errorf("bgRunPending should be empty after drain, got %d items", len(remaining))
+		t.Errorf("bgRunPending should be empty after draining matching session, got %d items", len(remaining))
 	}
 }
 
-// TestDrainBeforeBgRunActiveClears verifies that draining notifications
-// before clearing bgRunActive prevents the race condition where
-// bgNotifyLoop routes a notification through the idle path because
-// bgRunActive was already set to 0.
-func TestDrainBeforeBgRunActiveClears(t *testing.T) {
+// TestDrainSessionBgNotifications_CrossSessionIsolation verifies that
+// drainSessionBgNotifications only drains notifications matching the
+// given session key, leaving other sessions' notifications in bgRunPending.
+func TestDrainSessionBgNotifications_CrossSessionIsolation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -127,50 +109,159 @@ func TestDrainBeforeBgRunActiveClears(t *testing.T) {
 		bgTaskMgr: mgr,
 	}
 
-	// Simulate: Run is active, notification is buffered
-	atomic.StoreInt32(&a.bgRunActive, 1)
-
-	_ = mgr.Start("cli:test-chat-2", "user-1", "long-task", func(ctx context.Context, outputBuf func(string)) (int, error) {
-		outputBuf("task output")
+	// Create two tasks for different sessions
+	_ = mgr.Start("cli:chat-a", "user-1", "echo a", func(ctx context.Context, outputBuf func(string)) (int, error) {
+		outputBuf("a")
+		return 0, nil
+	})
+	_ = mgr.Start("cli:chat-b", "user-1", "echo b", func(ctx context.Context, outputBuf func(string)) (int, error) {
+		outputBuf("b")
 		return 0, nil
 	})
 
-	// Wait for notification from NotifyCh (synchronization point — no race)
-	var notif tools.BgNotification
-	select {
-	case notif = <-mgr.NotifyCh:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for notification from NotifyCh")
+	// Collect both notifications from NotifyCh
+	var notifs []tools.BgNotification
+	for len(notifs) < 2 {
+		select {
+		case n := <-mgr.NotifyCh:
+			notifs = append(notifs, n)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for notifications")
+		}
 	}
 
-	// Buffer the notification (as bgNotifyLoop would do while bgRunActive==1)
+	// Buffer both
 	a.bgRunPendingMu.Lock()
-	a.bgRunPending = append(a.bgRunPending, notif)
+	a.bgRunPending = append(a.bgRunPending, notifs...)
 	a.bgRunPendingMu.Unlock()
 
-	// First drain (before bgRunActive=0) — should process synchronously
-	a.drainRemainingBgNotifications()
+	// Drain only chat-a's notifications
+	a.drainSessionBgNotifications("cli:chat-a")
 
-	// The notification should already be in bus.Inbound
-	select {
-	case msg := <-a.bus.Inbound:
-		if msg.ChatID != "test-chat-2" {
-			t.Errorf("ChatID = %q, want %q", msg.ChatID, "test-chat-2")
+	// Should find chat-a's notification in bus.Inbound
+	found := false
+	timeout := time.After(2 * time.Second)
+	for !found {
+		select {
+		case msg := <-a.bus.Inbound:
+			if msg.ChatID == "chat-a" {
+				found = true
+			}
+			// Ignore other messages
+		case <-timeout:
+			t.Fatal("chat-a's notification should be in bus.Inbound")
 		}
-	default:
-		t.Fatal("first drain should have synchronously injected notification before bgRunActive was cleared")
 	}
 
-	// Now clear bgRunActive (as processMessage does after drain)
-	atomic.StoreInt32(&a.bgRunActive, 0)
-
-	// Second drain should find nothing (already drained)
-	a.drainRemainingBgNotifications()
-
+	// chat-b's notification should still be in bgRunPending
 	a.bgRunPendingMu.Lock()
 	remaining := a.bgRunPending
 	a.bgRunPendingMu.Unlock()
-	if len(remaining) != 0 {
-		t.Errorf("bgRunPending should be empty after second drain, got %d items", len(remaining))
+	if len(remaining) != 1 {
+		t.Fatalf("bgRunPending should have exactly 1 item (chat-b's), got %d", len(remaining))
 	}
+	if remaining[0].SessionKey() != "cli:chat-b" {
+		t.Errorf("remaining notification session key = %q, want %q", remaining[0].SessionKey(), "cli:chat-b")
+	}
+}
+
+// TestBgRunActive_ReferenceCount verifies that bgRunActive works as a
+// reference counter: multiple concurrent sessions can increment/decrement
+// without clearing each other's active state.
+func TestBgRunActive_ReferenceCount(t *testing.T) {
+	a := &Agent{}
+
+	// Initial state: 0
+	if v := atomic.LoadInt32(&a.bgRunActive); v != 0 {
+		t.Fatalf("initial bgRunActive = %d, want 0", v)
+	}
+
+	// Session A starts Run
+	atomic.AddInt32(&a.bgRunActive, 1)
+	if v := atomic.LoadInt32(&a.bgRunActive); v != 1 {
+		t.Fatalf("after session A start: bgRunActive = %d, want 1", v)
+	}
+
+	// Session B starts Run (concurrent)
+	atomic.AddInt32(&a.bgRunActive, 1)
+	if v := atomic.LoadInt32(&a.bgRunActive); v != 2 {
+		t.Fatalf("after session B start: bgRunActive = %d, want 2", v)
+	}
+
+	// Session A's Run finishes — should NOT clear to 0
+	atomic.AddInt32(&a.bgRunActive, -1)
+	if v := atomic.LoadInt32(&a.bgRunActive); v != 1 {
+		t.Fatalf("after session A end: bgRunActive = %d, want 1 (session B still active)", v)
+	}
+
+	// Session B's Run finishes
+	atomic.AddInt32(&a.bgRunActive, -1)
+	if v := atomic.LoadInt32(&a.bgRunActive); v != 0 {
+		t.Fatalf("after session B end: bgRunActive = %d, want 0", v)
+	}
+}
+
+// TestBgRunActive_RouteAfterPartialExit simulates the exact race condition:
+// Session A exits while Session B is still active. Notifications for Session B
+// should still be buffered (not routed through idle path).
+func TestBgRunActive_RouteAfterPartialExit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := tools.NewBackgroundTaskManager()
+	a := &Agent{
+		bus:       bus.NewMessageBus(),
+		agentCtx:  ctx,
+		bgTaskMgr: mgr,
+	}
+
+	// Both sessions active
+	atomic.AddInt32(&a.bgRunActive, 1) // Session A
+	atomic.AddInt32(&a.bgRunActive, 1) // Session B
+
+	// Session A exits — decrement only
+	atomic.AddInt32(&a.bgRunActive, -1)
+
+	// Now bgRunActive should be 1 (Session B still active)
+	if v := atomic.LoadInt32(&a.bgRunActive); v != 1 {
+		t.Fatalf("bgRunActive = %d after session A exit, want 1", v)
+	}
+
+	// Start a task for Session B — notification should still be buffered
+	// because bgRunActive > 0
+	_ = mgr.Start("cli:chat-b", "user-1", "task-b", func(ctx context.Context, outputBuf func(string)) (int, error) {
+		outputBuf("b-done")
+		return 0, nil
+	})
+
+	// Read notification directly from NotifyCh (simulating what bgNotifyLoop would do)
+	select {
+	case notif := <-mgr.NotifyCh:
+		// bgNotifyLoop would check bgRunActive > 0 → buffer
+		// We simulate that here:
+		if v := atomic.LoadInt32(&a.bgRunActive); v > 0 {
+			a.bgRunPendingMu.Lock()
+			a.bgRunPending = append(a.bgRunPending, notif)
+			a.bgRunPendingMu.Unlock()
+		} else {
+			t.Fatal("bgRunActive should be > 0 but is 0 — notification would be misrouted to idle path!")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for notification")
+	}
+
+	// Verify the notification is buffered and can be drained by Session B
+	a.drainSessionBgNotifications("cli:chat-b")
+
+	select {
+	case msg := <-a.bus.Inbound:
+		if msg.ChatID != "chat-b" {
+			t.Errorf("ChatID = %q, want %q", msg.ChatID, "chat-b")
+		}
+	default:
+		t.Fatal("Session B's notification should have been drained synchronously")
+	}
+
+	// Cleanup
+	atomic.AddInt32(&a.bgRunActive, -1)
 }

@@ -347,8 +347,11 @@ type Agent struct {
 	pluginMgr *plugin.PluginManager
 	bgTaskMgr *tools.BackgroundTaskManager
 
-	// bgRunActive is atomically set to 1 when a Run is active and consuming bg notifications,
-	// 0 when idle. Used by bgNotifyLoop to decide routing.
+	// bgRunActive is an atomic reference count of active Run() calls across all sessions.
+	// Each processMessage increments on entry (AddInt32 +1) and decrements on exit (AddInt32 -1).
+	// bgNotifyLoop checks > 0 to decide routing: buffer (active) vs idle-path.
+	// Using a counter instead of a boolean prevents Session A's exit from clearing the flag
+	// while Session B's Run is still active.
 	bgRunActive int32
 
 	// bgRunPending buffers bg notifications that arrived during an active Run.
@@ -2115,8 +2118,10 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*ch
 			}
 		}
 	}
-	// Mark Run as active so bgNotifyLoop buffers notifications instead of processing idle
-	atomic.StoreInt32(&a.bgRunActive, 1)
+	// Mark Run as active so bgNotifyLoop buffers notifications instead of processing idle.
+	// Uses AddInt32 (reference count) instead of StoreInt32 (boolean) so that
+	// multiple concurrent sessions don't clear each other's active flag.
+	atomic.AddInt32(&a.bgRunActive, 1)
 
 	// Inject running background task IDs into the last user message so the LLM
 	// is aware of active tasks and doesn't try to restart them.
@@ -2162,21 +2167,21 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*ch
 
 	out := Run(ctx, cfg)
 
-	// Drain remaining bg notifications BEFORE clearing bgRunActive.
-	// This ensures that while we're processing these notifications, bgNotifyLoop
-	// still sees bgRunActive==1 and buffers any new arrivals (which we'll drain
-	// again below). Notifications are processed synchronously so they're injected
-	// into bus.Inbound before processMessage returns, allowing chatProcessLoop to
-	// pick them up immediately.
-	a.drainRemainingBgNotifications()
+	// Drain THIS session's remaining bg notifications synchronously.
+	// Must happen before decrementing bgRunActive so that bgNotifyLoop
+	// continues buffering new arrivals. Only drain our own session's
+	// notifications — other sessions' notifications must stay in bgRunPending
+	// for their own Run loops to pick up.
+	a.drainSessionBgNotifications(currentSessionKey)
 
-	atomic.StoreInt32(&a.bgRunActive, 0)
+	// Decrement the reference count. If other sessions still have active Runs,
+	// bgRunActive remains > 0 and bgNotifyLoop keeps buffering for them.
+	atomic.AddInt32(&a.bgRunActive, -1)
 
-	// Drain again: any notifications that arrived between the first drain
-	// and the atomic store were buffered in bgRunPending. Process them now
-	// via the idle path (bgRunActive is now 0, so bgNotifyLoop handles new
-	// arrivals directly).
-	a.drainRemainingBgNotifications()
+	// Drain any notifications that arrived between the first drain and the
+	// decrement (only our session's — others' are still in bgRunPending for
+	// their Run loops). These go through the idle path since our Run is done.
+	a.drainSessionBgNotifications(currentSessionKey)
 
 	if out.Error != nil {
 		if errors.Is(out.Error, context.Canceled) {
@@ -2626,12 +2631,12 @@ func (a *Agent) injectEventMessage(msg event.Message) {
 }
 
 // bgNotifyLoop routes background notifications from BgTaskManager.NotifyCh.
-// When a Run is active (bgRunActive=1), notifications are buffered in bgRunPending
-// for the Run loop to drain between iterations. When idle (bgRunActive=0),
+// When any Run is active (bgRunActive > 0), notifications are buffered in bgRunPending
+// for the Run loop to drain between iterations. When idle (bgRunActive == 0),
 // notifications go directly to the appropriate handler based on type.
 func (a *Agent) bgNotifyLoop() {
 	for notif := range a.bgTaskMgr.NotifyCh {
-		if atomic.LoadInt32(&a.bgRunActive) == 1 {
+		if v := atomic.LoadInt32(&a.bgRunActive); v > 0 {
 			// Run is active — buffer for Run loop to drain
 			a.bgRunPendingMu.Lock()
 			a.bgRunPending = append(a.bgRunPending, notif)

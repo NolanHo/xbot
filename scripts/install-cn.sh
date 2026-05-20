@@ -83,6 +83,15 @@ echo "  ║     xbot-cli Installer (China Mirror Mode)      ║"
 echo "  ╚══════════════════════════════════════════════════╝"
 echo ""
 
+# ---------------------------------------------------------------------------
+# Parse --ref argument (for testing non-master branches)
+# ---------------------------------------------------------------------------
+for arg in "$@"; do
+    case "$arg" in
+        --ref=*) GITHUB_REF="${arg#--ref=}" ;;
+    esac
+done
+
 # Step 1: Determine mirror
 if [ -z "${GH_MIRROR:-}" ]; then
     GH_MIRROR="ghfast.top"

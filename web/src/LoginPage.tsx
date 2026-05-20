@@ -173,7 +173,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             type="submit"
             disabled={loading}
             className="w-full font-semibold py-3 rounded-xl transition-all"
-            style={{ background: loading ? 'var(--text-placeholder)' : 'var(--accent)', color: '#fff' }}
+            style={{ background: loading ? 'var(--text-placeholder)' : 'linear-gradient(180deg, #5bb8ff 0%, #0055b3 100%)', color: '#fff', boxShadow: loading ? 'none' : '0 1px 3px rgba(0,0,0,0.15), 0 4px 16px rgba(0,85,179,0.35)' }}
             aria-label={loading ? t('loading') : showFeishu ? t('feishuLogin') : isRegister ? t('register') : t('login')}
           >
             {loading ? '...' : showFeishu ? t('feishuLogin') : isRegister ? t('register') : t('login')}

@@ -8,9 +8,11 @@
 #
 #   # Option 1: via ghfast.top (default)
 #   curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/ai-pivot/xbot/master/scripts/install-cn.sh | bash
+#   source ~/.bashrc  # reload PATH
 #
 #   # Option 2: via gh-proxy.com
 #   curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/ai-pivot/xbot/master/scripts/install-cn.sh | bash
+#   source ~/.bashrc
 #
 #   # Option 3: clone and run locally
 #   git clone https://ghfast.top/https://github.com/ai-pivot/xbot.git

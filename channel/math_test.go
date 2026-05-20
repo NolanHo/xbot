@@ -3,6 +3,8 @@ package channel
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ---------- latexToUnicode tests ----------
@@ -18,9 +20,9 @@ func TestLatexToUnicode_GreekLetters(t *testing.T) {
 		{`\pi r^2`, "π r²"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
-			t.Errorf("latexToUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("renderLaTeX(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -37,9 +39,9 @@ func TestLatexToUnicode_Operators(t *testing.T) {
 		{`a \in \emptyset`, "a ∈ ∅"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
-			t.Errorf("latexToUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("renderLaTeX(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -54,9 +56,9 @@ func TestLatexToUnicode_Arrows(t *testing.T) {
 		{`x \mapsto f(x)`, "x ↦ f(x)"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
-			t.Errorf("latexToUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("renderLaTeX(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -71,9 +73,9 @@ func TestLatexToUnicode_Fractions(t *testing.T) {
 		{`\dfrac{\pi}{2}`, "π/2"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
-			t.Errorf("latexToUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("renderLaTeX(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -88,9 +90,9 @@ func TestLatexToUnicode_SquareRoots(t *testing.T) {
 		{`\sqrt{a^2 + b^2}`, "√a² + b²"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
-			t.Errorf("latexToUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("renderLaTeX(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -106,9 +108,9 @@ func TestLatexToUnicode_Superscripts(t *testing.T) {
 		{`x^{n+1}`, "xⁿ⁺¹"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
-			t.Errorf("latexToUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("renderLaTeX(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -124,35 +126,35 @@ func TestLatexToUnicode_Subscripts(t *testing.T) {
 		{`x_n`, "xₙ"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
-			t.Errorf("latexToUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("renderLaTeX(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
 
 func TestLatexToUnicode_ComplexExpressions(t *testing.T) {
 	// Einstein's mass-energy equivalence
-	got := latexToUnicode(`E = mc^{2}`)
+	got := renderLaTeX(`E = mc^{2}`)
 	want := "E = mc²"
 	if got != want {
 		t.Errorf("Einstein: got %q, want %q", got, want)
 	}
 
 	// Quadratic formula parts
-	got = latexToUnicode(`x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`)
+	got = renderLaTeX(`x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`)
 	if !strings.Contains(got, "√b²") || !strings.Contains(got, "±") {
 		t.Errorf("Quadratic: got %q, expected √ and ±", got)
 	}
 
 	// Euler's identity
-	got = latexToUnicode(`e^{i\pi} + 1 = 0`)
+	got = renderLaTeX(`e^{i\pi} + 1 = 0`)
 	if !strings.Contains(got, "eⁱπ") {
 		t.Errorf("Euler: got %q, expected eⁱπ", got)
 	}
 
 	// Maxwell's equations — the key test that motivated the rewrite
-	got = latexToUnicode(`\nabla \cdot E = \frac{\rho}{\epsilon_0}`)
+	got = renderLaTeX(`\nabla \cdot E = \frac{\rho}{\epsilon_0}`)
 	// Key assertions: no stray braces, no "frac" remnant, has ∇ and / (fraction)
 	if strings.Contains(got, "{") || strings.Contains(got, "frac") {
 		t.Errorf("Maxwell Gauss 1 has stray braces/frac: got %q", got)
@@ -161,7 +163,7 @@ func TestLatexToUnicode_ComplexExpressions(t *testing.T) {
 		t.Errorf("Maxwell Gauss 1: got %q", got)
 	}
 
-	got = latexToUnicode(`\nabla \times B = \mu_0 J + \mu_0 \epsilon_0 \frac{\partial E}{\partial t}`)
+	got = renderLaTeX(`\nabla \times B = \mu_0 J + \mu_0 \epsilon_0 \frac{\partial E}{\partial t}`)
 	if strings.Contains(got, "{") || strings.Contains(got, "frac") {
 		t.Errorf("Maxwell Ampere has stray braces/frac: got %q", got)
 	}
@@ -172,7 +174,7 @@ func TestLatexToUnicode_ComplexExpressions(t *testing.T) {
 	// ---- User-reported bugs (real LLM output) ----
 
 	// Bug: \left[ was rendered as ≤ft[ because \le matched first
-	got = latexToUnicode(`\left[ -\hbar^2/2m \nabla^2 + V(r) \right]`)
+	got = renderLaTeX(`\left[ -\hbar^2/2m \nabla^2 + V(r) \right]`)
 	if strings.Contains(got, "≤ft") || strings.Contains(got, "\\left") {
 		t.Errorf("\\left[ bug: got %q", got)
 	}
@@ -181,13 +183,13 @@ func TestLatexToUnicode_ComplexExpressions(t *testing.T) {
 	}
 
 	// Bug: \left( not rendered
-	got = latexToUnicode(`n! \sim \sqrt{2\pi n} \left( n/e \right)^n`)
+	got = renderLaTeX(`n! \sim \sqrt{2\pi n} \left( n/e \right)^n`)
 	if strings.Contains(got, "≤ft") || strings.Contains(got, "\\left") {
 		t.Errorf("\\left( bug: got %q", got)
 	}
 
 	// Bug: \mid not rendered
-	got = latexToUnicode(`P(A \mid B) = \frac{P(B \mid A) P(A)}{P(B)}`)
+	got = renderLaTeX(`P(A \mid B) = \frac{P(B \mid A) P(A)}{P(B)}`)
 	if strings.Contains(got, "{") || strings.Contains(got, "frac") {
 		t.Errorf("Bayes stray braces: got %q", got)
 	}
@@ -200,7 +202,7 @@ func TestLatexToUnicode_ComplexExpressions(t *testing.T) {
 	}
 
 	// Bug: \text{prime} inside _{} was subscripted to ₜₑₓₜₚᵣᵢₘₑ
-	got = latexToUnicode(`\prod_{\text{prime}}`)
+	got = renderLaTeX(`\prod_{\text{prime}}`)
 	// \text{prime} should unwrap to plain "prime" before subscript
 	// So the subscript should be ₚᵣᵢₘₑ (all letters subscripted) NOT ₜₑₓₜₚᵣᵢₘₑ
 	if strings.Contains(got, "ₜₑₓₜ") {
@@ -216,7 +218,7 @@ func TestLatexToUnicode_ComplexExpressions(t *testing.T) {
 	}
 
 	// Bug: \\ line breaks not handled
-	got = latexToUnicode(`f(x) = \begin{cases} x^2 \\ x+1 \end{cases}`)
+	got = renderLaTeX(`f(x) = \begin{cases} x^2 \\ x+1 \end{cases}`)
 	if !strings.Contains(got, "\n") {
 		t.Errorf("line break: got %q, expected newline", got)
 	}
@@ -225,7 +227,7 @@ func TestLatexToUnicode_ComplexExpressions(t *testing.T) {
 	}
 
 	// Nested frac: \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
-	got = latexToUnicode(`\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`)
+	got = renderLaTeX(`\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`)
 	if !strings.Contains(got, "±") || !strings.Contains(got, "√") || !strings.Contains(got, "/2a") {
 		t.Errorf("Nested quadratic: got %q", got)
 	}
@@ -238,7 +240,7 @@ func TestLatexToUnicode_ComplexExpressions(t *testing.T) {
 func TestLatexToUnicode_NoMath(t *testing.T) {
 	// Plain text should pass through unchanged
 	input := "Hello, world! No math here."
-	got := latexToUnicode(input)
+	got := renderLaTeX(input)
 	if got != input {
 		t.Errorf("plain text: got %q, want %q", got, input)
 	}
@@ -246,7 +248,7 @@ func TestLatexToUnicode_NoMath(t *testing.T) {
 
 func TestLatexToUnicode_AlignmentMarkers(t *testing.T) {
 	// &= should become just =
-	got := latexToUnicode(`\sin(α + β) &= \sinα\cosβ + \cosα\sinβ`)
+	got := renderLaTeX(`\sin(α + β) &= \sinα\cosβ + \cosα\sinβ`)
 	if strings.Contains(got, "&=") {
 		t.Errorf("&= not stripped: got %q", got)
 	}
@@ -254,7 +256,7 @@ func TestLatexToUnicode_AlignmentMarkers(t *testing.T) {
 		t.Errorf("alignment: got %q", got)
 	}
 	// Multi-line with & alignment
-	got = latexToUnicode(`f(x) &= x^2 \\ g(x) &= x + 1`)
+	got = renderLaTeX(`f(x) &= x^2 \\ g(x) &= x + 1`)
 	if strings.Contains(got, "&") {
 		t.Errorf("& remnant: got %q", got)
 	}
@@ -272,7 +274,7 @@ func TestLatexToUnicode_MathFunctions(t *testing.T) {
 		{`\exp(i\theta)`, "exp(iθ)"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
 			t.Errorf("mathfunc(%q) = %q, want %q", tt.input, got, tt.want)
 		}
@@ -292,7 +294,7 @@ func TestLatexToUnicode_Accents(t *testing.T) {
 		{`\tilde{n}`, "ñ"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if !strings.Contains(got, tt.contain) {
 			t.Errorf("accent(%q) = %q, expected %q", tt.input, got, tt.contain)
 		}
@@ -309,7 +311,7 @@ func TestLatexToUnicode_Brackets(t *testing.T) {
 		{`\lceil x \rceil`, "⌈ x ⌉"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if !strings.Contains(got, tt.contain) {
 			t.Errorf("bracket(%q) = %q, expected %q", tt.input, got, tt.contain)
 		}
@@ -317,28 +319,28 @@ func TestLatexToUnicode_Brackets(t *testing.T) {
 }
 
 func TestLatexToUnicode_Binomial(t *testing.T) {
-	got := latexToUnicode(`\binom{n}{k}`)
+	got := renderLaTeX(`\binom{n}{k}`)
 	if !strings.Contains(got, "(n k)") {
 		t.Errorf("binomial: got %q", got)
 	}
 }
 
 func TestLatexToUnicode_LineBreaks(t *testing.T) {
-	got := latexToUnicode(`x^2 + y^2 \\ = r^2`)
+	got := renderLaTeX(`x^2 + y^2 \\ = r^2`)
 	if !strings.Contains(got, "\n") {
 		t.Errorf("linebreak: got %q", got)
 	}
 }
 
 func TestLatexToUnicode_Environments(t *testing.T) {
-	got := latexToUnicode(`\begin{cases} x & y \\ z & w \end{cases}`)
+	got := renderLaTeX(`\begin{cases} x & y \\ z & w \end{cases}`)
 	if strings.Contains(got, "begin") || strings.Contains(got, "end") {
 		t.Errorf("env not stripped: got %q", got)
 	}
 }
 
 func TestLatexToUnicode_Schrodinger(t *testing.T) {
-	got := latexToUnicode(`i\hbar \frac{\partial}{\partial t} \Psi(r, t) = \left[ -\frac{\hbar^2}{2m}\nabla^2 + V(r) \right] \Psi(r, t)`)
+	got := renderLaTeX(`i\hbar \frac{\partial}{\partial t} \Psi(r, t) = \left[ -\frac{\hbar^2}{2m}\nabla^2 + V(r) \right] \Psi(r, t)`)
 	if strings.Contains(got, "{") || strings.Contains(got, "frac") {
 		t.Errorf("Schrödinger stray braces: got %q", got)
 	}
@@ -362,7 +364,7 @@ func TestLatexToUnicode_EscapeChars(t *testing.T) {
 		{`\}`, "}"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
 			t.Errorf("escape(%q) = %q, want %q", tt.input, got, tt.want)
 		}
@@ -490,7 +492,7 @@ func TestLatexToUnicode_Dots(t *testing.T) {
 		{`\vdots`, "⋮"},
 	}
 	for _, tt := range tests {
-		got := latexToUnicode(tt.input)
+		got := renderLaTeX(tt.input)
 		if got != tt.want {
 			t.Errorf("dots(%q) = %q, want %q", tt.input, got, tt.want)
 		}
@@ -499,9 +501,65 @@ func TestLatexToUnicode_Dots(t *testing.T) {
 
 func TestLatexToUnicode_WhitespaceCommands(t *testing.T) {
 	input := `a \quad b \qquad c`
-	got := latexToUnicode(input)
+	got := renderLaTeX(input)
 	// \quad → "  ", \qquad → "    "
 	if !strings.Contains(got, "a") || !strings.Contains(got, "b") || !strings.Contains(got, "c") {
 		t.Errorf("whitespace commands: got %q", got)
+	}
+}
+
+func TestLatexToUnicode_MultiLineAlignment(t *testing.T) {
+	// Integration by parts - step-by-step derivation
+	got := renderLaTeX(`\int_0^\pi x \sin x \, dx &= [-x\cos x]_0^\pi + \int_0^\pi \cos x \, dx \\ &= \pi + [\sin x]_0^\pi \\ &= \pi`)
+	lines := strings.Split(got, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected 3 lines, got %d: %q", len(lines), got)
+	}
+	// All = signs should be at the same display column
+	eqDisplayCol := func(line string) int {
+		idx := strings.Index(line, "=")
+		if idx < 0 {
+			return -1
+		}
+		return ansi.StringWidth(line[:idx])
+	}
+	col0 := eqDisplayCol(lines[0])
+	col1 := eqDisplayCol(lines[1])
+	col2 := eqDisplayCol(lines[2])
+	if col0 < 0 || col1 < 0 || col2 < 0 {
+		t.Fatalf("missing = in output:\n%s", got)
+	}
+	if col1 != col0 {
+		t.Errorf("line 2 = at display col %d, expected %d\n%s", col1, col0, got)
+	}
+	if col2 != col0 {
+		t.Errorf("line 3 = at display col %d, expected %d\n%s", col2, col0, got)
+	}
+}
+
+func TestLatexToUnicode_TrigIdentityAlignment(t *testing.T) {
+	got := renderLaTeX(`\sin(\alpha + \beta) &= \sin\alpha\cos\beta + \cos\alpha\sin\beta \\ \sin(\alpha - \beta) &= \sin\alpha\cos\beta - \cos\alpha\sin\beta`)
+	lines := strings.Split(got, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), got)
+	}
+	pos0 := strings.Index(lines[0], "=")
+	pos1 := strings.Index(lines[1], "=")
+	if pos0 < 0 || pos1 < 0 {
+		t.Fatalf("missing =:\n%s", got)
+	}
+	if pos1 != pos0 {
+		t.Errorf("= not aligned: line1=%d line2=%d\n%s", pos0, pos1, got)
+	}
+}
+
+func TestLatexToUnicode_MatrixRendering(t *testing.T) {
+	// Matrix should render each row on its own line
+	got := renderLaTeX(`\begin{bmatrix} a_{11} & a_{12} \\ a_{21} & a_{22} \end{bmatrix}`)
+	if strings.Contains(got, "begin") || strings.Contains(got, "end") {
+		t.Errorf("env remnants: %q", got)
+	}
+	if !strings.Contains(got, "\n") {
+		t.Errorf("matrix should have newlines: %q", got)
 	}
 }

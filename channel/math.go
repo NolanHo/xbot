@@ -7,19 +7,18 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// mathBlockRe matches $$...$$ display math blocks (dotall, non-greedy).
-var mathBlockRe = regexp.MustCompile(`(?s)\$\$\s*(.*?)\s*\$\$`)
+// ─── Markdown-level extraction (regex, unavoidable) ───
 
-// mathInlineRe matches $...$ inline math.
-// Broad match; validated in replacement via looksLikeMath.
-var mathInlineRe = regexp.MustCompile(`\$([^\$\n]+?)\$`)
+var (
+	mathBlockRe     = regexp.MustCompile(`(?s)\$\$\s*(.*?)\s*\$\$`)
+	mathInlineRe    = regexp.MustCompile(`\$([^\$\n]+?)\$`)
+	mathIndicatorRe = regexp.MustCompile(`\\[a-zA-Z]|\^|_|[{}]`)
+	multiSpaceRe    = regexp.MustCompile(` {3,}`)
+)
 
-// renderMathBlocks pre-processes markdown content containing LaTeX math
-// expressions, converting them to Unicode/plain-text representations that
-// the terminal can display. Follows the same pre-processing pattern as
-// renderMermaidBlocks.
+// renderMathBlocks pre-processes markdown, converting LaTeX math blocks/inline
+// to Unicode via renderLaTeX. Block math wraps in code fences for glamour.
 func renderMathBlocks(content string, maxW int) string {
-	// Phase 1: block math → code block
 	content = mathBlockRe.ReplaceAllStringFunc(content, func(match string) string {
 		sub := mathBlockRe.FindStringSubmatch(match)
 		if len(sub) < 2 {
@@ -29,14 +28,13 @@ func renderMathBlocks(content string, maxW int) string {
 		if src == "" {
 			return match
 		}
-		rendered := latexToUnicode(src)
+		rendered := renderLaTeX(src)
 		if maxW > 0 {
 			rendered = truncateMathLines(rendered, maxW)
 		}
 		return "```\n" + rendered + "\n```"
 	})
 
-	// Phase 2: inline math → Unicode text
 	content = mathInlineRe.ReplaceAllStringFunc(content, func(match string) string {
 		sub := mathInlineRe.FindStringSubmatch(match)
 		if len(sub) < 2 {
@@ -46,13 +44,15 @@ func renderMathBlocks(content string, maxW int) string {
 		if src == "" || !looksLikeMath(src) {
 			return match
 		}
-		return latexToUnicode(src)
+		return renderLaTeX(src)
 	})
-
 	return content
 }
 
-// truncateMathLines truncates each line to maxW display columns.
+func hasMath(content string) bool {
+	return mathBlockRe.MatchString(content) || mathInlineRe.MatchString(content)
+}
+func looksLikeMath(s string) bool { return mathIndicatorRe.MatchString(s) }
 func truncateMathLines(s string, maxW int) string {
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
@@ -66,141 +66,335 @@ func truncateMathLines(s string, maxW int) string {
 	return strings.Join(lines, "\n")
 }
 
-// hasMath detects whether content contains LaTeX math expressions.
-func hasMath(content string) bool {
-	return mathBlockRe.MatchString(content) || mathInlineRe.MatchString(content)
+// ─── Public entry ───
+
+func renderLaTeX(src string) string {
+	p := &parser{input: []rune(src)}
+	raw := p.parseTop()
+	raw = cleanSpaces(raw)
+	raw = alignLines(raw)
+	return strings.TrimRight(raw, "\n")
 }
 
-// looksLikeMath returns true if the content between $ delimiters looks like
-// a LaTeX math expression rather than plain text with dollar signs (currency).
-var mathIndicatorRe = regexp.MustCompile(`\\[a-zA-Z]|\^|_|[{}]`)
-
-func looksLikeMath(s string) bool {
-	return mathIndicatorRe.MatchString(s)
-}
-
-// =====================================================================
-// latexToUnicode — core LaTeX → Unicode converter
-// =====================================================================
-
-func latexToUnicode(src string) string {
-	out := src
-
-	// 0. Strip LaTeX environments early: \begin{cases}, \end{aligned}, etc.
-	out = envRe.ReplaceAllString(out, "")
-
-	// 1. Line breaks: \\ → newline (before symbol replacement eats them)
-	out = lineBreakRe.ReplaceAllString(out, "\n")
-
-	// 2. Alignment markers: &= → =, & → space (LaTeX align env)
-	//    Must happen before symbol replacement.
-	out = strings.ReplaceAll(out, "&=", "=")
-	out = strings.ReplaceAll(out, "&", " ")
-
-	// 3. Unwrap text-style commands that take a braced argument:
-	//    \text{prime} → prime,  \mathrm{x} → x
-	//    Must happen BEFORE subscript/superscript so the content is plain text.
-	out = unwrapTextCommands(out)
-
-	// 4. Named Greek letters (longest-first)
-	out = replaceLongestFirst(out, greekLetters)
-
-	// 5. Named operators + delimiters merged into one longest-first pass.
-	//    CRITICAL: \left[ (7 chars) must beat \le (3 chars).
-	out = replaceLongestFirst(out, mergedOperators)
-
-	// 6. Named arrows
-	out = replaceLongestFirst(out, arrows)
-
-	// 7. Math functions: \sin, \cos, \log, \det, etc.
-	//    These are just words — strip the backslash.
-	out = mathFuncRe.ReplaceAllString(out, "$1")
-
-	// 8. Accents: \hat{x} → x̂, \vec{x} → x⃗, etc.
-	out = renderAccents(out)
-
-	// 9. Binomial: \binom{n}{k} → (n k)
-	out = renderBinomials(out)
-
-	// 10. Whitespace commands
-	out = strings.ReplaceAll(out, `\,`, " ")
-	out = strings.ReplaceAll(out, `\;`, " ")
-	out = strings.ReplaceAll(out, `\quad`, "  ")
-	out = strings.ReplaceAll(out, `\qquad`, "    ")
-	out = strings.ReplaceAll(out, `\ `, " ")
-	out = strings.ReplaceAll(out, `~`, " ")
-
-	// 11. Structural constructs — brace-aware parsing
-	out = renderFractions(out)
-	out = renderSquareRoots(out)
-	out = renderOver(out)
-
-	// 12. Superscripts / subscripts — brace-aware
-	out = renderSuperscripts(out)
-	out = renderSubscripts(out)
-
-	// 13. Strip remaining bare text-style commands (no braces left)
-	for _, cmd := range []string{
-		`\text`, `\mathrm`, `\mathbf`, `\mathit`, `\mathcal`,
-		`\mathbb`, `\mathfrak`, `\mathsf`, `\mathtt`,
-		`\operatorname`, `\textbf`, `\textit`,
-		`\displaystyle`, `\textstyle`, `\scriptstyle`,
-		`\limits`, `\nolimits`,
-	} {
-		out = strings.ReplaceAll(out, cmd, "")
+func cleanSpaces(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		line = multiSpaceRe.ReplaceAllString(line, "  ")
+		line = strings.TrimRight(line, " \t")
+		lines[i] = line
 	}
-
-	// 14. Remove leftover braces iteratively (innermost first)
-	out = removeBraces(out)
-
-	// 15. Remaining \cmd → strip backslash
-	out = unknownCmdRe.ReplaceAllString(out, "$1")
-
-	// 16. Clean up multiple spaces and leading/trailing whitespace per line
-	out = cleanSpaces(out)
-
-	return out
+	return strings.Join(lines, "\n")
 }
 
-// replaceLongestFirst replaces all keys in m with values,
-// processing longest keys first to prevent partial matches.
-func replaceLongestFirst(s string, m map[string]string) string {
-	keys := sortedKeysByLenDesc(m)
-	for _, k := range keys {
-		s = strings.ReplaceAll(s, k, m[k])
+// alignLines pads lines so content after \x00 markers aligns.
+// The parser emits \x00 for each & alignment marker.
+func alignLines(s string) string {
+	if !strings.ContainsRune(s, '\x00') {
+		return s
 	}
-	return s
-}
-
-func sortedKeysByLenDesc(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	// insertion sort by length descending
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && len(keys[j]) > len(keys[j-1]); j-- {
-			keys[j], keys[j-1] = keys[j-1], keys[j]
+	lines := strings.Split(s, "\n")
+	for i := 0; i < len(lines); {
+		if !strings.ContainsRune(lines[i], '\x00') {
+			i++
+			continue
+		}
+		start := i
+		for i < len(lines) && strings.ContainsRune(lines[i], '\x00') {
+			i++
+		}
+		// Find max display-width before marker in group
+		maxW := 0
+		for j := start; j < i; j++ {
+			idx := strings.IndexRune(lines[j], '\x00')
+			if idx >= 0 {
+				w := ansi.StringWidth(lines[j][:idx])
+				if w > maxW {
+					maxW = w
+				}
+			}
+		}
+		// Pad each line to maxW
+		for j := start; j < i; j++ {
+			idx := strings.IndexRune(lines[j], '\x00')
+			if idx >= 0 {
+				w := ansi.StringWidth(lines[j][:idx])
+				pad := maxW - w
+				lines[j] = lines[j][:idx] + strings.Repeat(" ", pad) + lines[j][idx+1:]
+			}
 		}
 	}
-	return keys
+	return strings.Join(lines, "\n")
 }
 
-// =====================================================================
-// Brace-aware structural parsers
-// =====================================================================
+// ─── Recursive-descent parser ───
 
-// envRe strips \begin{xxx} and \end{xxx} environment markers.
-var envRe = regexp.MustCompile(`\\(?:begin|end)\{[^}]*}`)
+type parser struct {
+	input []rune
+	pos   int
+}
 
-// lineBreakRe matches LaTeX line breaks \\ (but not \{ or other escapes).
-var lineBreakRe = regexp.MustCompile(`\\\\\s*`)
+func (p *parser) peek() rune {
+	if p.pos >= len(p.input) {
+		return -1
+	}
+	return p.input[p.pos]
+}
 
-// mathFuncRe matches standard math function names: \sin, \cos, \log, etc.
-var mathFuncRe = regexp.MustCompile(`\\(sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|coth|ln|log|exp|lim|sup|inf|det|dim|ker|deg|gcd|min|max|arg|hom|Pr|sgn|mod|bmod|pmod)\b`)
+func (p *parser) next() rune {
+	if p.pos >= len(p.input) {
+		return -1
+	}
+	ch := p.input[p.pos]
+	p.pos++
+	return ch
+}
 
-// accentCmdRe matches \hat{x}, \vec{x}, etc. — applies combining Unicode.
-var accentCmdRe = regexp.MustCompile(`\\(hat|check|breve|acute|grave|tilde|bar|vec|dot|ddot|ring|widehat|widetilde|overline|underline|overrightarrow|overleftarrow)\{([^{}]*)}`)
+func (p *parser) skipSpaces() {
+	for p.pos < len(p.input) && (p.input[p.pos] == ' ' || p.input[p.pos] == '\t') {
+		p.pos++
+	}
+}
+
+func (p *parser) readAlpha() string {
+	start := p.pos
+	for p.pos < len(p.input) && isAlpha(p.input[p.pos]) {
+		p.pos++
+	}
+	return string(p.input[start:p.pos])
+}
+
+func isAlpha(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+// parseTop is the entry: parse until EOF.
+func (p *parser) parseTop() string { return p.parse(-1) }
+
+// parse reads input until stop rune is found (consumed) or EOF.
+// stop < 0 means no stop (parse to EOF).
+func (p *parser) parse(stop rune) string {
+	var buf strings.Builder
+	for p.pos < len(p.input) {
+		ch := p.peek()
+		if stop >= 0 && ch == stop {
+			p.pos++ // consume stop
+			return buf.String()
+		}
+		switch ch {
+		case '\\':
+			buf.WriteString(p.parseEscape())
+		case '^':
+			p.pos++
+			buf.WriteString(toSuperscript(p.parseArg()))
+		case '_':
+			p.pos++
+			buf.WriteString(toSubscript(p.parseArg()))
+		case '{':
+			p.pos++ // skip {
+			buf.WriteString(p.parse('}'))
+		case '}':
+			return buf.String() // don't consume; caller handles
+		case '&':
+			p.pos++
+			buf.WriteRune('\x00') // alignment marker
+		default:
+			buf.WriteRune(p.next())
+		}
+	}
+	return buf.String()
+}
+
+// parseArg reads a single argument: {content} or a single char/command.
+func (p *parser) parseArg() string {
+	p.skipSpaces()
+	if p.pos >= len(p.input) {
+		return ""
+	}
+	if p.peek() == '{' {
+		p.pos++ // skip {
+		return p.parse('}')
+	}
+	if p.peek() == '\\' {
+		return p.parseEscape()
+	}
+	return string(p.next())
+}
+
+// parseEscape handles a \command or escaped character.
+func (p *parser) parseEscape() string {
+	p.pos++ // skip \
+
+	// \\ → newline
+	if p.pos < len(p.input) && p.input[p.pos] == '\\' {
+		p.pos++
+		p.skipSpaces()
+		return "\n"
+	}
+
+	// Non-alpha escape: \{ \} \% \_ etc
+	if p.pos >= len(p.input) || !isAlpha(p.peek()) {
+		ch := p.next()
+		switch ch {
+		case ' ', ',', ';', '!':
+			return " "
+		}
+		return string(ch)
+	}
+
+	name := p.readAlpha()
+
+	// --- Structural commands ---
+	switch name {
+	case "frac", "dfrac":
+		num := p.parseArg()
+		den := p.parseArg()
+		return num + "/" + den
+	case "sqrt":
+		idx := ""
+		if p.pos < len(p.input) && p.peek() == '[' {
+			p.pos++ // skip [
+			idx = p.readUntilRune(']')
+		}
+		content := p.parseArg()
+		if idx != "" {
+			return toSuperscript(idx) + "√" + content
+		}
+		return "√" + content
+	case "binom", "tbinom":
+		n := p.parseArg()
+		k := p.parseArg()
+		return "(" + n + " " + k + ")"
+	case "over":
+		return "/" // best-effort for {a \over b}
+	}
+
+	// --- Accents ---
+	if combining, ok := accentMap[name]; ok {
+		content := p.parseArg()
+		runes := []rune(content)
+		if len(runes) == 0 {
+			return ""
+		}
+		var buf strings.Builder
+		buf.WriteRune(runes[0])
+		buf.WriteString(combining)
+		for _, r := range runes[1:] {
+			buf.WriteRune(r)
+		}
+		return buf.String()
+	}
+
+	// --- Text-unwrap commands ---
+	if textCmds[name] {
+		return p.parseArg()
+	}
+
+	// --- Delimiter commands ---
+	switch name {
+	case "left", "right":
+		p.skipSpaces()
+		if p.pos < len(p.input) {
+			if p.peek() == '\\' {
+				p.pos++ // skip \
+				if p.pos < len(p.input) {
+					ch := p.next()
+					return string(ch) // \left\{ → {
+				}
+				return ""
+			}
+			ch := p.next()
+			if ch == '.' {
+				return ""
+			}
+			return string(ch)
+		}
+		return ""
+	case "bigl", "bigr", "Bigl", "Bigr", "big", "Big", "bigg", "Bigg":
+		p.skipSpaces()
+		if p.pos < len(p.input) {
+			return string(p.next())
+		}
+		return ""
+	case "begin", "end":
+		p.skipSpaces()
+		if p.pos < len(p.input) && p.peek() == '{' {
+			p.pos++
+			p.readUntilRune('}')
+		}
+		return ""
+	}
+
+	// --- Symbol lookup ---
+	key := name // lookup without backslash prefix; table keys have no \
+	if sym, ok := symbols[key]; ok {
+		return sym
+	}
+
+	// --- Math functions ---
+	if mathFuncs[name] {
+		return name
+	}
+
+	// Unknown: strip backslash, keep name
+	return name
+}
+
+func (p *parser) readUntilRune(stop rune) string {
+	start := p.pos
+	for p.pos < len(p.input) && p.input[p.pos] != stop {
+		p.pos++
+	}
+	result := string(p.input[start:p.pos])
+	if p.pos < len(p.input) {
+		p.pos++ // consume stop
+	}
+	return result
+}
+
+// ─── Superscript / Subscript ───
+
+var supMap = map[rune]rune{
+	'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+	'5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
+	'+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾',
+	'n': 'ⁿ', 'i': 'ⁱ',
+}
+
+var subMap = map[rune]rune{
+	'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+	'5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+	'+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
+	'a': 'ₐ', 'e': 'ₑ', 'o': 'ₒ', 'x': 'ₓ',
+	'h': 'ₕ', 'k': 'ₖ', 'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ',
+	'p': 'ₚ', 's': 'ₛ', 't': 'ₜ',
+	'i': 'ᵢ', 'j': 'ⱼ', 'r': 'ᵣ', 'u': 'ᵤ', 'v': 'ᵥ',
+}
+
+func toSuperscript(s string) string {
+	var buf strings.Builder
+	for _, r := range s {
+		if sr, ok := supMap[r]; ok {
+			buf.WriteRune(sr)
+		} else {
+			buf.WriteRune(r)
+		}
+	}
+	return buf.String()
+}
+
+func toSubscript(s string) string {
+	var buf strings.Builder
+	for _, r := range s {
+		if sr, ok := subMap[r]; ok {
+			buf.WriteRune(sr)
+		} else {
+			buf.WriteRune(r)
+		}
+	}
+	return buf.String()
+}
+
+// ─── Accent combining characters ───
 
 var accentMap = map[string]string{
 	"hat":            "\u0302", // ̂
@@ -222,449 +416,87 @@ var accentMap = map[string]string{
 	"ring":           "\u030A", // ̊
 }
 
-func renderAccents(s string) string {
-	return accentCmdRe.ReplaceAllStringFunc(s, func(match string) string {
-		sub := accentCmdRe.FindStringSubmatch(match)
-		if len(sub) < 3 {
-			return match
-		}
-		cmd, content := sub[1], sub[2]
-		if combining, ok := accentMap[cmd]; ok {
-			// Apply combining char to first rune of content
-			runes := []rune(content)
-			if len(runes) == 0 {
-				return content
-			}
-			var buf strings.Builder
-			buf.WriteRune(runes[0])
-			buf.WriteString(combining)
-			for _, r := range runes[1:] {
-				buf.WriteRune(r)
-			}
-			return buf.String()
-		}
-		return content
-	})
+// textCmds lists commands that take a braced arg and just unwrap it.
+var textCmds = map[string]bool{
+	"text": true, "mathrm": true, "mathbf": true, "mathit": true,
+	"mathcal": true, "mathbb": true, "mathfrak": true, "mathsf": true,
+	"mathtt": true, "operatorname": true, "textbf": true, "textit": true,
 }
 
-// binomRe matches \binom{n}{k} and \tbinom{n}{k}.
-func renderBinomials(s string) string {
-	for {
-		idx := strings.Index(s, `\binom{`)
-		if idx < 0 {
-			if idx = strings.Index(s, `\tbinom{`); idx < 0 {
-				break
-			}
-		}
-		// Find cmd start
-		cmdStart := idx
-		pos := idx
-		// Skip \binom or \tbinom
-		for pos < len(s) && s[pos] != '{' {
-			pos++
-		}
-		if pos >= len(s) {
-			break
-		}
-		n, afterN := extractBraced(s, pos)
-		if afterN == pos {
-			break
-		}
-		kPos := skipSpaces(s, afterN)
-		if kPos >= len(s) || s[kPos] != '{' {
-			break
-		}
-		k, afterK := extractBraced(s, kPos)
-		if afterK == kPos {
-			break
-		}
-		replacement := "(" + n + " " + k + ")"
-		s = s[:cmdStart] + replacement + s[afterK:]
-	}
-	return s
+// mathFuncs lists function names whose backslash is stripped.
+var mathFuncs = map[string]bool{
+	"sin": true, "cos": true, "tan": true, "cot": true, "sec": true, "csc": true,
+	"arcsin": true, "arccos": true, "arctan": true,
+	"sinh": true, "cosh": true, "tanh": true, "coth": true,
+	"ln": true, "log": true, "exp": true, "lim": true,
+	"sup": true, "inf": true, "det": true, "dim": true,
+	"ker": true, "deg": true, "gcd": true, "min": true, "max": true,
+	"arg": true, "hom": true, "Pr": true, "sgn": true,
+	"mod": true, "bmod": true, "pmod": true,
 }
 
-// textCmdRe matches \text{content}, \mathrm{content}, etc. — unwraps the
-// braced argument, keeping only the inner text. This prevents subscript
-// conversion from mangling words like "prime" into ₚᵣᵢₘₑ.
-var textCmdRe = regexp.MustCompile(`\\(?:text|mathrm|mathbf|mathit|mathcal|mathbb|mathfrak|mathsf|mathtt|operatorname|textbf|textit)\{([^{}]*)}`)
+// ─── Symbol table (key = name WITHOUT backslash) ───
 
-func unwrapTextCommands(s string) string {
-	return textCmdRe.ReplaceAllString(s, "$1")
-}
-
-// extractBraced finds the content inside {…} starting at position pos.
-// Handles nested braces correctly. Returns the inner content and the
-// end position (index after closing }). Returns ("", pos) if no match.
-func extractBraced(s string, pos int) (content string, end int) {
-	if pos >= len(s) || s[pos] != '{' {
-		return "", pos
-	}
-	depth := 1
-	i := pos + 1
-	for i < len(s) && depth > 0 {
-		switch s[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-		}
-		i++
-	}
-	if depth != 0 {
-		return "", pos // unmatched brace
-	}
-	return s[pos+1 : i-1], i
-}
-
-// renderFractions converts \frac{num}{den} and \dfrac{num}{den} to num/den.
-// Uses brace-aware parsing to handle nested braces correctly.
-func renderFractions(s string) string {
-	for {
-		idx := fracCmdIndex(s)
-		if idx < 0 {
-			break
-		}
-		// Find the opening brace of numerator
-		numStart := skipSpaces(s, idx)
-		if numStart >= len(s) || s[numStart] != '{' {
-			break
-		}
-		num, afterNum := extractBraced(s, numStart)
-		if afterNum == numStart {
-			break
-		}
-		denStart := skipSpaces(s, afterNum)
-		if denStart >= len(s) || s[denStart] != '{' {
-			break
-		}
-		den, afterDen := extractBraced(s, denStart)
-		if afterDen == denStart {
-			break
-		}
-
-		cmdStart := fracCmdStart(s, idx)
-		replacement := num + "/" + den
-		s = s[:cmdStart] + replacement + s[afterDen:]
-	}
-	return s
-}
-
-// fracCmdIndex finds the index of '{' right after \frac or \dfrac.
-func fracCmdIndex(s string) int {
-	for _, prefix := range []string{`\dfrac{`, `\frac{`} {
-		if i := strings.Index(s, prefix); i >= 0 {
-			return i + len(prefix) - 1 // index of '{'
-		}
-	}
-	return -1
-}
-
-func fracCmdStart(s string, braceIdx int) int {
-	// Walk back from braceIdx to find the \ that starts \frac or \dfrac
-	sub := s[:braceIdx+1]
-	for _, prefix := range []string{`\dfrac{`, `\frac{`} {
-		if strings.HasSuffix(sub, prefix) {
-			return len(sub) - len(prefix)
-		}
-	}
-	return 0
-}
-
-func skipSpaces(s string, i int) int {
-	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
-		i++
-	}
-	return i
-}
-
-// renderSquareRoots converts \sqrt{x} → √x and \sqrt[n]{x} → ⁿ√x.
-// Brace-aware for nested content.
-func renderSquareRoots(s string) string {
-	for {
-		idx := strings.Index(s, `\sqrt`)
-		if idx < 0 {
-			break
-		}
-		pos := idx + len(`\sqrt`)
-		var indexStr string
-
-		// Optional [n] index
-		if pos < len(s) && s[pos] == '[' {
-			endBracket := strings.IndexByte(s[pos:], ']')
-			if endBracket > 0 {
-				indexStr = s[pos+1 : pos+endBracket]
-				// Convert index to superscript
-				indexStr = toSuperscript(indexStr)
-				pos = pos + endBracket + 1
-			}
-		}
-
-		pos = skipSpaces(s, pos)
-		if pos >= len(s) || s[pos] != '{' {
-			break
-		}
-		content, afterContent := extractBraced(s, pos)
-		if afterContent == pos {
-			break
-		}
-
-		replacement := indexStr + "√" + content
-		s = s[:idx] + replacement + s[afterContent:]
-	}
-	return s
-}
-
-// renderOver converts \over (LaTeX infix fraction: {a \over b} → a/b).
-func renderOver(s string) string {
-	return overRe.ReplaceAllStringFunc(s, func(match string) string {
-		sub := overRe.FindStringSubmatch(match)
-		if len(sub) < 3 {
-			return match
-		}
-		return strings.TrimSpace(sub[1]) + "/" + strings.TrimSpace(sub[2])
-	})
-}
-
-var overRe = regexp.MustCompile(`\{([^{}]*)\s*\\over\s*([^{}]*)}`)
-
-// =====================================================================
-// Superscript / Subscript
-// =====================================================================
-
-var superscriptDigits = map[rune]rune{
-	'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
-	'5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
-	'+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾',
-	'n': 'ⁿ', 'i': 'ⁱ',
-}
-
-var subscriptDigits = map[rune]rune{
-	'0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
-	'5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
-	'+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
-	'a': 'ₐ', 'e': 'ₑ', 'o': 'ₒ', 'x': 'ₓ',
-	'h': 'ₕ', 'k': 'ₖ', 'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ',
-	'p': 'ₚ', 's': 'ₛ', 't': 'ₜ',
-	'i': 'ᵢ', 'j': 'ⱼ', 'r': 'ᵣ', 'u': 'ᵤ', 'v': 'ᵥ',
-}
-
-// renderSuperscripts converts ^{...} and ^x to superscript Unicode.
-// Brace-aware for nested content like ^{i\pi}.
-func renderSuperscripts(s string) string {
-	// Braced: ^{...}
-	s = renderPowOrSub(s, '^', toSuperscript)
-	// Single-char: ^x (not followed by { or \)
-	s = renderPowOrSubSingle(s, '^', toSuperscript)
-	return s
-}
-
-// renderSubscripts converts _{...} and _x to subscript Unicode.
-func renderSubscripts(s string) string {
-	// Braced: _{...}
-	s = renderPowOrSub(s, '_', toSubscript)
-	// Single-char: _x
-	s = renderPowOrSubSingle(s, '_', toSubscript)
-	return s
-}
-
-// renderPowOrSub handles ^{...} or _{...} with brace-aware parsing.
-func renderPowOrSub(s string, marker byte, convert func(string) string) string {
-	for {
-		idx := indexOfMarkerBrace(s, marker)
-		if idx < 0 {
-			break
-		}
-		braceStart := idx + 1
-		if braceStart >= len(s) || s[braceStart] != '{' {
-			break
-		}
-		content, afterContent := extractBraced(s, braceStart)
-		if afterContent == braceStart {
-			break
-		}
-		replacement := convert(content)
-		s = s[:idx] + replacement + s[afterContent:]
-	}
-	return s
-}
-
-// renderPowOrSubSingle handles ^x or _x (single char, no braces).
-var singlePowRe = regexp.MustCompile(`\^([^\\{_\s])`)
-var singleSubRe = regexp.MustCompile(`_([^\\{^\s])`)
-
-func renderPowOrSubSingle(s string, marker byte, convert func(string) string) string {
-	var re *regexp.Regexp
-	if marker == '^' {
-		re = singlePowRe
-	} else {
-		re = singleSubRe
-	}
-	return re.ReplaceAllStringFunc(s, func(match string) string {
-		sub := re.FindStringSubmatch(match)
-		if len(sub) < 2 {
-			return match
-		}
-		return convert(sub[1])
-	})
-}
-
-func indexOfMarkerBrace(s string, marker byte) int {
-	for i := 0; i < len(s)-1; i++ {
-		if s[i] == marker && i+1 < len(s) && s[i+1] == '{' {
-			return i
-		}
-	}
-	return -1
-}
-
-func toSuperscript(s string) string {
-	var buf strings.Builder
-	for _, r := range s {
-		if sr, ok := superscriptDigits[r]; ok {
-			buf.WriteRune(sr)
-		} else {
-			buf.WriteRune(r)
-		}
-	}
-	return buf.String()
-}
-
-func toSubscript(s string) string {
-	var buf strings.Builder
-	for _, r := range s {
-		if sr, ok := subscriptDigits[r]; ok {
-			buf.WriteRune(sr)
-		} else {
-			buf.WriteRune(r)
-		}
-	}
-	return buf.String()
-}
-
-// =====================================================================
-// Brace cleanup
-// =====================================================================
-
-// removeBraces iteratively strips the innermost {content} pairs.
-var innerBraceRe = regexp.MustCompile(`\{([^{}]*)}`)
-
-func removeBraces(s string) string {
-	for i := 0; i < 10; i++ {
-		next := innerBraceRe.ReplaceAllString(s, "$1")
-		if next == s {
-			break
-		}
-		s = next
-	}
-	return s
-}
-
-// multiSpaceRe collapses 3+ consecutive spaces to 2.
-var multiSpaceRe = regexp.MustCompile(` {3,}`)
-
-// cleanSpaces collapses multiple spaces and trims each line.
-func cleanSpaces(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		line = multiSpaceRe.ReplaceAllString(line, "  ")
-		line = strings.TrimSpace(line)
-		lines[i] = line
-	}
-	return strings.Join(lines, "\n")
-}
-
-// =====================================================================
-// Symbol tables
-// =====================================================================
-
-var unknownCmdRe = regexp.MustCompile(`\\([a-zA-Z]+)`)
-
-var greekLetters = map[string]string{
-	`\alpha`: "α", `\beta`: "β", `\gamma`: "γ", `\delta`: "δ",
-	`\epsilon`: "ε", `\varepsilon`: "ε", `\zeta`: "ζ", `\eta`: "η",
-	`\theta`: "θ", `\vartheta`: "ϑ", `\iota`: "ι", `\kappa`: "κ",
-	`\lambda`: "λ", `\mu`: "μ", `\nu`: "ν", `\xi`: "ξ",
-	`\pi`: "π", `\varpi`: "ϖ", `\rho`: "ρ", `\sigma`: "σ",
-	`\tau`: "τ", `\upsilon`: "υ", `\phi`: "φ", `\varphi`: "φ",
-	`\chi`: "χ", `\psi`: "ψ", `\omega`: "ω",
-	`\Gamma`: "Γ", `\Delta`: "Δ", `\Theta`: "Θ", `\Lambda`: "Λ",
-	`\Xi`: "Ξ", `\Pi`: "Π", `\Sigma`: "Σ", `\Upsilon`: "Υ",
-	`\Phi`: "Φ", `\Psi`: "Ψ", `\Omega`: "Ω",
-}
-
-// mergedOperators = operators + delimiters merged into a single map
-// so that longest-first replacement handles \left[ (7ch) > \le (3ch).
-var mergedOperators = map[string]string{
-	// Delimiters (longer keys first implicitly via longest-first sort)
-	`\left\{`: "{", `\right\}`: "}",
-	`\left(`: "(", `\right)`: ")",
-	`\left[`: "[", `\right]`: "]",
-	`\left|`: "|", `\right|`: "|",
-	`\left.`: "", `\right.`: "",
-	`\bigl(`: "(", `\bigr)`: ")",
-	`\Bigl(`: "(", `\Bigr)`: ")",
-	`\left\lvert`: "|", `\right\rvert`: "|",
-	`\left\langle`: "⟨", `\right\rangle`: "⟩",
-	// Bracket symbols
-	`\langle`: "⟨", `\rangle`: "⟩",
-	`\lfloor`: "⌊", `\rfloor`: "⌋",
-	`\lceil`: "⌈", `\rceil`: "⌉",
-	`\lbrace`: "{", `\rbrace`: "}",
-	`\lvert`: "|", `\rvert`: "|",
-	`\Vert`: "‖", `\vert`: "|",
-	// Core operators
-	`\sum`: "∑", `\prod`: "∏", `\coprod`: "∐",
-	`\oint`: "∮", `\iiint`: "∭", `\iint`: "∬", `\int`: "∫",
-	`\partial`: "∂", `\nabla`: "∇", `\infty`: "∞",
-	`\pm`: "±", `\mp`: "∓", `\times`: "×", `\div`: "÷",
-	`\cdot`: "·", `\circ`: "∘", `\bullet`: "•", `\star`: "★",
-	`\approx`: "≈", `\neq`: "≠", `\leq`: "≤", `\geq`: "≥",
-	`\le`: "≤", `\ge`: "≥", `\ll`: "≪", `\gg`: "≫",
-	`\equiv`: "≡", `\sim`: "∼", `\simeq`: "≃", `\propto`: "∝",
-	`\perp`: "⊥", `\parallel`: "∥", `\angle`: "∠",
-	`\triangle`: "△", `\square`: "□",
-	`\subseteq`: "⊆", `\supseteq`: "⊇", `\subset`: "⊂", `\supset`: "⊃",
-	`\notin`: "∉", `\in`: "∈",
-	`\cup`: "∪", `\cap`: "∩", `\emptyset`: "∅", `\varnothing`: "∅",
-	`\forall`: "∀", `\exists`: "∃", `\neg`: "¬", `\land`: "∧", `\lor`: "∨",
-	`\oplus`: "⊕", `\otimes`: "⊗", `\odot`: "⊙",
-	`\hbar`: "ℏ", `\ell`: "ℓ", `\Re`: "ℜ", `\Im`: "ℑ",
-	`\aleph`: "ℵ", `\wp`: "℘", `\prime`: "′",
-	`\dagger`: "†", `\ddagger`: "‡",
-	`\cdots`: "⋯", `\ldots`: "…", `\vdots`: "⋮", `\ddots`: "⋱",
-	// Additional operators
-	`\mid`:     "∣",
-	`\implies`: "⟹", `\iff`: "⟺", `\impliedby`: "⟸",
-	`\therefore`: "∴", `\because`: "∵",
-	`\surd`: "√",
-	`\cong`: "≅", `\doteq`: "≐",
-	`\lesssim`: "≲", `\gtrsim`: "≳",
-	`\prec`: "≺", `\succ`: "≻",
-	`\bowtie`: "⋈",
-	`\uplus`:  "⊎", `\setminus`: "∖",
-	`\wr`:      "≀",
-	`\diamond`: "◇",
-	`\Join`:    "⋈",
-	`\bigcirc`: "◯",
-	`\amalg`:   "∐",
-	`\sharp`:   "♯", `\flat`: "♭", `\natural`: "♮",
-	`\Box`: "□", `\Diamond`: "◇",
-	`\clubsuit`: "♣", `\diamondsuit`: "♦", `\heartsuit`: "♥", `\spadesuit`: "♠",
-	// Sizing — just strip these
-	`\big`: "", `\Big`: "", `\bigg`: "", `\Bigg`: "",
-	// Escaped special chars
-	`\%`: "%", `\&`: "&", `\#`: "#", `\_`: "_",
-	`\{`: "{", `\}`: "}",
-}
-
-var arrows = map[string]string{
-	`\rightarrow`: "→", `\to`: "→", `\leftarrow`: "←", `\gets`: "←",
-	`\leftrightarrow`: "↔",
-	`\Rightarrow`:     "⇒", `\Leftarrow`: "⇐", `\Leftrightarrow`: "⇔",
-	`\uparrow`: "↑", `\downarrow`: "↓", `\updownarrow`: "↕",
-	`\Uparrow`: "⇑", `\Downarrow`: "⇓", `\Updownarrow`: "⇕",
-	`\mapsto`: "↦", `\hookrightarrow`: "↪",
-	`\nearrow`: "↗", `\searrow`: "↘", `\swarrow`: "↙", `\nwarrow`: "↖",
-	`\rightharpoonup`: "⇀", `\leftharpoonup`: "↼",
+var symbols = map[string]string{
+	// Greek lowercase
+	"alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ",
+	"epsilon": "ε", "varepsilon": "ε", "zeta": "ζ", "eta": "η",
+	"theta": "θ", "vartheta": "ϑ", "iota": "ι", "kappa": "κ",
+	"lambda": "λ", "mu": "μ", "nu": "ν", "xi": "ξ",
+	"pi": "π", "varpi": "ϖ", "rho": "ρ", "sigma": "σ",
+	"tau": "τ", "upsilon": "υ", "phi": "φ", "varphi": "φ",
+	"chi": "χ", "psi": "ψ", "omega": "ω",
+	// Greek uppercase
+	"Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ",
+	"Xi": "Ξ", "Pi": "Π", "Sigma": "Σ", "Upsilon": "Υ",
+	"Phi": "Φ", "Psi": "Ψ", "Omega": "Ω",
+	// Operators
+	"sum": "∑", "prod": "∏", "coprod": "∐",
+	"oint": "∮", "iiint": "∭", "iint": "∬", "int": "∫",
+	"partial": "∂", "nabla": "∇", "infty": "∞",
+	"pm": "±", "mp": "∓", "times": "×", "div": "÷",
+	"cdot": "·", "circ": "∘", "bullet": "•", "star": "★",
+	"approx": "≈", "neq": "≠", "leq": "≤", "geq": "≥",
+	"le": "≤", "ge": "≥", "ll": "≪", "gg": "≫",
+	"equiv": "≡", "sim": "∼", "simeq": "≃", "propto": "∝",
+	"perp": "⊥", "parallel": "∥", "angle": "∠",
+	"triangle": "△", "square": "□",
+	"subseteq": "⊆", "supseteq": "⊇", "subset": "⊂", "supset": "⊃",
+	"notin": "∉", "in": "∈",
+	"cup": "∪", "cap": "∩", "emptyset": "∅", "varnothing": "∅",
+	"forall": "∀", "exists": "∃", "neg": "¬", "land": "∧", "lor": "∨",
+	"oplus": "⊕", "otimes": "⊗", "odot": "⊙",
+	"hbar": "ℏ", "ell": "ℓ", "Re": "ℜ", "Im": "ℑ",
+	"aleph": "ℵ", "wp": "℘", "prime": "′",
+	"dagger": "†", "ddagger": "‡",
+	"cdots": "⋯", "ldots": "…", "vdots": "⋮", "ddots": "⋱",
+	"mid": "∣", "vert": "|", "Vert": "‖",
+	"implies": "⟹", "iff": "⟺", "impliedby": "⟸",
+	"therefore": "∴", "because": "∵",
+	"surd": "√", "cong": "≅", "doteq": "≐",
+	"lesssim": "≲", "gtrsim": "≳",
+	"prec": "≺", "succ": "≻", "bowtie": "⋈",
+	"uplus": "⊎", "setminus": "∖", "wr": "≀",
+	"diamond": "◇", "Join": "⋈", "bigcirc": "◯", "amalg": "∐",
+	"sharp": "♯", "flat": "♭", "natural": "♮",
+	"Box": "□", "Diamond": "◇",
+	"clubsuit": "♣", "diamondsuit": "♦", "heartsuit": "♥", "spadesuit": "♠",
+	// Brackets
+	"langle": "⟨", "rangle": "⟩",
+	"lfloor": "⌊", "rfloor": "⌋",
+	"lceil": "⌈", "rceil": "⌉",
+	"lbrace": "{", "rbrace": "}",
+	"lvert": "|", "rvert": "|",
+	// Arrows
+	"rightarrow": "→", "to": "→", "leftarrow": "←", "gets": "←",
+	"leftrightarrow": "↔",
+	"Rightarrow":     "⇒", "Leftarrow": "⇐", "Leftrightarrow": "⇔",
+	"uparrow": "↑", "downarrow": "↓", "updownarrow": "↕",
+	"Uparrow": "⇑", "Downarrow": "⇓", "Updownarrow": "⇕",
+	"mapsto": "↦", "hookrightarrow": "↪",
+	"nearrow": "↗", "searrow": "↘", "swarrow": "↙", "nwarrow": "↖",
+	"rightharpoonup": "⇀", "leftharpoonup": "↼",
+	// Display style — strip
+	"displaystyle": "", "textstyle": "", "scriptstyle": "",
+	"limits": "", "nolimits": "",
 }

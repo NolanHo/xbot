@@ -231,9 +231,6 @@ type Agent struct {
 	// SubAgent 深度控制
 	maxSubAgentDepth int
 
-	// autoWorktree enables automatic git worktree creation for peer sessions.
-	autoWorktree bool
-
 	// Cron service and scheduler
 	cronSvc *sqlite.CronService
 	cronSch *cron.Scheduler
@@ -1030,7 +1027,6 @@ func New(cfg Config) (*Agent, error) {
 		directWorkspace:    cfg.DirectWorkspace,
 		globalSkillDirs:    resolveGlobalSkillsDirs(cfg.SkillsDir),
 		maxSubAgentDepth:   cfg.MaxSubAgentDepth,
-		autoWorktree:       cfg.AutoWorktree,
 		// NOTE: .xbot is the server-side config directory; not accessible in user sandbox
 		agentsDir: filepath.Join(cfg.WorkDir, ".xbot", "agents"),
 		xbotHome:  cfg.XbotHome,
@@ -2315,18 +2311,9 @@ func (a *Agent) buildPrompt(ctx context.Context, msg bus.InboundMessage, tenantS
 	// Peer awareness / auto worktree: register this session for collaboration.
 	// When auto_worktree is enabled, every session gets its own git worktree (no primary).
 	// When disabled, RegisterPeer provides lightweight in-memory session tracking.
-	// Reads from user_settings DB (per-user scope) — same source as engine_wire.go
-	// and the /settings panel. No fallback to global config.json.
+	// Uses GetEffectiveSetting — the single correct read path for user-scoped settings.
 	// AutoDetectAndInit is idempotent: returns existing entry if session already registered.
-	autoWorktree := false
-	if a.settingsSvc != nil {
-		if vals, err := a.settingsSvc.GetSettings(msg.Channel, msg.SenderID); err == nil {
-			if v, ok := vals["auto_worktree"]; ok {
-				autoWorktree = strings.EqualFold(v, "true") || v == "1"
-			}
-		}
-	}
-	if autoWorktree {
+	if a.settingsSvc.GetEffectiveSettingBool(msg.Channel, msg.SenderID, "auto_worktree") {
 		if tools.GlobalWorktreeRegistry.GetBySession(sessKey) == nil {
 			if entry, created := tools.AutoDetectAndInit(detectDir, sessKey); entry != nil && entry.WorktreeDir != "" {
 				// Only override CWD for brand new worktrees (first creation).

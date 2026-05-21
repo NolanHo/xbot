@@ -43,6 +43,7 @@ import (
 	"xbot/tools"
 	"xbot/version"
 
+	"github.com/google/uuid"
 	"github.com/mattn/go-isatty"
 )
 
@@ -667,7 +668,7 @@ func (a *cliApp) buildPaletteExternalCommands() []channel.PaletteExternalCommand
 	return cmds
 }
 
-func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOutputTokens int) *cliApp {
+func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOutputTokens int, ephemeral bool) *cliApp {
 	cfg := config.Load()
 
 	// If --server was not specified on the command line, fall back to config.
@@ -684,6 +685,11 @@ func newCLIApp(serverURL, token string, forceLocal bool, maxContextTokens, maxOu
 	workDir := cfg.Agent.WorkDir
 	xbotHome := config.XbotHome()
 	dbPath := config.DBFilePath()
+
+	// Ephemeral mode: use in-memory SQLite so nothing is persisted to disk.
+	if ephemeral {
+		dbPath = ":memory:"
+	}
 
 	if err := setupLogger(cfg.Log, xbotHome); err != nil {
 		log.WithError(err).Fatal("Failed to setup logger")
@@ -821,6 +827,7 @@ func main() {
 		fmt.Println("Options:")
 		fmt.Println("  --help, -h          Show this help")
 		fmt.Println("  --new, --new-session  Start a new isolated session (auto-named)")
+		fmt.Println("  --ephemeral         Ephemeral mode: no persistence, clean state for benchmarking")
 		fmt.Println("  --resume            Resume last session (default)")
 		fmt.Println("  --max-context N     Override max context tokens (e.g. 128000)")
 		fmt.Println("  --max-tokens N      Override max output tokens (e.g. 8192)")
@@ -853,6 +860,7 @@ func main() {
 	// 解析命令行标志
 	prompt := ""
 	newSession := false
+	ephemeral := false
 	var (
 		flagServer       string        // --server ws://host:port (RemoteBackend: agent runs on server)
 		flagShare        string        // --share ws://host:port/ws/userID (Runner mode: tools run locally)
@@ -876,6 +884,8 @@ func main() {
 			// 保留兼容性，行为与默认相同
 		case "--new", "--new-session":
 			newSession = true
+		case "--ephemeral":
+			ephemeral = true
 		case "-p":
 			if len(os.Args) > i+1 {
 				prompt = os.Args[i+1]
@@ -974,11 +984,13 @@ func main() {
 
 	// 非交互模式
 	if prompt != "" {
-		executeNonInteractive(prompt, flagMaxContext, flagMaxTokens)
+		executeNonInteractive(prompt, flagMaxContext, flagMaxTokens, ephemeral)
 		return
 	}
 
-	if newSession {
+	if ephemeral {
+		fmt.Println("Mode: ephemeral (--ephemeral, no persistence)")
+	} else if newSession {
 		fmt.Println("Mode: new session (--new / --new-session)")
 	} else {
 		fmt.Println("Mode: resuming last session (use --new or --new-session for new session)")
@@ -988,7 +1000,7 @@ func main() {
 	if flagLocal {
 		flagServer = ""
 	}
-	app := newCLIApp(flagServer, flagToken, flagLocal, flagMaxContext, flagMaxTokens)
+	app := newCLIApp(flagServer, flagToken, flagLocal, flagMaxContext, flagMaxTokens, ephemeral)
 	if flagLocal {
 		fmt.Println("Backend: in-process (channel transport)")
 	} else if app.client != nil && app.client.IsRemote() {
@@ -1019,7 +1031,15 @@ func main() {
 	// SetLastActiveSession whenever the user switches sessions in the TUI.
 	// RPC is not available here (backend not started yet).
 	initialChatID := absWorkDir
-	if newSession {
+	if ephemeral {
+		// --ephemeral: use a unique throwaway chatID. No sessions.json, no persistence.
+		uid, err := uuid.NewRandom()
+		if err != nil {
+			log.WithError(err).Fatal("Failed to generate ephemeral session ID")
+		}
+		initialChatID = "_ephemeral:" + uid.String()
+		log.WithField("chatID", initialChatID).Info("Ephemeral session (no persistence)")
+	} else if newSession {
 		// --new/--new-session: unconditionally create a new isolated session.
 		name, chatID, err := channel.NewAutoSession(absWorkDir)
 		if err != nil {
@@ -1045,6 +1065,7 @@ func main() {
 		IsFirstRun:           firstRun,
 		SidebarWidthOverride: flagSidebarWidth,
 		NoSidebar:            flagNoSidebar,
+		Ephemeral:            ephemeral,
 		GetCurrentValues: func() map[string]string {
 			app.valuesCacheMu.RLock()
 			cache := app.valuesCache
@@ -1830,12 +1851,6 @@ func main() {
 		app.valuesCancel = valuesCancel
 	}
 
-	if newSession {
-		if err := app.client.SendInbound("cli", absWorkDir, "/new", "cli_user", "CLI User", "p2p", nil); err != nil {
-			log.WithError(err).Warn("Failed to send newSession message")
-		}
-	}
-
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	clipanic.Go("main.signalHandler", func() {
@@ -1915,8 +1930,8 @@ func red(s string) string {
 }
 
 // executeNonInteractive 非交互模式：单次执行 prompt 并输出到 stdout。
-func executeNonInteractive(prompt string, maxContextTokens, maxOutputTokens int) {
-	app := newCLIApp("", "", true, maxContextTokens, maxOutputTokens) // non-interactive always uses local backend
+func executeNonInteractive(prompt string, maxContextTokens, maxOutputTokens int, ephemeral bool) {
+	app := newCLIApp("", "", true, maxContextTokens, maxOutputTokens, ephemeral) // non-interactive always uses local backend
 	defer app.Close()
 
 	absWorkDir, _ := filepath.Abs(app.workDir)

@@ -169,8 +169,9 @@ func (mc *mockCompressor) Compress(ctx context.Context, msgs []llm.ChatMessage, 
 	}
 	// Default: return a simple summary
 	return &CompressResult{
-		LLMView:     []llm.ChatMessage{llm.NewSystemMessage("[compressed summary]")},
-		SessionView: []llm.ChatMessage{llm.NewAssistantMessage("Summary: compressed")},
+		LLMView:          []llm.ChatMessage{llm.NewSystemMessage("[compressed summary]")},
+		SessionView:      []llm.ChatMessage{llm.NewAssistantMessage("Summary: compressed")},
+		CompressedTokens: 10,
 	}, nil
 }
 
@@ -788,9 +789,8 @@ func TestIntegration_Compress_TriggeredWhenOverThreshold(t *testing.T) {
 					llm.NewSystemMessage("You are a test agent."),
 					llm.NewUserMessage("[compressed context]"),
 				},
-				SessionView: []llm.ChatMessage{
-					llm.NewAssistantMessage("Summary: compressed"),
-				},
+				SessionView:      []llm.ChatMessage{llm.NewAssistantMessage("Summary: compressed")},
+				CompressedTokens: 15,
 			}, nil
 		},
 	}

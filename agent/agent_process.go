@@ -109,12 +109,11 @@ func (a *Agent) wireBgNotificationDrain(sessionKey string) func() []tools.BgNoti
 	}
 }
 
-// drainSessionBgNotifications drains bg notifications matching the given session key
-// and processes them synchronously. Other sessions' notifications are left in
-// bgRunPending for their own Run loops to pick up via wireBgNotificationDrain.
-// Processing synchronously ensures notifications are injected into bus.Inbound
-// before processMessage returns, allowing chatProcessLoop to pick them up immediately.
-func (a *Agent) drainSessionBgNotifications(sessionKey string) {
+// drainAndProcessNotifications drains bg notifications for the given session
+// from bgRunPending and processes them via processBgNotification/processSubAgentBgNotification.
+// Called by chatProcessLoop after each turn completes (response sent), and by
+// chatWorker when idle. Safe for concurrent use — bgRunPendingMu serializes access.
+func (a *Agent) drainAndProcessNotifications(sessionKey string) {
 	a.bgRunPendingMu.Lock()
 	pending := a.bgRunPending
 	a.bgRunPending = nil

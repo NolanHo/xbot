@@ -1096,7 +1096,7 @@ func (m *cliModel) renderInfoBar() string {
 }
 
 // renderWorkspaceIndicator returns a workspace status string.
-// "🏠 primary" for main workspace, "🌿 <name>" for worktree sessions.
+// "🏠 main workspace" for main workspace, "🌿 <name>" for worktree sessions.
 func (m *cliModel) renderWorkspaceIndicator() string {
 	cwd := ""
 	if m.progress != nil {
@@ -1120,7 +1120,7 @@ func (m *cliModel) renderWorkspaceIndicator() string {
 		return fmt.Sprintf("🌿 %s", m.styles.Accent.Render(sessionName))
 	}
 
-	return fmt.Sprintf("🏠 %s", m.styles.TextMutedSt.Render("primary"))
+	return fmt.Sprintf("🏠 %s", m.styles.TextMutedSt.Render("main workspace"))
 }
 
 // shortenWorktreeName shortens a worktree directory name for display.

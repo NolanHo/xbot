@@ -52,7 +52,7 @@ func newTestRegistry() *WorktreeRegistry {
 	}
 }
 
-func TestRegisterPeer_FirstSessionBecomesPrimary(t *testing.T) {
+func TestRegisterPeer_AllSessionsArePeer(t *testing.T) {
 	repoPath := newTestGitRepo(t)
 	reg := newTestRegistry()
 
@@ -60,13 +60,13 @@ func TestRegisterPeer_FirstSessionBecomesPrimary(t *testing.T) {
 
 	entry := reg.GetBySession("cli:repo:session-1")
 	require.NotNil(t, entry)
-	assert.Equal(t, "primary", entry.Role, "first session in repo should be primary")
+	assert.Equal(t, "peer", entry.Role, "all sessions should be peer (no primary concept)")
 	assert.Equal(t, repoPath, entry.RepoPath)
 	assert.Equal(t, "", entry.WorktreeDir, "no worktree dir for RegisterPeer mode")
 	assert.Equal(t, "", entry.Branch, "no branch for RegisterPeer mode")
 }
 
-func TestRegisterPeer_SecondSessionBecomesPeer(t *testing.T) {
+func TestRegisterPeer_SecondSessionAlsoPeer(t *testing.T) {
 	repoPath := newTestGitRepo(t)
 	reg := newTestRegistry()
 
@@ -77,8 +77,8 @@ func TestRegisterPeer_SecondSessionBecomesPeer(t *testing.T) {
 	e2 := reg.GetBySession("cli:repo:session-2")
 	require.NotNil(t, e1)
 	require.NotNil(t, e2)
-	assert.Equal(t, "primary", e1.Role, "first session should be primary")
-	assert.Equal(t, "peer", e2.Role, "second session should be peer")
+	assert.Equal(t, "peer", e1.Role, "all sessions should be peer")
+	assert.Equal(t, "peer", e2.Role, "all sessions should be peer")
 }
 
 func TestRegisterPeer_ManySessions(t *testing.T) {
@@ -92,9 +92,9 @@ func TestRegisterPeer_ManySessions(t *testing.T) {
 
 	entries := reg.ListRepo(repoPath)
 	require.Len(t, entries, 5)
-	assert.Equal(t, "primary", entries[0].Role)
+	assert.Equal(t, "peer", entries[0].Role)
 	for _, e := range entries[1:] {
-		assert.Equal(t, "peer", e.Role, "all sessions after first should be peer")
+		assert.Equal(t, "peer", e.Role, "all sessions should be peer")
 	}
 }
 
@@ -131,8 +131,8 @@ func TestRegisterPeer_DifferentRepos(t *testing.T) {
 	e2 := reg.GetBySession("cli:repo2:session-1")
 	require.NotNil(t, e1)
 	require.NotNil(t, e2)
-	assert.Equal(t, "primary", e1.Role, "first session in repo1 should be primary")
-	assert.Equal(t, "primary", e2.Role, "first session in repo2 should be primary")
+	assert.Equal(t, "peer", e1.Role, "first session in repo1 should be peer")
+	assert.Equal(t, "peer", e2.Role, "first session in repo2 should be peer")
 }
 
 func TestRegisterPeer_NotPersistedToDisk(t *testing.T) {
@@ -158,28 +158,7 @@ func TestRegisterPeer_NotPersistedToDisk(t *testing.T) {
 	// New entry IS visible (in memory).
 	e3 := reg2.GetBySession("cli:repo:session-3")
 	require.NotNil(t, e3)
-	assert.Equal(t, "primary", e3.Role, "fresh registry should assign primary to first session")
-}
-
-func TestRegisterPeer_GetPrimary(t *testing.T) {
-	repoPath := newTestGitRepo(t)
-	reg := newTestRegistry()
-
-	// No primary yet
-	assert.Nil(t, reg.GetPrimary(repoPath))
-
-	// Register first → primary
-	reg.RegisterPeer("cli:repo:session-1", repoPath)
-	primary := reg.GetPrimary(repoPath)
-	require.NotNil(t, primary)
-	assert.Equal(t, "primary", primary.Role)
-	assert.Equal(t, "cli:repo:session-1", primary.SessionKey)
-
-	// Register more → primary unchanged
-	reg.RegisterPeer("cli:repo:session-2", repoPath)
-	primary = reg.GetPrimary(repoPath)
-	require.NotNil(t, primary)
-	assert.Equal(t, "cli:repo:session-1", primary.SessionKey, "primary should remain the first session")
+	assert.Equal(t, "peer", e3.Role, "fresh registry should assign peer to first session")
 }
 
 func TestCleanupSession_PeerOnly(t *testing.T) {

@@ -355,8 +355,8 @@ func (m *cliModel) saveCurrentSession() {
 		inputDraft:             m.inputDraft,
 		bgTaskCount:            m.bgTaskCount,
 	}
-	// Persist todo list for current session
-	if m.todoManager != nil {
+	// Persist todo list for current session (skip in ephemeral mode — nothing to persist)
+	if m.todoManager != nil && !m.ephemeral {
 		_ = m.todoManager.SaveToFile(key)
 	}
 }
@@ -832,6 +832,7 @@ type cliModel struct {
 	connState              string    // WS connection state: "connected"|"disconnected"|"reconnecting"
 	debugMode              bool      // --debug: UI capture + key injection via SIGUSR1
 	debugCaptureMs         int       // --debug-capture-ms: UI capture interval in ms (0 = default 1000)
+	ephemeral              bool      // --ephemeral: no persistence, clean slate for benchmarking
 	senderID               string    // 当前身份 ID（默认 "cli_user"，/su 命令可切换）
 	channelName            string    // 当前 channel（默认 "cli"，/su 切换时可能变为 "web"）
 	defaultChatID          string    // 默认 chatID（/su 切换回来时恢复）

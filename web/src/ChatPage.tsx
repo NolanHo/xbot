@@ -231,6 +231,8 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     streamingContentRef,
   })
   const [autoScroll, setAutoScroll] = useState(true)
+  const autoScrollRef = useRef(true)
+  const scrollProgrammaticRef = useRef(false) // true when we triggered scrollToBottom ourselves
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const [dragActive, setDragActive] = useState(false)
@@ -346,22 +348,46 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'instant') => {
     const el = messagesContainerRef.current
     if (!el) return
+    scrollProgrammaticRef.current = true
     el.scrollTo({ top: el.scrollHeight, behavior })
+    // Reset flag after a tick to let the scroll event fire
+    setTimeout(() => { scrollProgrammaticRef.current = false }, 50)
   }, [])
 
+  // Throttle scroll handler to avoid setState thrashing from virtualizer reflows
+  const scrollThrottleRef = useRef(0)
   const handleContainerScroll = useCallback(() => {
-    setAutoScroll(isNearBottom())
+    // Ignore scroll events triggered by our own scrollToBottom()
+    if (scrollProgrammaticRef.current) return
+    // Throttle: only check once per animation frame
+    if (scrollThrottleRef.current) return
+    scrollThrottleRef.current = requestAnimationFrame(() => {
+      scrollThrottleRef.current = 0
+      const near = isNearBottom()
+      if (near !== autoScrollRef.current) {
+        autoScrollRef.current = near
+        setAutoScroll(near)
+      }
+    })
   }, [isNearBottom])
 
-  // Auto-scroll during streaming/progress updates — throttled to avoid layout thrashing.
-  // Only follows when user is already at the bottom (autoScroll=true).
+  // Auto-scroll during streaming/progress updates — only when actively loading.
+  // Guarded to prevent infinite loop with virtualizer.measureElement reflows.
   const scrollRafRef = useRef<number>(0)
+  const prevMsgCountRef = useRef(0)
   useEffect(() => {
-    if (!autoScroll) return
+    if (!autoScrollRef.current) return
+    // Only auto-scroll when actively streaming (loading or progress) OR when new messages arrive
+    const isActive = loading || progress !== null
+    const msgCount = messages.length
+    const hasNewMessages = msgCount > prevMsgCountRef.current
+    prevMsgCountRef.current = msgCount
+    // Skip if not active AND no new messages — prevents reflow-triggered scrolls
+    if (!isActive && !hasNewMessages) return
     if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current)
     scrollRafRef.current = requestAnimationFrame(() => scrollToBottom('instant'))
     return () => { if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current) }
-  }, [messages, progress, autoScroll, scrollToBottom])
+  }, [messages, progress, autoScroll, scrollToBottom, loading])
 
   // --- Fetch context info ---
   const fetchContextInfo = useCallback(() => {
@@ -525,10 +551,12 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
           if (data.last_seq) {
             lastSeqRef.current = data.last_seq
           }
+          // Final scroll-to-bottom after all messages have loaded and rendered.
+          // Use a longer delay to let the virtualizer finish measuring all elements.
           setTimeout(() => {
             scrollToBottom('instant')
             requestAnimationFrame(() => scrollToBottom('instant'))
-          }, 100)
+          }, 300)
         }
       })
       .catch((err) => {
@@ -613,7 +641,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     setTodos([])
     setSubAgents([])
     setLoading(true)
-    setAutoScroll(true)
+    setAutoScroll(true); autoScrollRef.current = true
 
     const payload: { type: string; content: string; channel?: string; chat_id?: string; file_ids?: string[]; file_names?: string[]; file_sizes?: number[]; upload_keys?: string[]; file_mimes?: string[] } = {
       type: 'message',
@@ -687,7 +715,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
     setMessages(prev => prev.slice(0, userIdx))
     resetProgress()
     setLoading(true)
-    setAutoScroll(true)
+    setAutoScroll(true); autoScrollRef.current = true
     // Resend the user message
     wsSend({ type: 'message', content: userContent })
   }, [messages, wsSend, resetProgress, showToast])
@@ -1237,7 +1265,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
       {/* Scroll to bottom button */}
       {!autoScroll && (messages.length > 0 || loading) && (
         <button
-          onClick={() => { setAutoScroll(true); requestAnimationFrame(() => scrollToBottom('smooth')) }}
+          onClick={() => { setAutoScroll(true); autoScrollRef.current = true; requestAnimationFrame(() => scrollToBottom('smooth')) }}
           className="scroll-to-bottom-btn"
           aria-label={t('scrollToBottom')}
           data-testid="scroll-to-bottom-btn"

@@ -498,7 +498,17 @@ func ListLocalDirSessions(workDir string) []SessionPanelEntry {
 // SetLastActiveSession persists the last active session for a workDir.
 // chatID may be a full chatID (workDir:sessionName) or bare workDir.
 // The workDir is extracted via ParseChatID to ensure correct file lookup.
+// IsEphemeralChatID returns true if the chatID belongs to an ephemeral session
+// (started with --ephemeral). These sessions skip all disk persistence.
+func IsEphemeralChatID(chatID string) bool {
+	return strings.HasPrefix(chatID, "_ephemeral:")
+}
+
 func SetLastActiveSession(workDirOrChatID, chatID string) {
+	// Ephemeral sessions: skip sessions.json persistence entirely.
+	if IsEphemeralChatID(chatID) {
+		return
+	}
 	workDir, _ := ParseChatID(workDirOrChatID)
 	ds, err := LoadDirSessions(workDir)
 	if err != nil {
@@ -548,6 +558,10 @@ func (s SessionLLMState) IsZero() bool {
 // This replaces the old SaveSessionLLM + SaveSessionMaxContext pair.
 // Partial writes are impossible — either all fields are persisted or none.
 func SaveSessionLLMState(workDir, chatID string, state SessionLLMState) {
+	// Ephemeral sessions: skip sessions.json persistence entirely.
+	if IsEphemeralChatID(chatID) {
+		return
+	}
 	ds, err := LoadDirSessions(workDir)
 	if err != nil {
 		return

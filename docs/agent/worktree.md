@@ -35,9 +35,9 @@ Process-level `sync.Map`-based registry. Single source of truth for active workt
 ```go
 type WorktreeEntry struct {
     SessionKey  string  // "cli:/path/to/repo:debug" or "agent:role/instance"
-    Role        string  // "primary" | "peer" | "child"
+    Role        string  // "peer" | "child"
     RepoPath    string
-    WorktreeDir string  // empty for primary
+    WorktreeDir string  // empty for peer-awareness-only sessions (no physical worktree)
     Branch      string
     Status      string  // "working" | "merge-ready" | "done"
 }
@@ -51,7 +51,7 @@ Built-in tool registered in `DefaultRegistry` as `RegisterCore`. Actions:
 
 | Action | Description |
 |--------|-------------|
-| `init` | Auto-detect: first agent→primary, subsequent→worktree |
+| `init` | Create isolated worktree for the current agent session |
 | `cleanup` | Remove worktree + branch + deregister |
 | `status` | List active worktrees in current repo |
 

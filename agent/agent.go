@@ -196,6 +196,24 @@ func (a *Agent) IndexGlobalTools() {
 	log.WithField("count", len(toolEntries)).Infof("Indexed %d global tools (registry + tool groups + MCP)", len(toolEntries))
 }
 
+// bgSessionState tracks per-session state for bg notification delivery.
+// Registered in bgSessionStates when a chatWorker starts, deregistered on exit.
+//
+// Architecture:
+//   - bgNotifyLoop ALWAYS buffers to bgRunPending, NEVER processes directly.
+//   - After buffering, it signals the session's notifyCh.
+//   - chatProcessLoop drains pending notifications after each turn completes
+//     (after response is sent), guaranteeing injectCLIUserMessage won't race
+//     with the turn's reply on asyncCh.
+//   - chatWorker drains pending notifications when idle (chatProcessLoop is
+//     waiting on msgCh), checked via busy flag to avoid racing with response sends.
+//   - During active Run, wireBgNotificationDrain picks up notifications between
+//     iterations as tool results.
+type bgSessionState struct {
+	notifyCh chan struct{} // buffered(1): signal that bgRunPending has new items
+	busy     atomic.Bool   // true while chatProcessLoop is processing a turn
+}
+
 // Agent 核心 Agent 引擎
 type Agent struct {
 	bus              *bus.MessageBus
@@ -336,17 +354,15 @@ type Agent struct {
 	pluginMgr *plugin.PluginManager
 	bgTaskMgr *tools.BackgroundTaskManager
 
-	// bgRunActive is an atomic reference count of active Run() calls across all sessions.
-	// Each processMessage increments on entry (AddInt32 +1) and decrements on exit (AddInt32 -1).
-	// bgNotifyLoop checks > 0 to decide routing: buffer (active) vs idle-path.
-	// Using a counter instead of a boolean prevents Session A's exit from clearing the flag
-	// while Session B's Run is still active.
-	bgRunActive int32
-
 	// bgRunPending buffers bg notifications that arrived during an active Run.
 	// The Run loop drains these between iterations.
 	bgRunPending   []tools.BgNotification
 	bgRunPendingMu sync.Mutex
+
+	// bgSessionStates maps chatKey → *bgSessionState for per-session notification signaling.
+	// bgNotifyLoop always buffers notifications, then signals the session's state channel.
+	// chatWorker registers on entry and deregisters on exit.
+	bgSessionStates sync.Map
 
 	// agentCtx is the Agent-level context, set when Run() starts and cancelled when Run() exits.
 	// Background interactive subagents derive their context from this (not from per-request ctx)
@@ -1683,84 +1699,113 @@ func (a *Agent) getSemaphoreForMessage(msg bus.InboundMessage) chan struct{} {
 // 主循环持续从 ch 取消息并分发：
 //   - 指令消息（/version, /help 等）：独立 goroutine 立即执行，不阻塞
 //   - 普通消息：发送到内部 msgCh，由专门的 goroutine 串行处理（带信号量 + cancel）
+//   - bg通知信号：当chatProcessLoop空闲时，drain并处理pending通知
 //
 // 这样即使普通消息正在长时间处理（LLM 推理），主循环仍能取出并执行命令消息。
 func (a *Agent) chatWorker(ctx context.Context, chatKey string, ch <-chan bus.InboundMessage) {
 	// 内部普通消息队列：主循环写入，processLoop 消费
 	msgCh := make(chan bus.InboundMessage, 32)
 
+	// Register per-session bg notification state
+	ss := &bgSessionState{notifyCh: make(chan struct{}, 1)}
+	a.bgSessionStates.Store(chatKey, ss)
+	defer a.bgSessionStates.Delete(chatKey)
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	clipanic.Go("agent.chatWorker.processLoop", func() {
 		defer wg.Done()
-		a.chatProcessLoop(ctx, chatKey, msgCh)
+		a.chatProcessLoop(ctx, chatKey, msgCh, ss)
 	})
 
-	for msg := range ch {
-		if ctx.Err() != nil {
-			break
-		}
+	defer func() {
+		close(msgCh)
+		wg.Wait()
+	}()
 
-		// 指令消息分发：根据 Concurrent() 决定执行方式
-		if cmd := a.commands.Match(msg.Content); cmd != nil {
-			if cmd.Concurrent() {
-				// 无状态命令：独立 goroutine 处理，不占信号量，不阻塞
-				m := msg
-				c := cmd
-				clipanic.Go("agent.chatWorker.concurrentCommand", func() {
-					// 清除 sessionFinalSent：command 不走 processMessage，
-					// 需要手动清除否则 sendMessage 会被拦截
-					cmdKey := qualifyChatID(m.Channel, m.ChatID)
-					a.resetSessionState(cmdKey)
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
 
-					response, err := c.Execute(ctx, a, m)
-					if err != nil {
-						log.WithFields(log.Fields{"request_id": m.RequestID, "chat": chatKey}).WithError(err).Error("Error processing command")
-						content := formatErrorForUser(err)
-						if sendErr := a.sendMessage(m.Channel, m.ChatID, content); sendErr != nil {
-							a.bus.Outbound <- bus.OutboundMessage{
-								Channel: m.Channel,
-								ChatID:  m.ChatID,
-								Content: content,
+			// 指令消息分发：根据 Concurrent() 决定执行方式
+			if cmd := a.commands.Match(msg.Content); cmd != nil {
+				if cmd.Concurrent() {
+					// 无状态命令：独立 goroutine 处理，不占信号量，不阻塞
+					m := msg
+					c := cmd
+					clipanic.Go("agent.chatWorker.concurrentCommand", func() {
+						// 清除 sessionFinalSent：command 不走 processMessage，
+						// 需要手动清除否则 sendMessage 会被拦截
+						cmdKey := qualifyChatID(m.Channel, m.ChatID)
+						a.resetSessionState(cmdKey)
+
+						response, err := c.Execute(ctx, a, m)
+						if err != nil {
+							log.WithFields(log.Fields{"request_id": m.RequestID, "chat": chatKey}).WithError(err).Error("Error processing command")
+							content := formatErrorForUser(err)
+							if sendErr := a.sendMessage(m.Channel, m.ChatID, content); sendErr != nil {
+								a.bus.Outbound <- bus.OutboundMessage{
+									Channel: m.Channel,
+									ChatID:  m.ChatID,
+									Content: content,
+								}
+							}
+							return
+						}
+						if response != nil {
+							if sendErr := a.sendMessage(m.Channel, m.ChatID, response.Content, response.Metadata); sendErr != nil {
+								a.bus.Outbound <- bus.OutboundMessage{
+									Channel: response.Channel,
+									ChatID:  response.ChatID,
+									Content: response.Content,
+									Media:   response.Media,
+								}
 							}
 						}
+					})
+				} else {
+					// 有状态命令（/new, /compress, /set-llm 等）：走串行队列，
+					// 避免与正在处理的普通消息产生 session 数据竞态
+					select {
+					case msgCh <- msg:
+					case <-ctx.Done():
 						return
 					}
-					if response != nil {
-						if sendErr := a.sendMessage(m.Channel, m.ChatID, response.Content, response.Metadata); sendErr != nil {
-							a.bus.Outbound <- bus.OutboundMessage{
-								Channel: response.Channel,
-								ChatID:  response.ChatID,
-								Content: response.Content,
-								Media:   response.Media,
-							}
-						}
-					}
-				})
-			} else {
-				// 有状态命令（/new, /compress, /set-llm 等）：走串行队列，
-				// 避免与正在处理的普通消息产生 session 数据竞态
-				select {
-				case msgCh <- msg:
-				case <-ctx.Done():
 				}
+				continue
 			}
-			continue
-		}
 
-		// 普通消息：转发到内部队列，由 processLoop 串行处理
-		select {
-		case msgCh <- msg:
+			// 普通消息：转发到内部队列，由 processLoop 串行处理
+			select {
+			case msgCh <- msg:
+			case <-ctx.Done():
+				return
+			}
+
+		case <-ss.notifyCh:
+			// bg notification arrived — drain and process ONLY when chatProcessLoop is idle.
+			// When busy, notifications stay in bgRunPending for chatProcessLoop's
+			// post-turn drain to pick up (guaranteed after response is sent).
+			if !ss.busy.Load() {
+				a.drainAndProcessNotifications(chatKey)
+			}
+
 		case <-ctx.Done():
+			return
 		}
 	}
-
-	close(msgCh)
-	wg.Wait()
 }
 
 // chatProcessLoop 串行处理普通消息（非命令），带信号量控制和 per-request cancel 支持。
-func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan bus.InboundMessage) {
+// After each turn completes (response sent), drains pending bg notifications
+// at a safe point where injectCLIUserMessage cannot race with the turn's reply.
+func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan bus.InboundMessage, ss *bgSessionState) {
 	var idleTimer *time.Timer
 	defer func() {
 		if idleTimer != nil {
@@ -1774,6 +1819,9 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 		if ctx.Err() != nil {
 			return
 		}
+
+		// Mark session busy so chatWorker skips notification drain
+		ss.busy.Store(true)
 
 		// 停止上一次的 idle timer（收到新消息，重置计时）
 		if idleTimer != nil {
@@ -1790,6 +1838,7 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
+			ss.busy.Store(false)
 			return
 		}
 
@@ -1880,6 +1929,9 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 				// message to signal turn end so CLI can clean up typing/progress state.
 				_ = a.sendMessage(msg.Channel, msg.ChatID, "", cancelMeta)
 			}
+			// Turn done — response sent, safe to drain bg notifications
+			ss.busy.Store(false)
+			a.drainAndProcessNotifications(chatKey)
 			continue
 		}
 
@@ -1895,6 +1947,9 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 					Content: content,
 				}
 			}
+			// Turn done — error response sent, safe to drain bg notifications
+			ss.busy.Store(false)
+			a.drainAndProcessNotifications(chatKey)
 			continue
 		}
 		if response != nil {
@@ -1939,6 +1994,13 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 				})
 			}
 		}
+
+		// Turn done — response sent, safe to drain bg notifications.
+		// This is the CRITICAL ordering: all response sends happen BEFORE this point,
+		// so injectCLIUserMessage in drainAndProcessNotifications cannot race with
+		// the turn's reply on asyncCh.
+		ss.busy.Store(false)
+		a.drainAndProcessNotifications(chatKey)
 	}
 }
 
@@ -2114,11 +2176,6 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*ch
 			}
 		}
 	}
-	// Mark Run as active so bgNotifyLoop buffers notifications instead of processing idle.
-	// Uses AddInt32 (reference count) instead of StoreInt32 (boolean) so that
-	// multiple concurrent sessions don't clear each other's active flag.
-	atomic.AddInt32(&a.bgRunActive, 1)
-
 	// Inject running background task IDs into the last user message so the LLM
 	// is aware of active tasks and doesn't try to restart them.
 	// injectSystemNotes modifies the messages slice in-place (appends to last user message),
@@ -2163,22 +2220,11 @@ func (a *Agent) processMessage(ctx context.Context, msg bus.InboundMessage) (*ch
 
 	out := Run(ctx, cfg)
 
-	// Drain THIS session's remaining bg notifications synchronously.
-	// Must happen before decrementing bgRunActive so that bgNotifyLoop
-	// continues buffering new arrivals. Only drain our own session's
-	// notifications — other sessions' notifications must stay in bgRunPending
-	// for their own Run loops to pick up.
-	a.drainSessionBgNotifications(currentSessionKey)
-
-	// Decrement the reference count. If other sessions still have active Runs,
-	// bgRunActive remains > 0 and bgNotifyLoop keeps buffering for them.
-	atomic.AddInt32(&a.bgRunActive, -1)
-
-	// Drain any notifications that arrived between the first drain and the
-	// decrement (only our session's — others' are still in bgRunPending for
-	// their Run loops). These go through the idle path since our Run is done.
-	a.drainSessionBgNotifications(currentSessionKey)
-
+	// No bgRunActive management or notification draining here.
+	// bgNotifyLoop always buffers (never processes directly).
+	// Remaining notifications in bgRunPending are drained by
+	// chatProcessLoop's post-turn drain (after response is sent),
+	// or by chatWorker's idle notification handler.
 	if out.Error != nil {
 		if errors.Is(out.Error, context.Canceled) {
 			return a.handleCancelledRun(ctx, msg, out, tenantSession)
@@ -2638,23 +2684,28 @@ func (a *Agent) injectEventMessage(msg event.Message) {
 }
 
 // bgNotifyLoop routes background notifications from BgTaskManager.NotifyCh.
-// When any Run is active (bgRunActive > 0), notifications are buffered in bgRunPending
-// for the Run loop to drain between iterations. When idle (bgRunActive == 0),
-// notifications go directly to the appropriate handler based on type.
+// ALL notifications are buffered into bgRunPending. The function NEVER processes
+// them directly — this eliminates the race between injectCLIUserMessage and the
+// agent's reply on asyncCh.
+//
+// After buffering, the target session's notifyCh is signaled. The session's
+// chatWorker or chatProcessLoop picks up the signal and drains notifications
+// at a safe point (after the turn's reply is sent, or when idle).
 func (a *Agent) bgNotifyLoop() {
 	for notif := range a.bgTaskMgr.NotifyCh {
-		if v := atomic.LoadInt32(&a.bgRunActive); v > 0 {
-			// Run is active — buffer for Run loop to drain
-			a.bgRunPendingMu.Lock()
-			a.bgRunPending = append(a.bgRunPending, notif)
-			a.bgRunPendingMu.Unlock()
-		} else {
-			// Idle — process directly based on notification type
-			switch n := notif.(type) {
-			case *tools.BackgroundTask:
-				go a.processBgNotification(n)
-			case *tools.SubAgentBgNotify:
-				go a.processSubAgentBgNotification(n)
+		// Always buffer — never process directly
+		a.bgRunPendingMu.Lock()
+		a.bgRunPending = append(a.bgRunPending, notif)
+		a.bgRunPendingMu.Unlock()
+
+		// Signal the target session's chatWorker
+		sessionKey := notif.SessionKey()
+		if state, ok := a.bgSessionStates.Load(sessionKey); ok {
+			ss := state.(*bgSessionState)
+			select {
+			case ss.notifyCh <- struct{}{}:
+			default:
+				// Already signaled — notification will be drained with others
 			}
 		}
 	}

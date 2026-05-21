@@ -49,7 +49,7 @@ type WorktreeParams struct {
 func (t *WorktreeTool) Parameters() []llm.ToolParam {
 	return []llm.ToolParam{
 		{Name: "action", Type: "string", Description: "Action: init, cleanup, or status", Required: true},
-		{Name: "role", Type: "string", Description: "Agent role: peer, child, or primary (for init)", Required: false},
+		{Name: "role", Type: "string", Description: "Agent role: peer or child (for init)", Required: false},
 		{Name: "instance", Type: "string", Description: "Agent instance ID (for init)", Required: false},
 		{Name: "task", Type: "string", Description: "Short task description for branch name (for init)", Required: false},
 	}
@@ -102,8 +102,14 @@ func (t *WorktreeTool) executeInit(ctx *ToolContext, params WorktreeParams) (*To
 	}
 
 	if existing := GlobalWorktreeRegistry.GetBySession(sessionKey); existing != nil {
-		return NewResult(fmt.Sprintf("Already registered as %q in worktree: %s (branch: %s)",
-			existing.Role, existing.WorktreeDir, existing.Branch)), nil
+		if existing.WorktreeDir != "" {
+			// Real worktree exists — cannot re-init.
+			return NewResult(fmt.Sprintf("Already registered as %q in worktree: %s (branch: %s)",
+				existing.Role, existing.WorktreeDir, existing.Branch)), nil
+		}
+		// Lightweight peer-awareness entry (from RegisterPeer when auto_worktree is off).
+		// Remove it so we can upgrade to a real worktree.
+		GlobalWorktreeRegistry.Deregister(sessionKey)
 	}
 
 	// All sessions get a worktree — no primary concept.
@@ -170,7 +176,7 @@ func (t *WorktreeTool) executeCleanup(ctx *ToolContext) (*ToolResult, error) {
 
 	if entry.WorktreeDir == "" {
 		GlobalWorktreeRegistry.Deregister(sessionKey)
-		return NewResult(fmt.Sprintf("Deregistered primary agent for repo %s.", entry.RepoPath)), nil
+		return NewResult(fmt.Sprintf("Deregistered session for repo %s.", entry.RepoPath)), nil
 	}
 
 	if err := removeWorktree(entry.RepoPath, entry.WorktreeDir, entry.Branch); err != nil {

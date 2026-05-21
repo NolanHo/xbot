@@ -43,8 +43,11 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 
 	// 1b. Migrate data to SQLite if needed (one-time migration from old formats).
 	// Must run BEFORE agent.New (which opens the DB via session.NewMultiTenant).
-	if err := storage.MigrateIfNeeded(context.Background(), workDir, dbPath); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("migrate data: %w", err)
+	// Skip for in-memory DB (ephemeral mode) — nothing to migrate from.
+	if dbPath != ":memory:" {
+		if err := storage.MigrateIfNeeded(context.Background(), workDir, dbPath); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("migrate data: %w", err)
+		}
 	}
 
 	// 2. Create Agent.
@@ -104,7 +107,10 @@ func InitServer(cfg *config.Config, llmClient llm_pkg.LLM, dbPath, workDir, xbot
 	// 2c. Migrate flat memory from SQLite tables to MD files (if needed).
 	// This is a one-time migration; must run after agent opens the DB (via
 	// session.NewMultiTenant) but before any session access.
-	storage.MigrateMemoryToFiles(dbPath)
+	// Skip for in-memory DB (ephemeral mode) — no legacy data to migrate.
+	if dbPath != ":memory:" {
+		storage.MigrateMemoryToFiles(dbPath)
+	}
 
 	// 2c. Set runner token DB for per-user runner token persistence.
 	// The Agent opens the DB internally via session.NewMultiTenant(cfg.DBPath);

@@ -27,10 +27,12 @@ const schemaVersion = 32
 // Open opens or creates a SQLite database at the given path
 // If the database doesn't exist, it will be created with the required schema
 func Open(path string) (*DB, error) {
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("create database directory: %w", err)
+	// Ensure directory exists (skip for :memory: which is in-memory SQLite)
+	if path != ":memory:" {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create database directory: %w", err)
+		}
 	}
 
 	conn, err := sql.Open("sqlite", path)

@@ -48,10 +48,11 @@ func sampleCompressResult() *CompressResult {
 			llm.NewUserMessage("summary of context"),
 			llm.NewAssistantMessage("understood"),
 		},
-		InputTokens:  100,
-		OutputTokens: 50,
-		CachedTokens: 10,
-		LLMCalls:     1,
+		CompressedTokens: 42,
+		InputTokens:      100,
+		OutputTokens:     50,
+		CachedTokens:     10,
+		LLMCalls:         1,
 	}
 }
 
@@ -112,9 +113,9 @@ func TestApplyCompress_CompressSuccess(t *testing.T) {
 		t.Errorf("expected 2 new messages, got %d", len(got.NewMessages))
 	}
 
-	// Verify token count was estimated
-	if got.NewTokenCount <= 0 {
-		t.Errorf("expected positive NewTokenCount, got %d", got.NewTokenCount)
+	// Verify CompressedTokens is used (not InputTokens)
+	if got.NewTokenCount != 42 {
+		t.Errorf("expected NewTokenCount=42 (CompressedTokens), got %d", got.NewTokenCount)
 	}
 
 	// Verify CompressOutput is the original result

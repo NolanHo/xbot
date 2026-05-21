@@ -17,6 +17,10 @@ type CompressResult struct {
 	LLMView     []llm.ChatMessage // Full messages for continuing the current Run()
 	SessionView []llm.ChatMessage // User/assistant only, persisted to session
 
+	// CompressedTokens is the estimated token count of LLMView after compression.
+	// This is the authoritative "how big is the context now" value.
+	CompressedTokens int
+
 	// Token usage from compression LLM calls (for tracking in /usage).
 	InputTokens  int64
 	OutputTokens int64
@@ -577,11 +581,12 @@ Output the structured working state directly.`
 	}).Info("Context compaction completed")
 
 	return &CompressResult{
-		LLMView:      llmView,
-		SessionView:  sessionView,
-		InputTokens:  totalInput,
-		OutputTokens: totalOutput,
-		CachedTokens: totalCached,
-		LLMCalls:     llmCalls,
+		LLMView:          llmView,
+		SessionView:      sessionView,
+		CompressedTokens: newTokens,
+		InputTokens:      totalInput,
+		OutputTokens:     totalOutput,
+		CachedTokens:     totalCached,
+		LLMCalls:         llmCalls,
 	}, nil
 }

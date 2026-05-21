@@ -813,6 +813,7 @@ type CLIChannelConfig struct {
 	TodoManager          *cliTodoManager                                                                                  // per-session todo persistence
 	SetCWDFn             func(channelName, chatID, dir string) error                                                      // 会话切换时初始化 CWD
 	BindChatFn           func(chatID string) error                                                                        // 订阅 Hub 路由，使服务器推送事件（progress/stream/outbound）到达客户端
+	Ephemeral            bool                                                                                             // --ephemeral: no sessions.json, no DB persistence, clean slate for benchmarking
 }
 
 type AgentPanelEntry struct {

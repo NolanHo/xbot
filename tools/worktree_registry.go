@@ -14,9 +14,9 @@ import (
 // WorktreeEntry describes a single active worktree managed by xbot.
 type WorktreeEntry struct {
 	SessionKey  string // "cli:/path/to/repo:debug" or "agent:role/instance"
-	Role        string // "primary" | "peer" | "child"
+	Role        string // "peer" | "child"
 	RepoPath    string // absolute path to the main git repo
-	WorktreeDir string // absolute path to the worktree (empty for primary)
+	WorktreeDir string // absolute path to the worktree (empty for peer-awareness-only sessions)
 	Branch      string // branch name
 	CreatedAt   time.Time
 	Status      string // "working" | "merge-ready" | "done"
@@ -139,19 +139,6 @@ func (r *WorktreeRegistry) GetBySession(sessionKey string) *WorktreeEntry {
 	return cloneEntry(e)
 }
 
-// GetPrimary returns the primary entry for a repo, or nil.
-func (r *WorktreeRegistry) GetPrimary(repoPath string) *WorktreeEntry {
-	r.ensureLoaded(repoPath)
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, e := range r.byRepo[repoPath] {
-		if e.Role == "primary" {
-			return cloneEntry(e)
-		}
-	}
-	return nil
-}
-
 // HasPeers returns true if there are other active entries in the repo.
 func (r *WorktreeRegistry) HasPeers(repoPath, excludeSessionKey string) bool {
 	r.ensureLoaded(repoPath)
@@ -212,9 +199,8 @@ func (r *WorktreeRegistry) GetCWD(sessionKey string) string {
 }
 
 // RegisterPeer registers a session for peer awareness without creating a worktree.
-// Used when auto_worktree is disabled. The first session in a repo is registered
-// as "primary"; subsequent sessions are registered as "peer" (sharing the main
-// workspace, no file isolation).
+// Used when auto_worktree is disabled. All sessions are equal peers (sharing the
+// main workspace, no file isolation).
 //
 // Entries created by RegisterPeer are NOT persisted to disk — they are runtime-only
 // peer awareness data that becomes stale across process restarts.
@@ -232,18 +218,10 @@ func (r *WorktreeRegistry) RegisterPeer(sessionKey, workDir string) {
 	if _, exists := r.bySess[sessionKey]; exists {
 		return
 	}
-	// Determine role: first session → primary, others → peer.
-	// Must check inline (not via GetPrimary) because we already hold mu.Lock.
-	role := "primary"
-	for _, e := range r.byRepo[repoPath] {
-		if e.Role == "primary" {
-			role = "peer"
-			break
-		}
-	}
+	// All sessions are equal peers — no primary concept.
 	entry := &WorktreeEntry{
 		SessionKey:  sessionKey,
-		Role:        role,
+		Role:        "peer",
 		RepoPath:    repoPath,
 		WorktreeDir: "",
 		Branch:      "",
@@ -267,7 +245,7 @@ func (r *WorktreeRegistry) ensureLoadedBySession(sessionKey string) {
 		r.ensureLoaded(e.RepoPath)
 		return
 	}
-	// Not loaded yet — will load on first Register/GetPrimary/etc.
+	// Not loaded yet — will load on first Register/etc.
 }
 
 func cloneEntry(e *WorktreeEntry) *WorktreeEntry {

@@ -195,7 +195,7 @@
 - PowerShell env output is newline-delimited, not null-delimited.
 
 ### Worktree
-- **Primary registration must NOT check dirty tree.** `WorktreeTool.init` and `AutoDetectAndInit` both skip dirty check when registering as primary (first agent in repo). Only worktree creation requires `git worktree add` which now uses `--detach HEAD` (works on dirty trees too).
+- **`RegisterPeer` always uses role="peer" — no primary concept.** Every session is an equal peer for awareness purposes. `WorktreeTool.init` and `AutoDetectAndInit` both create physical worktrees for each session. Only worktree creation requires `git worktree add` which uses `--detach HEAD` (works on dirty trees too).
 - **`createWorktree` uses `--detach` not `-b`.** `git worktree add --detach HEAD` followed by `checkout -b` in the worktree. This avoids dirty-tree failures that `-b` would trigger.
 - **AutoDetectAndInit runs in `buildPrompt` (not `processMessage`).** `buildPrompt` is the common code path for ALL message types. Session CWD is updated before system prompt construction.
 - **`IsWorktreeIsolated` overrides `isUnrestricted()`.** CLI mode (`sandbox="none"`) normally bypasses all path checks, but when `IsWorktreeIsolated=true`, `isUnrestricted()` returns `false`.

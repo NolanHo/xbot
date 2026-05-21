@@ -105,6 +105,7 @@ func (c *CLIChannel) Start() error {
 		c.model.connState = "connected"
 	}
 	c.model.debugCaptureMs = c.config.DebugCaptureMs
+	c.model.ephemeral = c.config.Ephemeral
 	c.model.senderID = "cli_user"
 
 	// Load per-user UI preferences (sidebar collapse state, etc.)

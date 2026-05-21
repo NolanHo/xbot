@@ -224,10 +224,13 @@ func (p *parser) parseArg() string {
 func (p *parser) parseEscape() string {
 	p.pos++ // skip \
 
-	// \\ → newline
+	// \\ → newline, also consume trailing source newline
 	if p.pos < len(p.input) && p.input[p.pos] == '\\' {
 		p.pos++
 		p.skipSpaces()
+		if p.pos < len(p.input) && p.input[p.pos] == '\n' {
+			p.pos++
+		}
 		return "\n"
 	}
 

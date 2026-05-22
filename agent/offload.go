@@ -631,6 +631,11 @@ func summarizeShell(content string) string {
 	const maxLineRunes = 500
 	const lineTruncSuffix = "...(truncated, %d chars)"
 	for _, l := range lines[len(lines)-showCount:] {
+		// Sanitize \r overwrites and ANSI escape sequences from progress bars
+		l = tools.SanitizeOutputLine(l)
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
 		runes := []rune(l)
 		if len(runes) > maxLineRunes {
 			suffix := fmt.Sprintf(lineTruncSuffix, len(runes))
@@ -674,6 +679,8 @@ func summarizeGlob(content string) string {
 
 // summarizeDefault 生成默认摘要。
 func summarizeDefault(content string) string {
+	// Sanitize \r overwrites and ANSI escape sequences before previewing
+	content = tools.SanitizeOutputLine(content)
 	runes := []rune(content)
 	maxPreview := 300
 	if len(runes) <= maxPreview {

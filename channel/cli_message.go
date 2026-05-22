@@ -2964,8 +2964,7 @@ func (m *cliModel) renderShellBody(tool protocol.ToolProgress, maxW int, t cliTh
 	// Progress bars (tqdm etc.) use \r to overwrite the same line.
 	// When captured as output, \r-embedded lines confuse the terminal:
 	// \r moves cursor to column 0, overwriting the guide prefix.
-	// Strategy: for each output line, keep only the content after the
-	// last \r (i.e. the final visual state), then wrap normally.
+	// sanitizeOutputLine handles \r stripping and ANSI removal.
 	lines := strings.Split(content, "\n")
 	totalLines := len(lines)
 	displayLines := lines
@@ -2974,13 +2973,8 @@ func (m *cliModel) renderShellBody(tool protocol.ToolProgress, maxW int, t cliTh
 	}
 	outputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(t.TextPrimary))
 	for _, line := range displayLines {
-		// Strip carriage-return overwrites: keep only the final visual
-		// state (content after the last \r). This handles progress bars
-		// (tqdm etc.) whose output contains multiple \r-separated frames.
-		if idx := strings.LastIndex(line, "\r"); idx >= 0 {
-			line = line[idx+1:]
-		}
-		// Skip empty lines after \r stripping (fully overwritten frames)
+		line = sanitizeOutputLine(line)
+		// Skip empty lines after sanitization (fully overwritten frames)
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

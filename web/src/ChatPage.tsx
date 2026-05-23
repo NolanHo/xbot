@@ -222,7 +222,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
   const reasoningRef = useRef<string>('') // accumulated reasoning from stream_content
   const streamingContentRef = useRef<string>('') // accumulated content from stream_content
   const loadHistoryIdRef = useRef(0) // race protection for loadHistory
-  const virtualizerRef = useRef<ReturnType<typeof useVirtualizer> | null>(null) // ref for scrollToIndex in loadHistory
+  const virtualizerRef = useRef<any>(null) // ref for scroll-to-bottom in loadHistory
   const turnsCountRef = useRef(0) // track turns count for scroll-to-bottom
   const resetProgress = createResetProgress({
     setProgress: (v) => setProgress(v),

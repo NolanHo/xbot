@@ -41,3 +41,14 @@ func SanitizeOutputLines(raw string) []string {
 	}
 	return result
 }
+
+// SanitizeOutput sanitizes multi-line process output into a clean string.
+// It processes each line individually (stripping \r overwrites and ANSI escapes),
+// filters empty lines, and joins the result with newlines.
+func SanitizeOutput(raw string) string {
+	lines := SanitizeOutputLines(raw)
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}

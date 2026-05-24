@@ -1,6 +1,6 @@
 import { useTranslation } from '../i18n'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { IconChat } from './Icons'
+import { IconChat, IconRefresh } from './Icons'
 import ConfirmDialog from './ConfirmDialog'
 
 interface ChatInfo {
@@ -176,7 +176,7 @@ export default function ChatSidebar({ onSwitchChat, onNewChat: _onNewChat, curre
 
       {/* Footer */}
       <div className="sidebar-footer">
-        <button onClick={fetchChats} disabled={loading} className="sidebar-footer-btn">↻ {loading ? '...' : t('refreshSessions')}</button>
+        <button onClick={fetchChats} disabled={loading} className="sidebar-footer-btn"><IconRefresh className="inline" /> {loading ? '...' : t('refreshSessions')}</button>
         {onExportMarkdown && <button onClick={onExportMarkdown} className="sidebar-footer-btn" title={t('exportMarkdown')}>↓ MD</button>}
         {onExportJSON && <button onClick={onExportJSON} className="sidebar-footer-btn" title={t('exportJSON')}>↓ JSON</button>}
       </div>

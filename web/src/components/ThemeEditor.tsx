@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from '../i18n'
-import { IconCopy, IconRefresh, IconX, IconSave, IconDownload } from './Icons'
+import { IconCopy, IconRefresh, IconX, IconSave, IconDownload, IconPalette } from './Icons'
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -266,7 +266,7 @@ export default function ThemeEditor({ open, onClose }: ThemeEditorProps) {
       >
         {/* Header */}
         <div className="theme-editor-header">
-          <h2 className="theme-editor-title">🎨 {t('themeEditor')}</h2>
+          <h2 className="theme-editor-title"><IconPalette className="inline" /> {t('themeEditor')}</h2>
           <button className="theme-editor-close" onClick={onClose} aria-label={t('closeSettings')}>
             <IconX className="inline" />
           </button>

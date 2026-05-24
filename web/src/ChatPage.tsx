@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense, memo
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { IconTrash, IconSparkles, IconHelp, IconSettings, IconSearch, IconReply, IconChat, IconRefresh, IconCopy, IconBot, IconPackage, IconClock, IconX, IconCheck, IconZap, IconKeyboard, IconList, IconVolume, IconPaperclip, IconBolt, IconEdit } from './components/Icons'
+import { IconTrash, IconSparkles, IconHelp, IconSettings, IconSearch, IconReply, IconChat, IconRefresh, IconCopy, IconBot, IconPackage, IconClock, IconX, IconCheck, IconZap, IconKeyboard, IconList, IconVolume, IconPaperclip, IconBolt, IconEdit, IconBrain, IconBell } from './components/Icons'
 
 import { useWebSocket } from './hooks/useWebSocket'
 import { useChatMessageHandler } from './hooks/useChatMessageHandler'
@@ -997,7 +997,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
                 className="text-xs px-2 py-0.5 rounded-full bg-slate-700/50 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-1"
                 title={t('switchModel')}
               >
-                🧠 {currentModel || 'default'}
+                <IconBrain className="inline" /> {currentModel || 'default'}
                 <span className="text-[10px]">▾</span>
               </button>
               {modelDropdownOpen && (
@@ -1028,7 +1028,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
             className="text-sm text-slate-400 hover:text-white transition-colors p-1"
             title={t('searchKbHint')} aria-label={t('searchHistory')}
           >
-            🔍
+            <IconSearch />
           </button>
           <button
             onClick={() => setSettingsOpen(true)}
@@ -1046,7 +1046,7 @@ export default function ChatPage({ onLogout }: ChatPageProps) {
               title={t('enableNotification')}
               aria-label={t('enableNotification')}
             >
-              🔔
+              <IconBell />
             </button>
           )}
           <button

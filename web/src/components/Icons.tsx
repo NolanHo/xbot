@@ -120,3 +120,12 @@ export const IconInbox = memo((props: IconProps) => (
 export const IconThinking = memo((props: IconProps) => (
   <svg {...s} {...props}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5"/></svg>
 ))
+export const IconBrain = memo((props: IconProps) => (
+  <svg {...s} {...props}><path d="M12 2a7 7 0 0 0-5 2.1A5 5 0 0 0 2 9c0 2.8 2 5 4.5 5.5L12 22l5.5-7.5C20 14 22 11.8 22 9a5 5 0 0 0-5-4.9A7 7 0 0 0 12 2z"/><circle cx="12" cy="9" r="2"/></svg>
+))
+export const IconPalette = memo((props: IconProps) => (
+  <svg {...s} {...props}><circle cx="13.5" cy="6.5" r="2"/><circle cx="17.5" cy="10.5" r="2"/><circle cx="8.5" cy="7.5" r="2"/><circle cx="6.5" cy="12" r="2"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.5-.67 1.5-1.5 0-.4-.15-.76-.42-1.06-.26-.3-.42-.66-.42-1.06 0-.83.67-1.5 1.5-1.5H16c3.31 0 6-2.69 6-6 0-5.5-4.5-9.88-10-9.88z"/></svg>
+))
+export const IconStore = memo((props: IconProps) => (
+  <svg {...s} {...props}><path d="M3 9l1-4h16l1 4"/><path d="M3 9v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9"/><path d="M9 22V9"/><path d="M15 22V9"/><path d="M3 9h18"/></svg>
+))

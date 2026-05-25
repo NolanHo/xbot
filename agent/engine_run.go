@@ -116,7 +116,12 @@ func newRunState(cfg RunConfig) *runState {
 		}
 	}
 
-	autoNotify := cfg.ProgressNotifier != nil
+	// autoNotify gates progress dispatch (notifyProgress, progressLines updates).
+	// Either ProgressNotifier (legacy text-based) or ProgressEventHandler (structured)
+	// is sufficient to enable progress events. This decouples the two dispatch paths:
+	// ProgressNotifier sends text lines to parent agent; ProgressEventHandler sends
+	// structured events to channels. Neither should gate the other.
+	autoNotify := cfg.ProgressNotifier != nil || cfg.ProgressEventHandler != nil
 	batchProgressByIteration := cfg.Channel == "web"
 
 	return &runState{
@@ -324,7 +329,9 @@ func (s *runState) notifyProgress(extra string) {
 	if s.structuredProgress != nil {
 		thinking = s.structuredProgress.ThinkingContent
 	}
-	s.cfg.ProgressNotifier([]string{buf.String()}, thinking)
+	if s.cfg.ProgressNotifier != nil {
+		s.cfg.ProgressNotifier([]string{buf.String()}, thinking)
+	}
 	if s.cfg.ProgressEventHandler != nil && s.structuredProgress != nil {
 		s.progressMu.Lock()
 		snapshot := make([]string, len(s.progressLines))

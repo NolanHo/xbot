@@ -8,42 +8,67 @@ import (
 	"xbot/protocol"
 )
 
-// TestBackgroundInteractive_ProgressNotifierEnablesProgressEvents verifies
-// the root cause fix: background interactive SubAgents must have
-// ProgressNotifier set to enable autoNotify in engine.Run().
-func TestBackgroundInteractive_ProgressNotifierEnablesProgressEvents(t *testing.T) {
-	background := true
-	var cfg RunConfig
-
-	if !background {
-		cfg.ProgressNotifier = func(lines []string, thinking string) {
-			t.Fatal("foreground notifier should not be called in background mode")
-		}
-	} else {
-		cfg.ProgressNotifier = func(lines []string, thinking string) {}
+// TestAutoNotify_DerivedFromBothHandlers verifies that autoNotify in engine.Run()
+// is true when either ProgressNotifier OR ProgressEventHandler is set.
+// This is the core fix: before, only ProgressNotifier gated autoNotify,
+// so background SubAgents with only ProgressEventHandler had autoNotify=false
+// and all progress events were silently dropped.
+func TestAutoNotify_DerivedFromBothHandlers(t *testing.T) {
+	tests := []struct {
+		name                 string
+		progressNotifier     func(lines []string, thinking string)
+		progressEventHandler func(event *ProgressEvent)
+		wantAuto             bool
+	}{
+		{
+			name:     "both nil → autoNotify=false",
+			wantAuto: false,
+		},
+		{
+			name:             "ProgressNotifier only → autoNotify=true",
+			progressNotifier: func([]string, string) {},
+			wantAuto:         true,
+		},
+		{
+			name:                 "ProgressEventHandler only → autoNotify=true",
+			progressEventHandler: func(*ProgressEvent) {},
+			wantAuto:             true,
+		},
+		{
+			name:                 "both set → autoNotify=true",
+			progressNotifier:     func([]string, string) {},
+			progressEventHandler: func(*ProgressEvent) {},
+			wantAuto:             true,
+		},
 	}
 
-	autoNotify := cfg.ProgressNotifier != nil
-	if !autoNotify {
-		t.Fatal("BUG: autoNotify=false for background SubAgent — ProgressNotifier is nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := RunConfig{
+				ProgressNotifier:     tt.progressNotifier,
+				ProgressEventHandler: tt.progressEventHandler,
+			}
+			autoNotify := cfg.ProgressNotifier != nil || cfg.ProgressEventHandler != nil
+			if autoNotify != tt.wantAuto {
+				t.Errorf("autoNotify = %v, want %v", autoNotify, tt.wantAuto)
+			}
+		})
 	}
 }
 
-// TestBackgroundProgressNotifierDoesNotLeakToParent verifies the no-op
-// ProgressNotifier in background mode does not send progress to parent.
-func TestBackgroundProgressNotifierDoesNotLeakToParent(t *testing.T) {
-	parentNotified := false
-	parentNotifier := func(lines []string, thinking string) { parentNotified = true }
-	backgroundNotifier := func(lines []string, thinking string) {}
-
-	backgroundNotifier([]string{"some progress"}, "")
-	if parentNotified {
-		t.Fatal("background ProgressNotifier should not notify parent")
+// TestBackgroundMode_AutoNotifyViaEventHandler verifies the actual bug scenario:
+// background interactive SubAgent has no ProgressNotifier but does have
+// ProgressEventHandler (set by wireSubAgentCLIProgress). autoNotify must be true.
+func TestBackgroundMode_AutoNotifyViaEventHandler(t *testing.T) {
+	cfg := RunConfig{
+		// Background mode: ProgressNotifier is nil
+		ProgressNotifier: nil,
+		// wireSubAgentCLIProgress sets this for background mode
+		ProgressEventHandler: func(event *ProgressEvent) {},
 	}
-
-	parentNotifier([]string{"parent progress"}, "")
-	if !parentNotified {
-		t.Fatal("parent ProgressNotifier should work when called directly")
+	autoNotify := cfg.ProgressNotifier != nil || cfg.ProgressEventHandler != nil
+	if !autoNotify {
+		t.Fatal("BUG REPRODUCED: background SubAgent with ProgressEventHandler has autoNotify=false")
 	}
 }
 

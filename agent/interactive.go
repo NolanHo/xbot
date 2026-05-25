@@ -495,15 +495,11 @@ func (a *Agent) SpawnInteractiveSession(
 				cb(detail)
 			})
 		}
-	} else {
-		// Background mode: ProgressNotifier MUST be set to enable autoNotify
-		// in engine.Run(). Without it, autoNotify=false and ALL progress events
-		// are silently dropped — ProgressEventHandler is never called, no
-		// snapshots are stored, and GetActiveProgress returns nil.
-		// This is why oneshot SubAgents work (foreground → ProgressNotifier set)
-		// but background interactive SubAgents show idle when viewed.
-		cfg.ProgressNotifier = func(lines []string, thinking string) {}
 	}
+	// Background mode: no ProgressNotifier needed — autoNotify in engine.Run()
+	// now derives from ProgressEventHandler too, not just ProgressNotifier.
+	// wireSubAgentCLIProgress already sets ProgressEventHandler for background
+	// mode, so progress events will flow to the CLI channel automatically.
 
 	// --- 阶段 3：执行 Run ---
 	preLen := len(cfg.Messages)

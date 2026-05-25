@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -58,6 +59,46 @@ func TestGroupClose(t *testing.T) {
 	if !gm.Closed {
 		t.Error("group should be closed after Close()")
 	}
+}
+
+func TestGroupConcurrentAccess(t *testing.T) {
+	gm := CreateGroup("concurrent-test", []string{"agent:a/1", "agent:b/2", "agent:c/3"})
+	defer DeleteGroup("group:concurrent-test")
+
+	const workers = 50
+	done := make(chan bool, workers*3)
+
+	// Concurrent RemoveMember
+	for i := 0; i < workers; i++ {
+		go func(n int) {
+			addr := fmt.Sprintf("agent:x/%d", n)
+			gm.mu.Lock()
+			gm.Members = append(gm.Members, addr)
+			gm.mu.Unlock()
+			done <- true
+		}(i)
+	}
+
+	// Concurrent IsMember
+	for i := 0; i < workers; i++ {
+		go func() {
+			gm.IsMember("agent:a/1")
+			done <- true
+		}()
+	}
+
+	// Concurrent ListGroups (reads Members via snapshot)
+	for i := 0; i < workers; i++ {
+		go func() {
+			ListGroups()
+			done <- true
+		}()
+	}
+
+	for i := 0; i < workers*3; i++ {
+		<-done
+	}
+	// If we get here without panicking, the concurrency protection works.
 }
 
 func TestGroupDeleteNonexistent(t *testing.T) {

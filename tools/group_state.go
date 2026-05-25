@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sync"
+	"time"
 )
 
 // GroupMembership defines a virtual group chat — it's just a set of agent members.
@@ -20,6 +21,8 @@ type GroupMembership struct {
 	Name    string   // e.g. "group:g1"
 	Members []string // agent addresses e.g. ["agent:reviewer/r1", "agent:tester/t1"]
 	Closed  bool
+
+	mu sync.RWMutex // protects Members and Closed for concurrent access
 }
 
 // groupStore holds active group memberships.
@@ -56,11 +59,15 @@ func DeleteGroup(name string) {
 
 // Close marks the group as closed.
 func (g *GroupMembership) Close() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.Closed = true
 }
 
 // IsMember checks if an address is in this group.
 func (g *GroupMembership) IsMember(addr string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	for _, m := range g.Members {
 		if m == addr {
 			return true
@@ -76,6 +83,8 @@ func RemoveMember(groupName, memberAddr string) bool {
 	if !ok {
 		return false
 	}
+	gm.mu.Lock()
+	defer gm.mu.Unlock()
 	for i, m := range gm.Members {
 		if m == memberAddr {
 			gm.Members = append(gm.Members[:i], gm.Members[i+1:]...)
@@ -104,11 +113,15 @@ func ListGroups() []GroupSummary {
 		if !ok {
 			return true
 		}
+		gm.mu.RLock()
+		members := append([]string{}, gm.Members...)
+		closed := gm.Closed
+		gm.mu.RUnlock()
 		results = append(results, GroupSummary{
 			ID:      gm.ID,
 			Name:    gm.Name,
-			Members: append([]string{}, gm.Members...),
-			Closed:  gm.Closed,
+			Members: members,
+			Closed:  closed,
 		})
 		return true
 	})
@@ -174,6 +187,15 @@ func loadPeerGroupsOnce() {
 	peerGroupStore.groups = groups
 }
 
+// peerGroupSaveTimer provides debounced persistence for peer groups.
+// Instead of spawning a goroutine on every mutation (which can cause overlapping
+// file writes under rapid join/leave), this uses a single timer that coalesces
+// multiple mutations within the debounce window into one disk write.
+var peerGroupSaveTimer struct {
+	mu    sync.Mutex
+	timer *time.Timer
+}
+
 // savePeerGroups persists all peer groups to disk.
 func savePeerGroups() {
 	peerGroupStore.mu.RLock()
@@ -184,7 +206,7 @@ func savePeerGroups() {
 	}
 	path := peerGroupFilePath()
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return
 	}
 	os.Rename(tmp, path) // atomic
@@ -232,10 +254,24 @@ func DeletePeerGroup(name string) {
 	savePeerGroupsLocked()
 }
 
-// savePeerGroupsLocked persists to disk. Caller must hold at least RLock.
-// Uses a background goroutine to avoid blocking the caller.
+// savePeerGroupsLocked schedules a debounced persist to disk.
+// Caller must hold at least RLock on peerGroupStore.mu.
+// Instead of spawning a goroutine per mutation, this uses a single timer
+// that coalesces rapid mutations into one disk write (100ms debounce).
+const peerGroupSaveDebounce = 100 * time.Millisecond
+
 func savePeerGroupsLocked() {
-	go savePeerGroups()
+	peerGroupSaveTimer.mu.Lock()
+	defer peerGroupSaveTimer.mu.Unlock()
+	if peerGroupSaveTimer.timer != nil {
+		peerGroupSaveTimer.timer.Stop()
+	}
+	peerGroupSaveTimer.timer = time.AfterFunc(peerGroupSaveDebounce, func() {
+		savePeerGroups()
+		peerGroupSaveTimer.mu.Lock()
+		peerGroupSaveTimer.timer = nil
+		peerGroupSaveTimer.mu.Unlock()
+	})
 }
 
 // Join adds a member to the peer group. Returns false if already a member.

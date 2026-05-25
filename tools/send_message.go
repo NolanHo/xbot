@@ -158,7 +158,14 @@ func (t *SendMessageTool) sendToGroup(ctx *ToolContext, groupName, message strin
 	if !ok {
 		return nil, fmt.Errorf("group %q not found (create it with CreateChat first)", groupName)
 	}
-	if gm.Closed {
+	// Snapshot members under lock to avoid concurrent modification.
+	gm.mu.RLock()
+	closed := gm.Closed
+	members := make([]string, len(gm.Members))
+	copy(members, gm.Members)
+	gm.mu.RUnlock()
+
+	if closed {
 		return nil, fmt.Errorf("group %q is closed", groupName)
 	}
 
@@ -171,7 +178,7 @@ func (t *SendMessageTool) sendToGroup(ctx *ToolContext, groupName, message strin
 	// No @mentions → broadcast to all members
 	if len(mentions) == 0 {
 		var responses []string
-		for _, memberAddr := range gm.Members {
+		for _, memberAddr := range members {
 			prefixedMsg := fmt.Sprintf("[group:%s] %s", groupName, message)
 			result, err := ctx.MessageSender.SendMessage(memberAddr, "", prefixedMsg)
 			if err != nil {
@@ -181,7 +188,7 @@ func (t *SendMessageTool) sendToGroup(ctx *ToolContext, groupName, message strin
 			}
 		}
 		return NewResult(fmt.Sprintf("Broadcast to group %s (%d members):\n%s",
-			groupName, len(gm.Members), strings.Join(responses, "\n"))), nil
+			groupName, len(members), strings.Join(responses, "\n"))), nil
 	}
 
 	// @mentioned agents: send directly with group context prefix.
@@ -275,6 +282,7 @@ func (t *SendMessageTool) sendToPeerGroup(ctx *ToolContext, peerGroupName, messa
 
 // parseMentions extracts @agent:role/instance addresses from a message.
 // Returns unique addresses in order of first appearance.
+// Validates that each address contains a "/" (role/instance format).
 func parseMentions(message string) []string {
 	var result []string
 	seen := make(map[string]bool)
@@ -290,7 +298,9 @@ func parseMentions(message string) []string {
 				}
 			}
 			addr := message[i+1 : end] // strip the @
-			if addr != "" && !seen[addr] {
+			// Validate: must contain "/" to be a valid agent:role/instance address.
+			// Rejects bare "agent:" or "agent:role" (no instance).
+			if addr != "" && strings.Contains(addr, "/") && !seen[addr] {
 				seen[addr] = true
 				result = append(result, addr)
 			}

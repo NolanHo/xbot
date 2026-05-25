@@ -1,6 +1,12 @@
 package tools
 
-import "sync"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sync"
+)
 
 // GroupMembership defines a virtual group chat — it's just a set of agent members.
 // There is NO separate message store. Each agent already has its own session
@@ -106,5 +112,221 @@ func ListGroups() []GroupSummary {
 		})
 		return true
 	})
+	return results
+}
+
+// ---------------------------------------------------------------------------
+// PeerGroup — independent agent sessions forming a communication channel
+// ---------------------------------------------------------------------------
+
+// peerGroupIDRegex validates peer group IDs: alphanumeric, hyphens, underscores.
+var peerGroupIDRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+
+// PeerGroupMember represents one agent session in a peer group.
+type PeerGroupMember struct {
+	SessionKey string `json:"session_key"` // "channel:chatID" — the address for PeerMessageFn
+	Name       string `json:"name"`        // Human-readable display name
+}
+
+// PeerGroup is a communication channel among independent agent sessions.
+// Unlike GroupMembership (SubAgent meeting mode), PeerGroup members are
+// main-agent sessions that communicate asynchronously via PeerMessageFn.
+type PeerGroup struct {
+	ID      string            `json:"id"`
+	Members []PeerGroupMember `json:"members"`
+}
+
+// peerGroupStore is the persistent peer group store.
+var peerGroupStore struct {
+	mu     sync.RWMutex
+	groups map[string]*PeerGroup // "peer:<id>" -> *PeerGroup
+	loaded bool
+}
+
+// peerGroupFilePath returns the path to the peer groups persistence file.
+func peerGroupFilePath() string {
+	dir := os.Getenv("XBOT_HOME")
+	if dir == "" {
+		dir = filepath.Join(os.Getenv("HOME"), ".xbot")
+	}
+	return filepath.Join(dir, "peer_groups.json")
+}
+
+// loadPeerGroupsOnce loads peer groups from disk on first access.
+func loadPeerGroupsOnce() {
+	peerGroupStore.mu.Lock()
+	defer peerGroupStore.mu.Unlock()
+	if peerGroupStore.loaded {
+		return
+	}
+	peerGroupStore.loaded = true
+	peerGroupStore.groups = make(map[string]*PeerGroup)
+
+	path := peerGroupFilePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // no file yet, start empty
+	}
+	var groups map[string]*PeerGroup
+	if err := json.Unmarshal(data, &groups); err != nil {
+		return // corrupt file, start empty
+	}
+	peerGroupStore.groups = groups
+}
+
+// savePeerGroups persists all peer groups to disk.
+func savePeerGroups() {
+	peerGroupStore.mu.RLock()
+	data, err := json.MarshalIndent(peerGroupStore.groups, "", "  ")
+	peerGroupStore.mu.RUnlock()
+	if err != nil {
+		return
+	}
+	path := peerGroupFilePath()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return
+	}
+	os.Rename(tmp, path) // atomic
+}
+
+// ValidatePeerGroupID checks whether an ID is valid for a peer group.
+func ValidatePeerGroupID(id string) bool {
+	return peerGroupIDRegex.MatchString(id)
+}
+
+// CreatePeerGroup creates a new peer group (or returns existing one).
+func CreatePeerGroup(id string) *PeerGroup {
+	loadPeerGroupsOnce()
+	peerGroupStore.mu.Lock()
+	defer peerGroupStore.mu.Unlock()
+
+	name := "peer:" + id
+	if pg, ok := peerGroupStore.groups[name]; ok {
+		return pg
+	}
+	pg := &PeerGroup{
+		ID:      id,
+		Members: []PeerGroupMember{},
+	}
+	peerGroupStore.groups[name] = pg
+	savePeerGroupsLocked()
+	return pg
+}
+
+// GetPeerGroup retrieves a peer group by its name (e.g., "peer:my-group").
+func GetPeerGroup(name string) (*PeerGroup, bool) {
+	loadPeerGroupsOnce()
+	peerGroupStore.mu.RLock()
+	defer peerGroupStore.mu.RUnlock()
+	pg, ok := peerGroupStore.groups[name]
+	return pg, ok
+}
+
+// DeletePeerGroup removes a peer group from the store.
+func DeletePeerGroup(name string) {
+	loadPeerGroupsOnce()
+	peerGroupStore.mu.Lock()
+	defer peerGroupStore.mu.Unlock()
+	delete(peerGroupStore.groups, name)
+	savePeerGroupsLocked()
+}
+
+// savePeerGroupsLocked persists to disk. Caller must hold at least RLock.
+// Uses a background goroutine to avoid blocking the caller.
+func savePeerGroupsLocked() {
+	go savePeerGroups()
+}
+
+// Join adds a member to the peer group. Returns false if already a member.
+func (pg *PeerGroup) Join(member PeerGroupMember) bool {
+	loadPeerGroupsOnce()
+	peerGroupStore.mu.Lock()
+	defer peerGroupStore.mu.Unlock()
+	for _, m := range pg.Members {
+		if m.SessionKey == member.SessionKey {
+			return false // already a member
+		}
+	}
+	pg.Members = append(pg.Members, member)
+	savePeerGroupsLocked()
+	return true
+}
+
+// Leave removes a member by sessionKey. Returns true if found and removed.
+// If no members remain, the group is deleted from the store.
+func (pg *PeerGroup) Leave(sessionKey string) bool {
+	loadPeerGroupsOnce()
+	peerGroupStore.mu.Lock()
+	defer peerGroupStore.mu.Unlock()
+	for i, m := range pg.Members {
+		if m.SessionKey == sessionKey {
+			pg.Members = append(pg.Members[:i], pg.Members[i+1:]...)
+			if len(pg.Members) == 0 {
+				delete(peerGroupStore.groups, "peer:"+pg.ID)
+			}
+			savePeerGroupsLocked()
+			return true
+		}
+	}
+	return false
+}
+
+// IsMember checks if a session is in this peer group.
+func (pg *PeerGroup) IsMember(sessionKey string) bool {
+	loadPeerGroupsOnce()
+	peerGroupStore.mu.RLock()
+	defer peerGroupStore.mu.RUnlock()
+	for _, m := range pg.Members {
+		if m.SessionKey == sessionKey {
+			return true
+		}
+	}
+	return false
+}
+
+// GetMembers returns a copy of the member list.
+func (pg *PeerGroup) GetMembers() []PeerGroupMember {
+	loadPeerGroupsOnce()
+	peerGroupStore.mu.RLock()
+	defer peerGroupStore.mu.RUnlock()
+	result := make([]PeerGroupMember, len(pg.Members))
+	copy(result, pg.Members)
+	return result
+}
+
+// PeerGroupSummary is a lightweight snapshot for listing.
+type PeerGroupSummary struct {
+	ID      string
+	Members []PeerGroupMember
+}
+
+// ListPeerGroups returns all peer groups. If sessionKey is non-empty,
+// only returns groups that contain that session.
+func ListPeerGroups(sessionKey string) []PeerGroupSummary {
+	loadPeerGroupsOnce()
+	peerGroupStore.mu.RLock()
+	defer peerGroupStore.mu.RUnlock()
+	var results []PeerGroupSummary
+	for _, pg := range peerGroupStore.groups {
+		members := make([]PeerGroupMember, len(pg.Members))
+		copy(members, pg.Members)
+		if sessionKey != "" {
+			found := false
+			for _, m := range members {
+				if m.SessionKey == sessionKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		results = append(results, PeerGroupSummary{
+			ID:      pg.ID,
+			Members: members,
+		})
+	}
 	return results
 }

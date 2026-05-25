@@ -120,7 +120,13 @@ func (a *Agent) recordIterationSnapshot(key string, shouldAppend func(prev *prot
 // ChatID. This enables Ctrl+T session switching to show real-time progress for both
 // interactive and one-shot SubAgents.
 func (a *Agent) wireSubAgentCLIProgress(key, originChatID string, cfg *RunConfig) {
+	log.WithFields(log.Fields{
+		"key":           key,
+		"originChatID":  originChatID,
+		"channelFinder": a.channelFinder != nil,
+	}).Info("DEBUG_SESSION wireSubAgentCLIProgress called")
 	if a.channelFinder == nil {
+		log.Info("DEBUG_SESSION wireSubAgentCLIProgress: channelFinder is nil, returning")
 		return
 	}
 	ch, ok := a.channelFinder("cli")

@@ -18,6 +18,7 @@ import (
 	llm_pkg "xbot/llm"
 	log "xbot/logger"
 	"xbot/plugin"
+	"xbot/session"
 	"xbot/storage/sqlite"
 	"xbot/tools"
 )
@@ -743,6 +744,14 @@ func registerSessionHandlers(t RPCTable, h *RPCContext) {
 		}
 		// Clean up offload files for the deleted session.
 		h.Ag.CleanupSessionFiles(p.Channel, p.ChatID)
+		// Clean up worktree registration + physical git worktree.
+		sessionKey := p.Channel + ":" + p.ChatID
+		tools.GlobalWorktreeRegistry.CleanupSession(sessionKey)
+		// Clean up persisted CWD so a future session with the same chatID
+		// does not inherit a stale worktree directory.
+		session.DeletePersistedCWD(p.Channel, p.ChatID)
+		// Destroy tenant session (closes MCP, removes from cache).
+		_ = h.Ag.MultiSession().DestroySession(p.Channel, p.ChatID)
 		log.WithFields(log.Fields{"channel": p.Channel, "chat_id": p.ChatID}).Info("RPC delete_chat")
 		return map[string]string{"status": "ok"}, nil
 	})

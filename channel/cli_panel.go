@@ -3585,6 +3585,12 @@ func (m *cliModel) deleteLocalSession(entry SessionPanelEntry) tea.Cmd {
 	// 3b. Clean up persisted CWD so a future session with the same chatID
 	// (e.g. the default workDir-based session) does not inherit a stale CWD.
 	session.DeletePersistedCWD("cli", entry.ID)
+	// 3c. Remove saved session state from memory to prevent stale state leaks.
+	delete(m.savedSessions, sessionKey)
+	if m.todoManager != nil {
+		m.todoManager.SetTodos(sessionKey, nil)
+		_ = m.todoManager.SaveToFile(sessionKey) // delete persisted todo file
+	}
 	// If we deleted the active session, switch to default
 	if entry.Active {
 		m.saveCurrentSession()

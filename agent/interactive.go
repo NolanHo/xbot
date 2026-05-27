@@ -717,6 +717,26 @@ func (a *Agent) SpawnInteractiveSession(
 			}
 			placeholder.cfg = &cfg
 			placeholder.cfg.Messages = nil
+
+			// Persist final assistant message with iteration history as Detail,
+			// same as the foreground path and the main agent does in
+			// handleInboundMessage. The incremental persistence in
+			// postToolProcessing saves assistant messages WITHOUT Detail —
+			// this adds the one with full iteration history.
+			if agentTenantSession != nil && out.Content != "" {
+				assistantMsg := llm.NewAssistantMessage(out.Content)
+				assistantMsg.ReasoningContent = out.ReasoningContent
+				if len(out.IterationHistory) > 0 {
+					if jsonBytes, err := json.Marshal(out.IterationHistory); err == nil {
+						assistantMsg.Detail = string(jsonBytes)
+					}
+				}
+				if err := agentTenantSession.AddMessage(assistantMsg); err != nil {
+					log.WithFields(log.Fields{
+						"role": roleName, "instance": instance,
+					}).WithError(err).Warn("Failed to save bg interactive agent assistant message with detail")
+				}
+			}
 		}()
 
 		log.WithFields(log.Fields{

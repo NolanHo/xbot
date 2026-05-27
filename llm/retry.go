@@ -343,18 +343,36 @@ func (r *RetryLLM) GenerateStreamAndCollect(ctx context.Context, model string, m
 	return retry.NewWithData[*LLMResponse](
 		r.retryOptions(ctx, "Retrying stream request")...,
 	).Do(func() (*LLMResponse, error) {
-		// Use per-attempt timeout only for SSE connection establishment.
-		// The stream collection phase uses its own idle timeout internally
-		// (see CollectStreamWithCallback), so we pass the parent ctx
-		// (without artificial deadline) for the collection phase.
-		// This ensures actively-streaming responses are not killed by a
-		// total-time deadline — only idle periods trigger timeout.
 		attemptCtx, cancel := r.perAttemptCtx(ctx)
 		defer cancel()
 
-		eventCh, err := streaming.GenerateStream(attemptCtx, model, messages, tools, thinkingMode)
-		if err != nil {
-			return nil, err
+		// GenerateStream (specifically NewStreaming inside it) blocks
+		// during connection establishment (DNS + TCP + TLS handshake).
+		// On first request this can take seconds. The SDK passes ctx
+		// to the HTTP client, but TLS handshake cancellation is not
+		// guaranteed in all Go/OS TLS implementations. Wrapping in a
+		// goroutine + select on ctx.Done() guarantees immediate return
+		// when the user presses Ctrl+C, without waiting for the TLS
+		// handshake to complete or timeout.
+		type genResult struct {
+			ch  <-chan StreamEvent
+			err error
+		}
+		resultCh := make(chan genResult, 1)
+		go func() {
+			ch, err2 := streaming.GenerateStream(attemptCtx, model, messages, tools, thinkingMode)
+			resultCh <- genResult{ch, err2}
+		}()
+
+		var eventCh <-chan StreamEvent
+		select {
+		case <-attemptCtx.Done():
+			return nil, attemptCtx.Err()
+		case r := <-resultCh:
+			if r.err != nil {
+				return nil, r.err
+			}
+			eventCh = r.ch
 		}
 
 		// Pass parent ctx (no artificial deadline) for collection.

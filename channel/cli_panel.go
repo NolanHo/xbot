@@ -3609,6 +3609,14 @@ func (m *cliModel) deleteLocalSession(entry SessionPanelEntry) tea.Cmd {
 		m.showTempStatus(fmt.Sprintf("Deleted session: %s", entry.Label))
 		return tea.Batch(cmds...)
 	}
+	// Non-active session deleted: refresh sidebar so it disappears immediately.
+	if m.sessionsListFn != nil {
+		m.panelSessionItems = m.sessionsListFn()
+	}
+	if m.channel != nil && m.channel.config.SessionsListRefresh != nil {
+		m.channel.config.SessionsListRefresh()
+	}
+	m.showTempStatus(fmt.Sprintf("Deleted session: %s", entry.Label))
 	return nil
 }
 

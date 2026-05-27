@@ -35,6 +35,7 @@ func TestMustActivate_Panic(t *testing.T) {
 		r := recover()
 		if r == nil {
 			t.Fatal("expected MustActivate to panic on error")
+			return
 		}
 		got, ok := r.(string)
 		if !ok {
@@ -250,6 +251,7 @@ func TestFileEnricher_NotFound(t *testing.T) {
 	_, err := enricher(context.Background())
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
+		return
 	}
 }
 

@@ -190,6 +190,7 @@ func TestApplyCompress_CompressError(t *testing.T) {
 	got, err := ApplyCompress(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+		return
 	}
 	if got != nil {
 		t.Fatalf("expected nil result, got %+v", got)

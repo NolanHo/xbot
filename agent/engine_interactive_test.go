@@ -46,6 +46,7 @@ func TestSpawnAgentAdapter_InteractiveSend_NilCallback(t *testing.T) {
 	}, "task", "reviewer", "", nil, tools.SubAgentCapabilities{}, "", "")
 	if err == nil {
 		t.Fatal("expected error when interactive callbacks are nil")
+		return
 	}
 }
 
@@ -58,6 +59,7 @@ func TestSpawnAgentAdapter_InteractiveUnload_NilCallback(t *testing.T) {
 	}, "reviewer", "")
 	if err == nil {
 		t.Fatal("expected error when interactive callbacks are nil")
+		return
 	}
 }
 

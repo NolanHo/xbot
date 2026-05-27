@@ -93,6 +93,7 @@ func TestLoadManifestValidation_MissingID(t *testing.T) {
 	_, err := LoadManifest(dir)
 	if err == nil {
 		t.Fatal("expected error for missing ID")
+		return
 	}
 }
 
@@ -106,6 +107,7 @@ func TestLoadManifestValidation_InvalidRuntime(t *testing.T) {
 	_, err := LoadManifest(dir)
 	if err == nil {
 		t.Fatal("expected error for invalid runtime")
+		return
 	}
 }
 
@@ -230,6 +232,7 @@ func TestPluginContext_RegisterTool_NoPermission(t *testing.T) {
 	err := pc.RegisterTool(tool)
 	if err == nil {
 		t.Fatal("expected permission error")
+		return
 	}
 	if _, ok := err.(*PermissionError); !ok {
 		t.Errorf("expected PermissionError, got %T", err)
@@ -298,6 +301,7 @@ func TestPluginContext_RegisterTools_PartialFailure(t *testing.T) {
 	err = pc2.RegisterTools(tool2, tool3)
 	if err == nil {
 		t.Fatal("expected permission error")
+		return
 	}
 	if _, ok := err.(*PermissionError); !ok {
 		t.Errorf("expected PermissionError, got %T", err)
@@ -369,6 +373,7 @@ func TestPluginContext_OnEvent_NilHandler(t *testing.T) {
 	err := pc.OnEvent(HookPreToolUse, "", nil)
 	if err == nil {
 		t.Fatal("expected error for nil handler")
+		return
 	}
 	if !strings.Contains(err.Error(), "must not be nil") {
 		t.Errorf("error = %v, want nil handler message", err)
@@ -384,6 +389,7 @@ func TestPluginContext_EnrichContext_NilEnricher(t *testing.T) {
 	err := pc.EnrichContext("test", nil)
 	if err == nil {
 		t.Fatal("expected error for nil enricher")
+		return
 	}
 	if !strings.Contains(err.Error(), "must not be nil") {
 		t.Errorf("error = %v, want nil enricher message", err)
@@ -583,6 +589,7 @@ func TestPluginManager_DuplicateRegistration(t *testing.T) {
 	err := pm.Register(p2)
 	if err == nil {
 		t.Fatal("expected error for duplicate registration")
+		return
 	}
 }
 
@@ -1011,6 +1018,7 @@ func TestLoadManifest_GRPCNoEntryOrExecutable(t *testing.T) {
 	_, err := LoadManifest(dir)
 	if err == nil {
 		t.Fatal("expected error for grpc without entry or executable")
+		return
 	}
 }
 
@@ -1088,6 +1096,7 @@ func TestPluginManager_PanicRecovery(t *testing.T) {
 	err := pm.RegisterAndActivate(ctx, panicPluginReal)
 	if err == nil {
 		t.Fatal("expected error from panicking plugin")
+		return
 	}
 
 	// Manager should still be functional
@@ -1960,6 +1969,7 @@ func TestWASMRuntime_Create_WrongRuntime(t *testing.T) {
 	_, err := factory.Create(m, "/tmp/test")
 	if err == nil {
 		t.Fatal("expected error for wrong runtime type")
+		return
 	}
 }
 
@@ -2157,6 +2167,7 @@ func TestPluginManager_Reload_NonExistent(t *testing.T) {
 	err := pm.Reload(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for non-existent plugin")
+		return
 	}
 }
 
@@ -2173,6 +2184,7 @@ func TestPluginContext_Subscribe_NoPermission(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected permission error for Subscribe without bus.read")
+		return
 	}
 }
 
@@ -2187,6 +2199,7 @@ func TestPluginContext_Publish_NoPermission(t *testing.T) {
 	err := pc.Publish("test", "data")
 	if err == nil {
 		t.Fatal("expected permission error for Publish without bus.write")
+		return
 	}
 }
 
@@ -2910,6 +2923,7 @@ func TestPluginManager_InstallPlugin(t *testing.T) {
 	}
 	if entry == nil {
 		t.Fatal("expected non-nil entry")
+		return
 	}
 	if entry.Manifest.ID != "com.test.install" {
 		t.Errorf("expected ID %q, got %q", "com.test.install", entry.Manifest.ID)
@@ -2944,6 +2958,7 @@ func TestPluginManager_InstallPlugin_InvalidPath(t *testing.T) {
 	_, err := pm.InstallPlugin(ctx, "/nonexistent/path")
 	if err == nil {
 		t.Fatal("expected error for invalid path")
+		return
 	}
 }
 
@@ -3193,6 +3208,7 @@ func TestPluginContext_StorageGetJSON(t *testing.T) {
 	err = pc.StorageGetJSON("missing", &cfg)
 	if err == nil {
 		t.Fatal("expected error for missing key")
+		return
 	}
 
 	// Round-trip
@@ -3213,12 +3229,14 @@ func TestPluginContext_StorageGetJSON(t *testing.T) {
 	err = pc.StorageGetJSON("bad", &cfg)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+		return
 	}
 
 	// Nil target → error
 	err = pc.StorageGetJSON("config", nil)
 	if err == nil {
 		t.Fatal("expected error for nil target")
+		return
 	}
 }
 
@@ -3271,6 +3289,7 @@ func TestPluginContext_OnPluginError(t *testing.T) {
 	cb := pc.GetErrorCallback()
 	if cb == nil {
 		t.Fatal("callback should be registered")
+		return
 	}
 	cb(context.Background(), fmt.Errorf("test error"))
 
@@ -3289,6 +3308,7 @@ func TestPluginContext_OnPluginError_NoPermission(t *testing.T) {
 	err := pc.OnPluginError(func(ctx context.Context, err error) {})
 	if err == nil {
 		t.Fatal("expected permission error")
+		return
 	}
 	if _, ok := err.(*PermissionError); !ok {
 		t.Errorf("expected PermissionError, got %T: %v", err, err)
@@ -3358,6 +3378,7 @@ func TestPluginManager_AutoRetry(t *testing.T) {
 	err := pm.ActivateAll(ctx)
 	if err == nil {
 		t.Fatal("expected error on first activation")
+		return
 	}
 
 	entry, ok := pm.GetPlugin("com.test.example")
@@ -3515,6 +3536,7 @@ func TestManifest_ChecksumVerification(t *testing.T) {
 		err = loaded.VerifyChecksum(dir)
 		if err == nil {
 			t.Fatal("expected error for missing plugin.sha256")
+			return
 		}
 		if !strings.Contains(err.Error(), "plugin.sha256") {
 			t.Errorf("error should mention plugin.sha256, got: %v", err)
@@ -3537,6 +3559,7 @@ func TestManifest_ChecksumVerification(t *testing.T) {
 		err = loaded.VerifyChecksum(dir)
 		if err == nil {
 			t.Fatal("expected error for corrupted checksum")
+			return
 		}
 		if !strings.Contains(err.Error(), "mismatch") {
 			t.Errorf("error should mention mismatch, got: %v", err)
@@ -3559,6 +3582,7 @@ func TestManifest_ChecksumVerification(t *testing.T) {
 		err = loaded.VerifyChecksum(dir)
 		if err == nil {
 			t.Fatal("expected error for empty sha256 file")
+			return
 		}
 	})
 
@@ -3612,6 +3636,7 @@ func TestManifest_ChecksumVerification(t *testing.T) {
 		_, err := LoadManifestWithOptions(dir, LoadManifestOptions{VerifyChecksum: true})
 		if err == nil {
 			t.Fatal("expected error for checksum mismatch")
+			return
 		}
 		if !strings.Contains(err.Error(), "checksum") {
 			t.Errorf("error should mention checksum, got: %v", err)
@@ -4061,6 +4086,7 @@ func TestPluginManager_AuditLog_Install(t *testing.T) {
 	}
 	if entry == nil {
 		t.Fatal("expected non-nil entry")
+		return
 	}
 
 	entries := pm.AuditLog().Query(AuditFilter{PluginID: "com.test.example"})
@@ -4557,6 +4583,7 @@ func TestPluginRegistry_New(t *testing.T) {
 	reg := NewPluginRegistry(pm)
 	if reg == nil {
 		t.Fatal("NewPluginRegistry returned nil")
+		return
 	}
 	if len(reg.sources) != 0 {
 		t.Errorf("expected 0 sources, got %d", len(reg.sources))
@@ -4664,6 +4691,7 @@ func TestPluginRegistry_Search(t *testing.T) {
 	_, err = reg.Search(ctx, "hello")
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
+		return
 	}
 }
 
@@ -4848,6 +4876,7 @@ func TestDeniedStorage(t *testing.T) {
 	err := ds.Set("key", "val")
 	if err == nil {
 		t.Fatal("deniedStorage.Set should return error")
+		return
 	}
 	permErr, ok := err.(*PermissionError)
 	if !ok {
@@ -5176,6 +5205,7 @@ func TestPluginManager_Reload_ManifestLoadFails(t *testing.T) {
 	err = pm.Reload(ctx, "com.test.reload-mf")
 	if err == nil {
 		t.Fatal("expected error when manifest file is missing")
+		return
 	}
 	if !strContains(err.Error(), "manifest") {
 		t.Errorf("error should mention 'manifest', got: %v", err)
@@ -5222,6 +5252,7 @@ func TestPluginManager_Reload_RuntimeCreateFails(t *testing.T) {
 	err = pm.Reload(ctx, "com.test.reload-rt")
 	if err == nil {
 		t.Fatal("expected error when runtime factory fails")
+		return
 	}
 	if !strContains(err.Error(), "runtime") {
 		t.Errorf("error should mention 'runtime', got: %v", err)
@@ -5253,6 +5284,7 @@ func TestPluginManager_InstallPlugin_AlreadyExists(t *testing.T) {
 	_, err := pm.InstallPlugin(ctx, sourceDir)
 	if err == nil {
 		t.Fatal("expected error when installing duplicate plugin")
+		return
 	}
 	if !strContains(err.Error(), "already registered") {
 		t.Errorf("error should mention 'already registered', got: %v", err)
@@ -5278,6 +5310,7 @@ func TestPluginManager_InstallPlugin_InvalidManifest(t *testing.T) {
 	_, err := pm.InstallPlugin(ctx, sourceDir)
 	if err == nil {
 		t.Fatal("expected error for invalid manifest")
+		return
 	}
 }
 
@@ -5307,9 +5340,11 @@ func TestPluginManager_InstallPlugin_RuntimeCreateFails(t *testing.T) {
 	entry, err := pm.InstallPlugin(ctx, sourceDir)
 	if err == nil {
 		t.Fatal("expected error when runtime factory fails")
+		return
 	}
 	if entry == nil {
 		t.Fatal("expected non-nil entry")
+		return
 	}
 	if entry.State != StateError {
 		t.Errorf("expected StateError, got %v", entry.State)
@@ -5325,6 +5360,7 @@ func TestPluginManager_UninstallPlugin_NotFound(t *testing.T) {
 	err := pm.UninstallPlugin(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent plugin")
+		return
 	}
 	if !strContains(err.Error(), "not found") {
 		t.Errorf("error should mention 'not found', got: %v", err)
@@ -5340,6 +5376,7 @@ func TestPluginEventBus_Subscribe_NilHandler(t *testing.T) {
 	err := bus.Subscribe("topic", nil)
 	if err == nil {
 		t.Fatal("expected error for nil handler")
+		return
 	}
 	if !strContains(err.Error(), "must not be nil") {
 		t.Errorf("error should mention 'must not be nil', got: %v", err)
@@ -5359,6 +5396,7 @@ func TestPluginEventBus_Unsubscribe_NoHandlers(t *testing.T) {
 	err := bus.Unsubscribe("topic", handler)
 	if err == nil {
 		t.Fatal("expected error when no handlers for topic")
+		return
 	}
 	if !strContains(err.Error(), "no handlers") {
 		t.Errorf("error should mention 'no handlers', got: %v", err)
@@ -5385,6 +5423,7 @@ func TestPluginEventBus_Unsubscribe_HandlerNotFound(t *testing.T) {
 	err := bus.Unsubscribe("topic", handler2)
 	if err == nil {
 		t.Fatal("expected error when handler not found")
+		return
 	}
 	if !strContains(err.Error(), "handler not found") {
 		t.Errorf("error should mention 'handler not found', got: %v", err)
@@ -5992,6 +6031,7 @@ func TestScriptTrigger_UnsupportedEvent(t *testing.T) {
 	err = sp.subscribeTrigger(pc, "InvalidEvent:Shell*")
 	if err == nil {
 		t.Fatal("expected error for unsupported trigger event")
+		return
 	}
 }
 
@@ -6423,6 +6463,7 @@ func TestWidgetRegistry_RegisterDuplicate(t *testing.T) {
 	err2 := r.Register("p1", "w1", "infoBar", w, 20)
 	if err2 == nil {
 		t.Fatal("expected error on duplicate registration, got nil")
+		return
 	}
 	if !strings.Contains(err2.Error(), "already registered") {
 		t.Errorf("error = %q, should contain 'already registered'", err2.Error())

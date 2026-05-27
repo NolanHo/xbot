@@ -168,6 +168,7 @@ func TestRetryLLM_Generate_ExhaustedRetries(t *testing.T) {
 	_, err := r.Generate(context.Background(), "test", nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
+		return
 	}
 	if inner.calls.Load() != 3 {
 		t.Errorf("calls = %d, want 3", inner.calls.Load())
@@ -184,6 +185,7 @@ func TestRetryLLM_Generate_NonRetryableError(t *testing.T) {
 	_, err := r.Generate(context.Background(), "test", nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
+		return
 	}
 	if inner.calls.Load() != 1 {
 		t.Errorf("calls = %d, want 1 (non-retryable should not retry)", inner.calls.Load())
@@ -203,6 +205,7 @@ func TestRetryLLM_Generate_ContextCanceled(t *testing.T) {
 	_, err := r.Generate(ctx, "test", nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error after context cancel")
+		return
 	}
 	// context.Canceled 不可重试，应只调用 1 次
 	if inner.calls.Load() != 1 {
@@ -282,6 +285,7 @@ func TestRetryLLM_GenerateStream_NonStreamingInner(t *testing.T) {
 	_, err := r.GenerateStream(context.Background(), "test", nil, nil, "")
 	if err == nil {
 		t.Fatal("expected error for non-streaming LLM")
+		return
 	}
 	if err.Error() != "underlying LLM does not support streaming" {
 		t.Errorf("unexpected error: %v", err)

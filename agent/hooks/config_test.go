@@ -266,6 +266,7 @@ func TestLoadHooksConfig_InvalidJSON(t *testing.T) {
 	_, _, err := LoadHooksConfig(userHome, "")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
+		return
 	}
 }
 

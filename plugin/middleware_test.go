@@ -301,6 +301,7 @@ func TestLoggingMiddleware_Error(t *testing.T) {
 	_, err := chain.Execute(context.Background(), "tool", "{}", final)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+		return
 	}
 
 	// Should have logged start + failed
@@ -329,6 +330,7 @@ func TestRecoveryMiddleware(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result should not be nil after recovery")
+		return
 	}
 	if !result.IsError {
 		t.Error("expected IsError = true")
@@ -409,6 +411,7 @@ func TestTimeoutMiddleware_Exceeded(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result should not be nil")
+		return
 	}
 	if !result.IsError {
 		t.Error("expected IsError = true for timeout")
@@ -499,6 +502,7 @@ func TestRetryMiddleware_ExhaustsRetries(t *testing.T) {
 	result, err := chain.Execute(context.Background(), "tool", "{}", final)
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
+		return
 	}
 	if !strings.Contains(err.Error(), "always fails") {
 		t.Errorf("error = %q, should contain 'always fails'", err.Error())
@@ -547,6 +551,7 @@ func TestRetryMiddleware_RespectsContextCancel(t *testing.T) {
 	_, err := chain.Execute(ctx, "tool", "{}", final)
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	// Should only be called once because context is already cancelled
 	if atomic.LoadInt32(&calls) != 1 {
@@ -590,6 +595,7 @@ func TestPluginContext_UseMiddleware_NoPermission(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected permission error")
+		return
 	}
 	if _, ok := err.(*PermissionError); !ok {
 		t.Errorf("error type = %T, want *PermissionError", err)
@@ -752,6 +758,7 @@ func TestToolTimeout_Exceeded(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result should not be nil")
+		return
 	}
 	if !result.IsError {
 		t.Error("expected IsError = true for timeout")
@@ -927,6 +934,7 @@ func TestToolRetry_AllFail(t *testing.T) {
 	result, err := wrapped.Execute(context.Background(), `{}`)
 	if err == nil {
 		t.Fatal("expected error after exhausting retries")
+		return
 	}
 	if !strings.Contains(err.Error(), "always fails") {
 		t.Errorf("error = %q, should contain 'always fails'", err.Error())
@@ -978,6 +986,7 @@ func TestToolRetry_ContextCancel(t *testing.T) {
 	_, err := wrapped.Execute(ctx, `{}`)
 	if err == nil {
 		t.Fatal("expected error")
+		return
 	}
 	// Should only be called once because context is already cancelled
 	if atomic.LoadInt32(&calls) != 1 {
@@ -1177,12 +1186,14 @@ func TestToolCache_ErrorNotCached(t *testing.T) {
 	_, err := wrapped.Execute(context.Background(), `{"key":"val"}`)
 	if err == nil {
 		t.Fatal("expected error from first call")
+		return
 	}
 
 	// Second call — error should NOT be cached, inner called again
 	_, err = wrapped.Execute(context.Background(), `{"key":"val"}`)
 	if err == nil {
 		t.Fatal("expected error from second call")
+		return
 	}
 	if atomic.LoadInt32(&calls) != 2 {
 		t.Errorf("calls = %d, want 2 (error should not be cached)", atomic.LoadInt32(&calls))
@@ -1263,6 +1274,7 @@ func TestToolLogging_ExecutionError(t *testing.T) {
 	_, err := wrapped.Execute(context.Background(), `{}`)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+		return
 	}
 	if err.Error() != "something went wrong" {
 		t.Errorf("error = %q, want %q", err.Error(), "something went wrong")

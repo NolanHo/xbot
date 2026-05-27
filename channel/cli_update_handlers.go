@@ -1551,41 +1551,31 @@ func (m *cliModel) handleSwitchLLMDoneMsg(done cliSwitchLLMDoneMsg) (tea.Model, 
 	m.quickSwitchReturnToPanel = false
 	if done.err != nil {
 		m.showTempStatus(fmt.Sprintf("Failed to switch LLM: %v", done.err))
-	} else if done.mgr != nil {
+		return m, nil, true
+	}
+	if done.mgr != nil {
 		if err := done.mgr.SetDefault(done.subID, m.chatID); err != nil {
 			m.showTempStatus(fmt.Sprintf("LLM switched but failed to save: %v", err))
 		} else {
 			m.subGeneration++ // subscription actually changed
 			m.showTempStatus(fmt.Sprintf("Switched to: %s (%s)", done.subName, done.subModel))
-			// Build complete session LLM state and persist atomically.
-			// maxContext comes from the new subscription's per-model config.
-			// Do NOT fallback to the old session JSON value — that belongs
-			// to the previous subscription and would show a stale context bar.
-			state := SessionLLMState{
-				SubscriptionID:   done.subID,
-				Model:            done.subModel,
-				MaxContextTokens: done.maxCtx,
-				MaxOutputTokens:  done.maxOutTok,
-			}
-			SaveSessionLLMState(m.workDir, m.chatID, state)
-			m.applySessionLLMState(state)
-			// Refresh values cache so GetCurrentValues() reflects the new subscription.
-			if m.channel != nil && m.channel.config.RefreshValuesCache != nil {
-				m.channel.config.RefreshValuesCache()
-			}
 		}
-		// Update cached model name directly from the switch result
-		// (same pattern as model-switch case — avoids stale config/RPC reads)
-		if done.subModel != "" {
-			m.cachedModelName = done.subModel
-			// Always refresh modelCount after subscription switch
-			// so status bar shows correct count and [Ctrl+N] hint.
-			if m.channel.modelLister != nil {
-				m.modelCount = len(m.channel.modelLister.ListModels())
-			}
-		} else {
-			// Subscription has no model configured — clear stale model name.
-			m.cachedModelName = ""
+		// ALWAYS update per-session LLM state on successful switch, even if
+		// SetDefault (global DB write) fails. The session must track its own
+		// subscription regardless of global default persistence success.
+		// Failure to update activeSubID is the root cause of the settings panel
+		// showing the wrong subscription after a switch.
+		state := SessionLLMState{
+			SubscriptionID:   done.subID,
+			Model:            done.subModel,
+			MaxContextTokens: done.maxCtx,
+			MaxOutputTokens:  done.maxOutTok,
+		}
+		SaveSessionLLMState(m.workDir, m.chatID, state)
+		m.applySessionLLMState(state)
+		// Refresh values cache so GetCurrentValues() reflects the new subscription.
+		if m.channel != nil && m.channel.config.RefreshValuesCache != nil {
+			m.channel.config.RefreshValuesCache(done.subID)
 		}
 	}
 	// If we came from the settings panel, re-open it so the user can continue editing

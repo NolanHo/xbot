@@ -533,6 +533,10 @@ func (f *LLMFactory) ClearProxyLLM(senderID string) {
 }
 
 // Invalidate clears user-level and all per-chat caches for a sender.
+// Invalidate removes ALL cached entries for a sender — both user-level and
+// per-session (sender:chatID). Use with caution: this wipes every session's
+// LLM override and forces every session to fall back to the default subscription.
+// Prefer InvalidateSender (user-level only) or InvalidateSession (one session).
 func (f *LLMFactory) Invalidate(senderID string) {
 	f.mu.Lock()
 	prefix := senderID + ":"
@@ -541,6 +545,22 @@ func (f *LLMFactory) Invalidate(senderID string) {
 			delete(f.entries, k)
 		}
 	}
+	f.mu.Unlock()
+}
+
+// InvalidateSender removes only the user-level entry (senderID key),
+// preserving all per-session entries (senderID:chatID keys).
+// Safe to call from subscription field updates — per-session overrides survive.
+func (f *LLMFactory) InvalidateSender(senderID string) {
+	f.mu.Lock()
+	delete(f.entries, senderID)
+	f.mu.Unlock()
+}
+
+// InvalidateSession removes the per-session entry for a specific chat.
+func (f *LLMFactory) InvalidateSession(senderID, chatID string) {
+	f.mu.Lock()
+	delete(f.entries, chatKey(senderID, chatID))
 	f.mu.Unlock()
 }
 

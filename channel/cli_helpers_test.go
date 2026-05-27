@@ -1060,8 +1060,13 @@ func TestPersistCLISettingsValues_PersistsUserScopedAndAppliesAll(t *testing.T) 
 			t.Fatalf("unexpected target: channel=%q sender=%q", call.channelName, call.senderID)
 		}
 	}
-	if applied["max_output_tokens"] != "4096" || applied["theme"] != "mono" || applied["runner_workspace"] != "/tmp/ws" {
-		t.Fatalf("ApplySettings did not receive full input: %#v", applied)
+	// Subscription-scoped keys (max_output_tokens) should NOT reach ApplySettings.
+	// They are handled directly by saveSettings via subscriptionMgr.Update(activeSubID).
+	if _, ok := applied["max_output_tokens"]; ok {
+		t.Fatalf("subscription-scoped key max_output_tokens reached ApplySettings — should be handled by saveSettings directly")
+	}
+	if applied["theme"] != "mono" || applied["runner_workspace"] != "/tmp/ws" {
+		t.Fatalf("ApplySettings did not receive expected user-scoped keys: %#v", applied)
 	}
 }
 

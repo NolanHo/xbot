@@ -2235,16 +2235,30 @@ func (m *cliModel) viewSettingsPanel() string {
 			continue
 		}
 
-		// Subscription management entry: show count + active subscription
+		// Subscription management entry: show count + CURRENT session's subscription
 		if def.Key == "subscription_manage" {
 			subHint := ""
 			if m.subscriptionMgr != nil {
 				if subs, err := m.subscriptionMgr.List(""); err == nil && len(subs) > 0 {
 					var activeName string
-					for _, sub := range subs {
-						if sub.Active {
-							activeName = sub.Name
-							break
+					// Use m.activeSubID (per-session) to find the current subscription,
+					// NOT sub.Active (global default). The settings panel must reflect
+					// the session's active subscription, not the global default.
+					if m.activeSubID != "" {
+						for _, sub := range subs {
+							if sub.ID == m.activeSubID {
+								activeName = sub.Name
+								break
+							}
+						}
+					}
+					// Fallback: if no per-session subscription is set, use the global default.
+					if activeName == "" {
+						for _, sub := range subs {
+							if sub.Active {
+								activeName = sub.Name
+								break
+							}
 						}
 					}
 					if activeName != "" {
@@ -2668,8 +2682,26 @@ func (m *cliModel) applyQuickSwitch() {
 		if m.channel == nil || m.channel.config.SwitchLLM == nil {
 			break
 		}
-		// Switch LLM asynchronously — createLLM is now non-blocking
-		// (model list loads in background), but we keep async for UX feedback.
+		// ── IMMEDIATE frontend state update ──────────────────────
+		// Must happen synchronously before the async SwitchLLM call.
+		// Without this, activeSubID and cachedModelName stay stale between
+		// Enter press and handleSwitchLLMDoneMsg processing. The settings
+		// panel and context bar read from these fields, so they would show
+		// the OLD subscription until the async callback completes.
+		m.activeSubID = selected.ID
+		m.cachedModelName = selected.Model
+		m.subGeneration++ // subscription actually changed
+		// Persist immediately so refreshCachedModelName (called on settings save)
+		// loads the correct state from disk instead of stale old data.
+		state := SessionLLMState{
+			SubscriptionID:   selected.ID,
+			Model:            selected.Model,
+			MaxContextTokens: resolveSubMaxContext(target),
+			MaxOutputTokens:  resolveSubMaxOutputTokens(target),
+		}
+		SaveSessionLLMState(m.workDir, m.chatID, state)
+		m.applySessionLLMState(state)
+		// ── Async backend switch ─────────────────────────────────
 		m.showTempStatus(fmt.Sprintf("Switching to: %s …", selected.Name))
 		switchFn := m.channel.config.SwitchLLM
 		subID := selected.ID
@@ -2848,13 +2880,23 @@ func (m *cliModel) deleteQuickSwitchEntry() {
 	if m.subscriptionMgr == nil {
 		return
 	}
-	// Don't allow deleting the active subscription without a fallback
 	subs, err := m.subscriptionMgr.List("")
 	if err != nil || len(subs) <= 1 {
 		m.showTempStatus("Cannot delete the last subscription")
 		return
 	}
-	if selected.Active {
+	// Don't allow deleting the per-session active subscription without a fallback.
+	// Check m.activeSubID first (per-session), then fall back to Active flag (global default).
+	activeID := m.activeSubID
+	if activeID == "" {
+		for _, s := range subs {
+			if s.Active {
+				activeID = s.ID
+				break
+			}
+		}
+	}
+	if selected.ID == activeID {
 		m.showTempStatus("Cannot delete active subscription — switch to another first")
 		return
 	}
@@ -2872,6 +2914,18 @@ func (m *cliModel) updateQuickSwitchModels(newModel string) {
 	if len(m.quickSwitchList) == 0 {
 		return
 	}
+	// Use m.activeSubID (per-session) to find the current subscription,
+	// NOT Active flag (global default). The quick-switch list must reflect
+	// the session's active subscription.
+	if m.activeSubID != "" {
+		for i := range m.quickSwitchList {
+			if m.quickSwitchList[i].ID == m.activeSubID {
+				m.quickSwitchList[i].Model = newModel
+				return
+			}
+		}
+	}
+	// Fallback: if no per-session subscription, use global default.
 	for i := range m.quickSwitchList {
 		if m.quickSwitchList[i].Active {
 			m.quickSwitchList[i].Model = newModel

@@ -1273,7 +1273,10 @@ func (h *RPCContext) updateSubscription(ctx context.Context, p struct {
 	if err := svc.Update(dbSub); err != nil {
 		return err
 	}
-	h.Ag.LLMFactory().Invalidate(existing.SenderID)
+	// Use InvalidateSender (user-level only) instead of Invalidate (all sessions).
+	// Updating a subscription's fields (name, model, key) should NOT wipe every
+	// session's per-session LLM override. Only the user-level default is affected.
+	h.Ag.LLMFactory().InvalidateSender(existing.SenderID)
 	if existing.IsDefault {
 		h.Ag.LLMFactory().SwitchSubscription(bizID, dbSub, "")
 	}
@@ -1389,7 +1392,8 @@ func subToChannel(s *sqlite.LLMSubscription) channel.Subscription {
 		ID: s.ID, Name: s.Name, Provider: s.Provider,
 		BaseURL: s.BaseURL, APIKey: maskAPIKey(s.APIKey),
 		Model: s.Model, Active: s.IsDefault,
-		MaxOutputTokens: s.MaxOutputTokens, ThinkingMode: s.ThinkingMode,
+		MaxOutputTokens: s.MaxOutputTokens, MaxContext: s.MaxContext,
+		ThinkingMode:    s.ThinkingMode,
 		PerModelConfigs: s.PerModelConfigs,
 	}
 }

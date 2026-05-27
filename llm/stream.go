@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // orderedToolCalls converts the map-based tool call accumulation into an
@@ -67,73 +68,97 @@ func CollectStreamWithCallback(ctx context.Context, eventCh <-chan StreamEvent, 
 	var reasoningContent strings.Builder
 	toolCalls := make(map[int]*ToolCallDelta) // index → accumulated delta
 
-	for ev := range eventCh {
-		// Check context cancellation between events
+	// Idle timeout: if no chunk arrives for this duration, the stream is considered
+	// hung and we return an error. This replaces the old approach of using ctx deadline
+	// as a total stream timeout, which incorrectly killed actively-streaming responses
+	// that simply took longer than the deadline to generate all output.
+	const streamIdleTimeout = 120 * time.Second
+	idleTimer := time.NewTimer(streamIdleTimeout)
+	defer idleTimer.Stop()
+
+	for {
 		select {
 		case <-ctx.Done():
-			// Return partial content accumulated so far (same as EventError path).
-			// This preserves reasoning_content and tool_calls for proper persistence,
-			// preventing malformed assistant messages in subsequent turns.
+			// Caller cancelled or their total deadline exceeded.
+			// Return partial content accumulated so far.
 			resp.Content = content.String()
 			resp.ReasoningContent = reasoningContent.String()
 			resp.ToolCalls = orderedToolCalls(toolCalls)
 			return &resp, ctx.Err()
-		default:
-		}
 
-		switch ev.Type {
-		case EventContent:
-			content.WriteString(ev.Content)
-			safeCallback(ctx, onContent, content.String())
-		case EventReasoningContent:
-			reasoningContent.WriteString(ev.ReasoningContent)
-			safeCallback(ctx, onReasoning, reasoningContent.String())
-		case EventToolCall:
-			if ev.ToolCall == nil {
-				continue
-			}
-			idx := ev.ToolCall.Index
-			tc := toolCalls[idx]
-			if tc == nil {
-				tc = &ToolCallDelta{Index: idx}
-				toolCalls[idx] = tc
-			}
-			if ev.ToolCall.ID != "" {
-				tc.ID = ev.ToolCall.ID
-			}
-			if ev.ToolCall.Name != "" {
-				tc.Name = ev.ToolCall.Name
-			}
-			tc.Arguments += ev.ToolCall.Arguments
-		case EventUsage:
-			if ev.Usage != nil {
-				resp.Usage = *ev.Usage
-			}
-		case EventDone:
-			if ev.FinishReason != "" {
-				resp.FinishReason = ev.FinishReason
-			}
-		case EventError:
-			if ev.Error != "" {
-				// Return partial content accumulated so far instead of nil,
-				// so the engine can display what was received before the stream broke.
+		case <-idleTimer.C:
+			// No chunk received for streamIdleTimeout — stream is hung.
+			resp.Content = content.String()
+			resp.ReasoningContent = reasoningContent.String()
+			resp.ToolCalls = orderedToolCalls(toolCalls)
+			return &resp, fmt.Errorf("stream idle timeout after %v: %w", streamIdleTimeout, context.DeadlineExceeded)
+
+		case ev, ok := <-eventCh:
+			if !ok {
+				// Channel closed normally — stream completed.
 				resp.Content = content.String()
 				resp.ReasoningContent = reasoningContent.String()
 				resp.ToolCalls = orderedToolCalls(toolCalls)
-				return &resp, fmt.Errorf("stream error: %s", ev.Error)
+
+				// Infer finish_reason from actual response data.
+				// Some providers send "stop" instead of "tool_calls" even when tool_calls are present.
+				if resp.FinishReason == "" && len(resp.ToolCalls) > 0 {
+					resp.FinishReason = FinishReasonToolCalls
+				}
+				return &resp, nil
+			}
+
+			// Reset idle timer — we received a chunk, so the stream is alive.
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(streamIdleTimeout)
+
+			switch ev.Type {
+			case EventContent:
+				content.WriteString(ev.Content)
+				safeCallback(ctx, onContent, content.String())
+			case EventReasoningContent:
+				reasoningContent.WriteString(ev.ReasoningContent)
+				safeCallback(ctx, onReasoning, reasoningContent.String())
+			case EventToolCall:
+				if ev.ToolCall == nil {
+					continue
+				}
+				idx := ev.ToolCall.Index
+				tc := toolCalls[idx]
+				if tc == nil {
+					tc = &ToolCallDelta{Index: idx}
+					toolCalls[idx] = tc
+				}
+				if ev.ToolCall.ID != "" {
+					tc.ID = ev.ToolCall.ID
+				}
+				if ev.ToolCall.Name != "" {
+					tc.Name = ev.ToolCall.Name
+				}
+				tc.Arguments += ev.ToolCall.Arguments
+			case EventUsage:
+				if ev.Usage != nil {
+					resp.Usage = *ev.Usage
+				}
+			case EventDone:
+				if ev.FinishReason != "" {
+					resp.FinishReason = ev.FinishReason
+				}
+			case EventError:
+				if ev.Error != "" {
+					// Return partial content accumulated so far instead of nil,
+					// so the engine can display what was received before the stream broke.
+					resp.Content = content.String()
+					resp.ReasoningContent = reasoningContent.String()
+					resp.ToolCalls = orderedToolCalls(toolCalls)
+					return &resp, fmt.Errorf("stream error: %s", ev.Error)
+				}
 			}
 		}
 	}
-
-	resp.Content = content.String()
-	resp.ReasoningContent = reasoningContent.String()
-	resp.ToolCalls = orderedToolCalls(toolCalls)
-
-	// Infer finish_reason from actual response data.
-	// Some providers send "stop" instead of "tool_calls" even when tool_calls are present.
-	if resp.FinishReason == "" && len(resp.ToolCalls) > 0 {
-		resp.FinishReason = FinishReasonToolCalls
-	}
-
-	return &resp, nil
 }

@@ -682,6 +682,11 @@ func (m *cliModel) postRestoreSessionSetup() []tea.Cmd {
 		if !state.IsZero() {
 			// Found persisted LLM state on disk — apply to caches atomically
 			m.applySessionLLMState(state)
+			// Refresh values cache so GetCurrentValues() reflects the session's
+			// per-session subscription, not the previous session's or the startup default.
+			if m.channel != nil && m.channel.config.RefreshValuesCache != nil && state.SubscriptionID != "" {
+				m.channel.config.RefreshValuesCache(state.SubscriptionID)
+			}
 			// Restore the actual LLM client via SwitchLLM (creates new client)
 			if state.SubscriptionID != "" && m.subscriptionMgr != nil {
 				if subs, err := m.subscriptionMgr.List(""); err == nil {
@@ -1501,13 +1506,18 @@ type cliSettingsSavedMsg struct {
 }
 
 // cliSwitchLLMDoneMsg is sent when an async subscription switch completes.
-// resolveSubMaxContext returns the per-model max_context from a subscription.
-// Priority: per-model config for the subscription's model → 0 (let global config decide).
+// resolveSubMaxContext returns the effective max_context from a subscription.
+// Priority: per-model config → subscription-level MaxContext → 0 (let global config decide).
 func resolveSubMaxContext(sub *Subscription) int {
 	if sub.Model != "" {
 		if pmc, ok := sub.PerModelConfigs[sub.Model]; ok && pmc.MaxContext > 0 {
 			return pmc.MaxContext
 		}
+	}
+	// Fallback to subscription-level MaxContext (previously invisible to TUI,
+	// causing 1M-context subscriptions to show 200k in context bar).
+	if sub.MaxContext > 0 {
+		return sub.MaxContext
 	}
 	return 0
 }
@@ -1618,8 +1628,10 @@ func (m *cliModel) refreshCachedModelName() {
 	// Prefer per-session model from disk (persistent across restarts)
 	if state := LoadSessionLLMState(m.workDir, m.chatID); state.Model != "" {
 		m.cachedModelName = state.Model
-		// Also restore activeSubID so the sub panel checkmark is consistent.
-		if state.SubscriptionID != "" {
+		// Only restore activeSubID from disk when it's empty (TUI restart / session switch).
+		// Never override an already-set activeSubID — a quick-switch may have set it
+		// synchronously, and disk write race could otherwise revert to stale data.
+		if m.activeSubID == "" && state.SubscriptionID != "" {
 			m.activeSubID = state.SubscriptionID
 		}
 		return

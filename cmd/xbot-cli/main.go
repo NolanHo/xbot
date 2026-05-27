@@ -105,7 +105,7 @@ func configLayoutValue(key string) string {
 	return ""
 }
 
-func (app *cliApp) refreshRemoteValuesCache() {
+func (app *cliApp) refreshRemoteValuesCache(subscriptionID string) {
 	if app.client == nil {
 		return
 	}
@@ -115,10 +115,29 @@ func (app *cliApp) refreshRemoteValuesCache() {
 			vals[k] = v
 		}
 	}
-	// LLM values come from the active subscription (single source of truth).
-	// This replaces the old path where llm_model was read from GetSettings
-	// (which stored stale LLM values in user_settings).
-	if sub, err := app.client.GetDefaultSubscription(cliSenderID); err == nil && sub != nil {
+	// LLM values come from the SPECIFIED subscription (caller-provided ID), never from
+	// GetDefaultSubscription(). The active subscription ID is the single source of truth.
+	// Using GetDefaultSubscription() here would populate the cache with the WRONG
+	// subscription's values, causing the settings panel to show stale data.
+	var sub *protocol.Subscription
+	if subscriptionID != "" {
+		if subs, err := app.client.ListSubscriptions(cliSenderID); err == nil {
+			for i := range subs {
+				if subs[i].ID == subscriptionID {
+					sub = &subs[i]
+					break
+				}
+			}
+		}
+	}
+	// Fallback: if no subscription ID provided (e.g., startup before any subscription is active),
+	// use GetDefaultSubscription() as a last resort.
+	if sub == nil {
+		if s, err := app.client.GetDefaultSubscription(cliSenderID); err == nil && s != nil {
+			sub = s
+		}
+	}
+	if sub != nil {
 		vals["llm_provider"] = sub.Provider
 		vals["llm_base_url"] = sub.BaseURL
 		vals["llm_model"] = sub.Model
@@ -126,17 +145,7 @@ func (app *cliApp) refreshRemoteValuesCache() {
 			vals["llm_api_key"] = sub.APIKey
 		}
 		vals["max_output_tokens"] = fmt.Sprintf("%d", sub.MaxOutputTokens)
-		log.Debugf("[Settings] refreshRemoteValuesCache: sub=%s max_output_tokens=%d", func() string {
-			if sub != nil {
-				return sub.ID
-			}
-			return "<nil>"
-		}(), func() int {
-			if sub != nil {
-				return sub.MaxOutputTokens
-			}
-			return -1
-		}())
+		log.Debugf("[Settings] refreshRemoteValuesCache: sub=%s max_output_tokens=%d", sub.ID, sub.MaxOutputTokens)
 		if sub.ThinkingMode != "" {
 			vals["thinking_mode"] = sub.ThinkingMode
 		}
@@ -1150,8 +1159,12 @@ func main() {
 				app.client.SetRetryConfig(llm.DefaultRetryConfig())
 			}
 
-			// Immediately refresh cache so UI shows new values
-			app.refreshRemoteValuesCache()
+			// NOTE: Do NOT call refreshRemoteValuesCache("") here.
+			// refreshRemoteValuesCache("") falls back to GetDefaultSubscription(),
+			// which overwrites the valuesCache with the global-default subscription,
+			// destroying any per-session subscription data loaded by saveSettings
+			// or postRestoreSessionSetup. Callers that need subscription-aware
+			// cache refresh use RefreshValuesCache(subscriptionID) directly.
 		},
 		ClearMemory: func(targetType string) error {
 			if app.client == nil {
@@ -1183,8 +1196,8 @@ func main() {
 			}
 			return nil
 		},
-		RefreshValuesCache: func() {
-			app.refreshRemoteValuesCache()
+		RefreshValuesCache: func(subscriptionID string) {
+			app.refreshRemoteValuesCache(subscriptionID)
 		},
 		UsageQuery: func(senderID string, days int) (*channel.UserTokenUsage, []channel.DailyTokenUsage, error) {
 			if app.client == nil {
@@ -1837,7 +1850,7 @@ func main() {
 	// Initial values cache population (event-driven from now on, no polling).
 	// Cache is refreshed on: settings panel save, subscription switch, config tool set.
 	if app.client != nil {
-		app.refreshRemoteValuesCache()
+		app.refreshRemoteValuesCache("")
 	}
 
 	sigCh := make(chan os.Signal, 1)

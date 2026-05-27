@@ -77,6 +77,17 @@ func CollectStreamWithCallback(ctx context.Context, eventCh <-chan StreamEvent, 
 	defer idleTimer.Stop()
 
 	for {
+		// Explicit context check BEFORE the select. Go's select is pseudo-random
+		// when multiple cases are ready. If ctx is canceled AND the event channel
+		// has buffered data, the select may pick eventCh over ctx.Done(), causing
+		// the stream to complete normally without detecting the cancellation.
+		// This check guarantees ctx.Err() is seen on every iteration.
+		if err := ctx.Err(); err != nil {
+			resp.Content = content.String()
+			resp.ReasoningContent = reasoningContent.String()
+			resp.ToolCalls = orderedToolCalls(toolCalls)
+			return &resp, err
+		}
 		select {
 		case <-ctx.Done():
 			// Caller cancelled or their total deadline exceeded.

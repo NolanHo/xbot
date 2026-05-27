@@ -625,11 +625,16 @@ func (m *cliModel) relayoutViewport() {
 // handleResize 处理窗口大小变化
 func (m *cliModel) handleResize(width, height int) {
 	// Deduplicate: skip if size hasn't actually changed.
-	// During resize drags, terminals (especially foot) may fire many
-	// SIGWINCH signals with the same dimensions — each one triggers a
-	// full O(N) rebuild of the message history.
 	if width == m.width && height == m.height && m.ready {
 		return
+	}
+
+	// Mark ready BEFORE any rendering operations. During the first resize,
+	// View() may be called while this function is still processing; if ready
+	// is false, View() shows a blank loading screen. Setting ready early
+	// ensures the first render always shows the proper UI, not a blank flash.
+	if !m.ready {
+		m.ready = true
 	}
 
 	m.width = width
@@ -648,10 +653,6 @@ func (m *cliModel) handleResize(width, height int) {
 	}
 
 	m.relayoutViewport()
-
-	if !m.ready {
-		m.ready = true
-	}
 }
 
 // panelWidth returns a width suitable for panel textareas,

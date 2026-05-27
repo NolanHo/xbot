@@ -980,6 +980,15 @@ func (a *Agent) SendToInteractiveSession(
 
 	ia.mu.Lock()
 	ia.running = true
+	// For background mode, create a cancellable context so UnloadInteractiveSession
+	// can cancel the running goroutine. Without this, unload calls ia.cancelCurrent()
+	// which is nil (cleared after the initial spawn completed), leaving the goroutine
+	// running even after the parent thinks it's been unloaded.
+	if ia.background {
+		runCtx, runCancel := context.WithCancel(subCtx)
+		subCtx = runCtx
+		ia.cancelCurrent = runCancel
+	}
 	ia.mu.Unlock()
 
 	if ia.background {
@@ -995,6 +1004,7 @@ func (a *Agent) SendToInteractiveSession(
 					clipanic.Report("agent.interactive.SendBackground", fmt.Sprintf("%s:%s", roleName, instance), r)
 					ia.mu.Lock()
 					ia.running = false
+					ia.cancelCurrent = nil
 					ia.lastError = fmt.Sprintf("panic: %v", r)
 					ia.mu.Unlock()
 					if a.bgTaskMgr != nil {
@@ -1016,6 +1026,7 @@ func (a *Agent) SendToInteractiveSession(
 
 			ia.mu.Lock()
 			ia.running = false
+			ia.cancelCurrent = nil
 			ia.mu.Unlock()
 
 			// Notify parent via BgTaskManager (same as initial spawn).

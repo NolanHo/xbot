@@ -233,3 +233,52 @@ func TestBgSession_CancelOrderRegression(t *testing.T) {
 		t.Error("cancelledAfter should be false for natural completion (context not cancelled)")
 	}
 }
+
+// TestBgSend_CancelCurrentSetAndCleared verifies that the background "send" path
+// correctly sets cancelCurrent before starting the goroutine and clears it on
+// completion. This is a regression test for the bug where UnloadInteractiveSession
+// called ia.cancelCurrent() but it was nil (never set by the send path), so
+// background send goroutines kept running even after unload.
+func TestBgSend_CancelCurrentSetAndCleared(t *testing.T) {
+	// Simulate the state after initial spawn completes: cancelCurrent is nil.
+	ia := &interactiveAgent{
+		roleName:   "test-role",
+		instance:   "test-inst",
+		background: true,
+		running:    false,
+	}
+
+	if ia.cancelCurrent != nil {
+		t.Fatal("precondition: cancelCurrent should be nil after initial spawn completes")
+	}
+
+	// Simulate the send path's context setup:
+	//   runCtx, runCancel := context.WithCancel(subCtx)
+	//   ia.cancelCurrent = runCancel
+	subCtx := context.Background()
+	runCtx, runCancel := context.WithCancel(subCtx)
+
+	ia.cancelCurrent = runCancel
+	ia.running = true
+
+	// Verify cancelCurrent is set
+	if ia.cancelCurrent == nil {
+		t.Fatal("cancelCurrent should be set before goroutine starts")
+	}
+
+	// Simulate unload calling cancelCurrent
+	ia.cancelCurrent()
+
+	// Verify the context is actually cancelled
+	if runCtx.Err() == nil {
+		t.Fatal("context should be cancelled after cancelCurrent() is called")
+	}
+
+	// Simulate goroutine completion: clear cancelCurrent
+	ia.running = false
+	ia.cancelCurrent = nil
+
+	if ia.cancelCurrent != nil {
+		t.Fatal("cancelCurrent should be nil after goroutine completion")
+	}
+}

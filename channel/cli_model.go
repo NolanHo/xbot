@@ -517,6 +517,10 @@ func (m *cliModel) resetToIdleState() {
 	m.cachedThinkingBlock = ""
 	m.cachedThinkingBlockFP = 0
 	m.cachedThinkingBlockWidth = 0
+	// Full progress block output cache
+	m.cachedProgressBlockOut = ""
+	m.cachedProgressBlockFP = 0
+	m.cachedProgressBlockWidth = 0
 
 	// --- Agent State ---
 	m.agentTurnID = 0
@@ -1069,6 +1073,15 @@ type cliModel struct {
 	cachedThinkingBlock      string // rendered thinking lines with guides
 	cachedThinkingBlockFP    uint64 // fingerprint for dirty detection
 	cachedThinkingBlockWidth int    // innerWidth when cache was built
+
+	// Full progress block output cache — avoids the expensive blockStyle.Render()
+	// (lipgloss border wrapping with ANSI width calculation on every character)
+	// running on every 100ms tick. The cache key is a fingerprint of all rendered
+	// sub-blocks + elapsed seconds + cursor state. Without this, blockStyle.Render()
+	// alone consumes 60%+ CPU in SubAgent sessions with large progress history.
+	cachedProgressBlockOut   string // final rendered blockStyle.Render result
+	cachedProgressBlockFP    uint64 // fingerprint of pre-render content
+	cachedProgressBlockWidth int    // bubbleWidth when cache was built
 
 	// --- §2 工具可视化 ---
 	lastCompletedTools []protocol.ToolProgress // 每轮结束时快照，不依赖 m.progress 生命周期

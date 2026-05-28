@@ -631,14 +631,15 @@ func (a *Agent) SpawnInteractiveSession(
 			cancelled := runCtx.Err() != nil
 			runCancel()
 
-			// Notify parent agent about completion
-			if notifyMgr != nil {
+			// Notify parent agent about completion — but ONLY for natural
+			// completion or interrupt. Unload/shutdown notifications cause
+			// the parent agent to see stale "[SubAgent X completed]" messages
+			// and try to "clean up" agents that are already gone, producing
+			// endless "agent still running" hallucinations.
+			if notifyMgr != nil && !cancelled {
 				content := out.Content
 				if out.Error != nil {
 					content = fmt.Sprintf("Error: %v\n%s", out.Error, out.Content)
-				}
-				if cancelled {
-					content = "[cancelled] " + content
 				}
 				if len(content) > 2000 {
 					content = content[:2000] + "... [truncated, use inspect for details]"
@@ -656,8 +657,8 @@ func (a *Agent) SpawnInteractiveSession(
 
 			if cancelled {
 				// Context was cancelled. Two possible causes:
-				// 1. InterruptInteractiveSession → ia.interrupted=true → keep session alive for future send
-				// 2. UnloadInteractiveSession / agent shutdown → ia.interrupted=false → destroy session
+				// 1. InterruptInteractiveSession → ia.interrupted=true → notify + keep session
+				// 2. UnloadInteractiveSession / agent shutdown → ia.interrupted=false → destroy
 				placeholder.mu.Lock()
 				wasInterrupted := placeholder.interrupted
 				placeholder.running = false
@@ -666,8 +667,27 @@ func (a *Agent) SpawnInteractiveSession(
 				placeholder.mu.Unlock()
 
 				if wasInterrupted {
-					// Interrupt: session stays for future "send" interactions.
-					// Run() was cut short; don't save partial results.
+					// Interrupt: notify parent so it knows the agent stopped.
+					// The session stays for future "send" interactions.
+					if notifyMgr != nil {
+						content := out.Content
+						if out.Error != nil {
+							content = fmt.Sprintf("Error: %v\n%s", out.Error, out.Content)
+						}
+						content = "[interrupted] " + content
+						if len(content) > 2000 {
+							content = content[:2000] + "... [truncated, use inspect for details]"
+						}
+						notifyMgr.SendSubAgentNotify(&tools.SubAgentBgNotify{
+							Key:      sessionKey,
+							Type:     tools.SubAgentBgNotifyCompleted,
+							Role:     roleName,
+							Instance: instance,
+							Content:  content,
+							Elapsed:  time.Since(startTime),
+							Sid:      originSender,
+						})
+					}
 					log.WithFields(log.Fields{
 						"role":     roleName,
 						"instance": instance,
@@ -676,7 +696,10 @@ func (a *Agent) SpawnInteractiveSession(
 					return
 				}
 
-				// Unload/shutdown: clean up children and remove self from panel.
+				// Unload/shutdown: NO notification — the parent already knows
+				// (it triggered the unload). Sending a notification would cause
+				// the parent agent to see "[SubAgent completed]" and try to
+				// "clean up" agents that are already destroyed.
 				// Check if key still exists — UnloadInteractiveSession may have
 				// already cleaned up this session, preventing duplicate cleanup.
 				if _, ok := a.interactiveSubAgents.Load(key); !ok {
@@ -688,7 +711,7 @@ func (a *Agent) SpawnInteractiveSession(
 					"role":     roleName,
 					"instance": instance,
 					"key":      key,
-				}).Info("Background interactive session cancelled, removed from panel")
+				}).Info("Background interactive session cancelled (unload), removed from panel")
 				return
 			}
 
@@ -1072,14 +1095,36 @@ func (a *Agent) SendToInteractiveSession(
 
 			if wasCancelled {
 				if wasInterrupted {
-					// Interrupt: session stays for future "send" interactions.
+					// Interrupt: notify parent so it knows the agent stopped.
+					// The session stays for future "send" interactions.
+					if a.bgTaskMgr != nil {
+						content := "[interrupted] "
+						if out.Content != "" {
+							content += out.Content
+						} else {
+							content += "Agent was interrupted."
+						}
+						if len(content) > 2000 {
+							content = content[:2000] + "... [truncated, use inspect for details]"
+						}
+						sessionKey := originChannel + ":" + originChatID
+						a.bgTaskMgr.SendSubAgentNotify(&tools.SubAgentBgNotify{
+							Key:      sessionKey,
+							Type:     tools.SubAgentBgNotifyCompleted,
+							Role:     roleName,
+							Instance: instance,
+							Content:  content,
+							Elapsed:  time.Since(startTime),
+							Sid:      originSender,
+						})
+					}
 					log.WithFields(log.Fields{
 						"role":     roleName,
 						"instance": instance,
 					}).Info("Background send interrupted, session preserved for future send")
 					return
 				}
-				// Unload/shutdown: session was already destroyed by UnloadInteractiveSession.
+				// Unload/shutdown: NO notification — the parent already knows.
 				log.WithFields(log.Fields{
 					"role":     roleName,
 					"instance": instance,

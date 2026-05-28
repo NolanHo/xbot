@@ -353,6 +353,10 @@ func (m *cliModel) invalidateProgressHistoryCache() {
 	m.cachedThinkingBlock = ""
 	m.cachedThinkingBlockFP = 0
 	m.cachedThinkingBlockWidth = 0
+	// Full progress block output cache
+	m.cachedProgressBlockOut = ""
+	m.cachedProgressBlockFP = 0
+	m.cachedProgressBlockWidth = 0
 }
 
 // resetProgressState resets iteration tracking for a new agent turn.
@@ -1077,8 +1081,14 @@ func (m *cliModel) handleAgentMessage(msg OutboundMsg) {
 }
 
 // renderProgressBlock renders the iteration progress panel for the viewport.
+// The output is cached via fingerprint — the expensive blockStyle.Render()
+// (lipgloss border wrapping with ANSI width calculation on every character)
+// only runs when the content actually changes. Elapsed is quantized to whole
+// seconds so the cache stays stable across 100ms ticks.
 func (m *cliModel) renderProgressBlock() string {
 	if !m.typing && m.progress == nil {
+		m.cachedProgressBlockOut = ""
+		m.cachedProgressBlockFP = 0
 		return ""
 	}
 	// Cross-session guard: if progress payload carries a ChatID that doesn't match
@@ -1090,6 +1100,8 @@ func (m *cliModel) renderProgressBlock() string {
 		if m.progress.ChatID != currentKey {
 			m.progress = nil
 			m.typing = false
+			m.cachedProgressBlockOut = ""
+			m.cachedProgressBlockFP = 0
 			return ""
 		}
 	}
@@ -1201,20 +1213,50 @@ func (m *cliModel) renderProgressBlock() string {
 		return ""
 	}
 
-	// Total elapsed
+	// Total elapsed — quantize to whole seconds so the fingerprint stays stable
+	// across 100ms ticks. Without this, formatElapsed changes every 100ms
+	// (e.g. "1.2s" → "1.3s"), preventing the cache from ever hitting.
 	elapsed := ""
 	if !m.typingStartTime.IsZero() {
-		elapsed = " " + elapsedStyle.Render(formatElapsed(time.Since(m.typingStartTime).Milliseconds()))
+		elapsedSec := time.Since(m.typingStartTime).Milliseconds() / 1000
+		elapsed = " " + elapsedStyle.Render(formatElapsed(elapsedSec*1000))
 	}
 
 	// Header
 	headerStyle := s.ProgressHeader
 	header := headerStyle.Render("Progress") + elapsed
 
+	// --- Full progress block output cache ---
+	// blockStyle.Render is extremely expensive (ANSI width calculation on every
+	// character of the full content). Avoid re-running it when the pre-render
+	// content hasn't changed. The fingerprint covers all rendered sub-blocks,
+	// elapsed (seconds), cursor state, and active tools.
+	preRender := header + "\n" + content
+	fp := m.progressBlockFullFP(preRender, bubbleWidth)
+	if fp == m.cachedProgressBlockFP && bubbleWidth == m.cachedProgressBlockWidth && m.cachedProgressBlockOut != "" {
+		return m.cachedProgressBlockOut
+	}
+
 	// Wrap in border
 	blockStyle := s.ProgressBlock.Width(bubbleWidth)
 
-	return blockStyle.Render(header+"\n"+content) + "\n\n"
+	result := blockStyle.Render(preRender) + "\n\n"
+
+	m.cachedProgressBlockOut = result
+	m.cachedProgressBlockFP = fp
+	m.cachedProgressBlockWidth = bubbleWidth
+
+	return result
+}
+
+// progressBlockFullFP computes a fast fingerprint for the full progress block
+// pre-render content to detect changes. Uses FNV-1a on the pre-render string
+// (comparing the full string is O(N) with early exit on first byte difference
+// due to elapsed changing, so the hash is effectively O(1) in practice).
+func (m *cliModel) progressBlockFullFP(preRender string, bubbleWidth int) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(preRender))
+	return h.Sum64()
 }
 
 // progressStaticFP computes a fingerprint for the static parts of the current

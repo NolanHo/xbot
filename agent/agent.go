@@ -1893,12 +1893,21 @@ func (a *Agent) chatProcessLoop(ctx context.Context, chatKey string, ch <-chan b
 			reqCancel()
 		}
 
-		// 监听 cancel 信号（处理 processMessage 运行期间到达的 cancel）
+		// 监听 cancel 信号（处理 processMessage 运行期间到达的 cancel）。
+		// Loop to handle multiple cancel requests — the goroutine was previously
+		// a single select{}, which exited after the first cancel. If the user
+		// pressed Ctrl+C again (because the agent didn't appear to stop), the
+		// channel reader was gone and subsequent sends got "buffer full".
 		clipanic.Go("agent.chatProcessLoop.cancelListener", func() {
-			select {
-			case <-cancelCh:
-				reqCancel()
-			case <-reqCtx.Done():
+			for {
+				select {
+				case <-cancelCh:
+					reqCancel()
+				// reqCancel is idempotent — calling it multiple times is safe.
+				// Drain any additional signals that arrived between calls.
+				case <-reqCtx.Done():
+					return
+				}
 			}
 		})
 

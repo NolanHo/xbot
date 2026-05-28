@@ -461,6 +461,14 @@ func (a *Agent) SpawnInteractiveSession(
 	}
 	cfg := a.buildSubAgentRunConfig(subCtx, parentCtx, msg.Content, msg.SystemPrompt, msg.AllowedTools, caps, roleName, true, instance, subModel)
 
+	// Update placeholder with cfg so GetAgentSessionDumpByFullKey returns the
+	// correct model name, max context tokens, etc. — even during the first Run().
+	// Without this, placeholder.cfg is nil, so ia.modelName() returns "" and the
+	// TUI status bar falls back to the parent agent's default subscription model.
+	placeholder.mu.Lock()
+	placeholder.cfg = &cfg
+	placeholder.mu.Unlock()
+
 	// Update placeholder with system prompt + user message so CLI session viewer
 	// can display them while Run() is executing (before the full session data
 	// replaces the placeholder).

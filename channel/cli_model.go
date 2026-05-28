@@ -506,6 +506,7 @@ func (m *cliModel) resetToIdleState() {
 	m.cachedWrappedHistory = ""
 	m.cachedWrappedHistoryRaw = ""
 	m.cachedWrappedHistoryWidth = 0
+	m.cachedHistoryLines = nil
 	m.cachedProgressHistory = ""
 	m.cachedProgressHistoryLen = 0
 	m.cachedProgressHistoryWidth = 0
@@ -687,61 +688,69 @@ func (m *cliModel) postRestoreSessionSetup() []tea.Cmd {
 	// activeSubID, cachedModelName, cachedMaxContextTokens, cachedMaxOutputTokens
 	// are ALWAYS consistent. No scattered field-by-field assignments.
 	if m.activeSubID == "" && m.cachedModelName == "" {
-		state := LoadSessionLLMState(m.workDir, m.chatID)
-		if !state.IsZero() {
-			// Found persisted LLM state on disk — apply to caches atomically
-			m.applySessionLLMState(state)
-			// Refresh values cache so GetCurrentValues() reflects the session's
-			// per-session subscription, not the previous session's or the startup default.
-			if m.channel != nil && m.channel.config.RefreshValuesCache != nil && state.SubscriptionID != "" {
-				m.channel.config.RefreshValuesCache(state.SubscriptionID)
-			}
-			// Restore the actual LLM client via SwitchLLM (creates new client)
-			if state.SubscriptionID != "" && m.subscriptionMgr != nil {
-				if subs, err := m.subscriptionMgr.List(""); err == nil {
-					for i := range subs {
-						if subs[i].ID == state.SubscriptionID {
-							if m.channel != nil && m.channel.config.SwitchLLM != nil {
-								switchFn := m.channel.config.SwitchLLM
-								target := subs[i]
-								m.pendingCmds = append(m.pendingCmds, func() tea.Msg {
-									err := switchFn(target.Provider, target.BaseURL, target.APIKey, target.Model)
-									return cliSwitchLLMDoneMsg{
-										err:       err,
-										subID:     target.ID,
-										subName:   target.Name,
-										subModel:  target.Model,
-										maxCtx:    resolveSubMaxContext(&target),
-										maxOutTok: resolveSubMaxOutputTokens(&target),
-										mgr:       m.subscriptionMgr,
-									}
-								})
+		// Agent sessions: skip default subscription fallback — the model name,
+		// context limits, and token usage come from the SubAgent's config via
+		// handleSuHistoryLoad (AgentSessionLLMStateFn). Setting the default
+		// subscription here would show the parent agent's model name instead.
+		if m.channelName == "agent" {
+			// No-op: model name will be populated by handleSuHistoryLoad
+		} else {
+			state := LoadSessionLLMState(m.workDir, m.chatID)
+			if !state.IsZero() {
+				// Found persisted LLM state on disk — apply to caches atomically
+				m.applySessionLLMState(state)
+				// Refresh values cache so GetCurrentValues() reflects the session's
+				// per-session subscription, not the previous session's or the startup default.
+				if m.channel != nil && m.channel.config.RefreshValuesCache != nil && state.SubscriptionID != "" {
+					m.channel.config.RefreshValuesCache(state.SubscriptionID)
+				}
+				// Restore the actual LLM client via SwitchLLM (creates new client)
+				if state.SubscriptionID != "" && m.subscriptionMgr != nil {
+					if subs, err := m.subscriptionMgr.List(""); err == nil {
+						for i := range subs {
+							if subs[i].ID == state.SubscriptionID {
+								if m.channel != nil && m.channel.config.SwitchLLM != nil {
+									switchFn := m.channel.config.SwitchLLM
+									target := subs[i]
+									m.pendingCmds = append(m.pendingCmds, func() tea.Msg {
+										err := switchFn(target.Provider, target.BaseURL, target.APIKey, target.Model)
+										return cliSwitchLLMDoneMsg{
+											err:       err,
+											subID:     target.ID,
+											subName:   target.Name,
+											subModel:  target.Model,
+											maxCtx:    resolveSubMaxContext(&target),
+											maxOutTok: resolveSubMaxOutputTokens(&target),
+											mgr:       m.subscriptionMgr,
+										}
+									})
+								}
+								break
 							}
-							break
 						}
 					}
 				}
-			}
-		} else {
-			// No per-session override on disk — load global default subscription
-			if m.subscriptionMgr != nil {
-				if defSub, err := m.subscriptionMgr.GetDefault(""); err == nil && defSub != nil {
-					m.activeSubID = defSub.ID
-					m.cachedModelName = defSub.Model
-				}
-			}
-			// Auto-discover: if model name is still empty after loading default sub,
-			// try listing available models and pick the first one.
-			if m.cachedModelName == "" && m.channel != nil && m.channel.modelLister != nil {
-				m.channel.modelLister.EnsureModelsLoaded()
-				if models := m.channel.modelLister.ListModels(); len(models) > 0 {
-					m.cachedModelName = models[0]
-					if m.llmSubscriber != nil {
-						m.llmSubscriber.SwitchModel(m.senderID, models[0], m.chatID)
+			} else {
+				// No per-session override on disk — load global default subscription
+				if m.subscriptionMgr != nil {
+					if defSub, err := m.subscriptionMgr.GetDefault(""); err == nil && defSub != nil {
+						m.activeSubID = defSub.ID
+						m.cachedModelName = defSub.Model
 					}
-					existing := LoadSessionLLMState(m.workDir, m.chatID)
-					existing.Model = models[0]
-					SaveSessionLLMState(m.workDir, m.chatID, existing)
+				}
+				// Auto-discover: if model name is still empty after loading default sub,
+				// try listing available models and pick the first one.
+				if m.cachedModelName == "" && m.channel != nil && m.channel.modelLister != nil {
+					m.channel.modelLister.EnsureModelsLoaded()
+					if models := m.channel.modelLister.ListModels(); len(models) > 0 {
+						m.cachedModelName = models[0]
+						if m.llmSubscriber != nil {
+							m.llmSubscriber.SwitchModel(m.senderID, models[0], m.chatID)
+						}
+						existing := LoadSessionLLMState(m.workDir, m.chatID)
+						existing.Model = models[0]
+						SaveSessionLLMState(m.workDir, m.chatID, existing)
+					}
 				}
 			}
 		}
@@ -1049,14 +1058,21 @@ type cliModel struct {
 	// Two-tier wrap cache: avoid O(N*W) hardWrapRunes on the growing history every tick.
 	// cachedWrappedHistory stores the hard-wrapped version of cachedHistory at the current width.
 	// Only the dynamic suffix (progress block, rewind result) is re-wrapped on each tick.
-	cachedWrappedHistory      string // hard-wrapped cachedHistory (already split/wrapped at m.width)
-	cachedWrappedHistoryRaw   string // the raw cachedHistory that was wrapped (for invalidation)
-	cachedWrappedHistoryWidth int    // width at which cachedWrappedHistory was built
+	cachedWrappedHistory      string   // hard-wrapped cachedHistory (already split/wrapped at m.width)
+	cachedWrappedHistoryRaw   string   // the raw cachedHistory that was wrapped (for invalidation)
+	cachedWrappedHistoryWidth int      // width at which cachedWrappedHistory was built
+	cachedHistoryLines        []string // pre-split lines from cachedWrappedHistory (avoids O(N) strings.Split every tick)
 
 	// --- progress block cache ---
 	cachedProgressHistory      string // cached rendered output of completed iterations (dimmed)
 	cachedProgressHistoryLen   int    // len(iterationHistory) when cache was built
 	cachedProgressHistoryWidth int    // viewport width when cache was built
+
+	// --- tick-level dirty detection for updateViewportContent fast path ---
+	// Avoids O(total_content) string construction when nothing changed between ticks.
+	lastTickHistoryLen int    // len(m.cachedHistory) at last tick
+	lastTickProgressFP uint64 // cachedProgressBlockFP at last tick
+	lastTickRewindFP   uint64 // fnvHash64(rewindBlock) at last tick
 
 	// Current iteration static content cache — avoids re-rendering reasoning,
 	// completed tools, tool content, and SubAgent tree on every 100ms tick.

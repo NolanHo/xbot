@@ -2752,13 +2752,26 @@ func (m *cliModel) fullRebuild() {
 			chunk = indicator + chunk
 		}
 		historyBuf.WriteString(m.messages[i].rendered)
-		// 累加本消息（含搜索指示条）在折行后占用的行数
-		runningLines += wrappedLineCount(chunk, cw)
+		// Use pre-computed renderedLines instead of expensive wrappedLineCount.
+		// After rendering, content is already wrapped to the correct width,
+		// so strings.Count(newlines)+1 equals the actual viewport line count.
+		if m.messages[i].renderedLines > 0 {
+			runningLines += m.messages[i].renderedLines
+		} else {
+			runningLines += strings.Count(chunk, "\n") + 1
+		}
 	}
 
 	m.cachedHistory = historyBuf.String()
 	m.renderCacheValid = true
 	m.cachedMsgCount = len(m.messages)
+
+	// Rebuild cachedHistoryLines from the freshly built cachedHistory.
+	// This ensures the direct-lines tick path has up-to-date pre-split lines.
+	m.cachedHistoryLines = strings.Split(m.cachedHistory, "\n")
+	m.cachedWrappedHistory = m.cachedHistory
+	m.cachedWrappedHistoryRaw = m.cachedHistory
+	m.cachedWrappedHistoryWidth = cw
 
 	// 拼接最终内容：历史 + 当前流式消息（如有） + progress block + rewind result
 	var sb strings.Builder

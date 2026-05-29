@@ -126,6 +126,13 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 		}
 	}
 
+	// Remote reconnect overlay: block all interaction when disconnected.
+	// Only quit keys (Ctrl+C, Ctrl+Z) pass through — they're handled above.
+	if m.remoteMode && m.connState != "connected" && m.connState != "" {
+		// Swallow all key presses; user can only Ctrl+C (handled above) or Ctrl+Z.
+		return m, nil
+	}
+
 	// §23 Command palette overlay: highest priority (above quick switch).
 	// When palette is open it intercepts all keys.
 	if key, ok := msg.(tea.KeyPressMsg); ok {
@@ -217,6 +224,10 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
+		// Block mouse events when remote connection is lost.
+		if m.remoteMode && m.connState != "connected" && m.connState != "" {
+			return m, nil
+		}
 		handled, newModel, cmd := m.handleMouseMsg(msg)
 		if handled {
 			if _, ok := newModel.(*cliModel); ok {
@@ -267,6 +278,9 @@ func (m *cliModel) Update(msg tea.Msg) (model tea.Model, retCmd tea.Cmd) {
 
 	case cliConnStateMsg:
 		m.connState = msg.state
+		if msg.state == "connected" {
+			m.reconnectFrame = 0
+		}
 	// flush here, the queued message gets appended BEFORE the reply,
 	// producing wrong order: msg1, msg2, reply1 instead of msg1, reply1, msg2.
 	// Flush is handled in cliTickMsg instead (next tick after typing=false).

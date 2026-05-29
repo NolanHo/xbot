@@ -15,15 +15,17 @@ import (
 
 // mockProcessIO implements processIO for testing.
 type mockProcessIO struct {
-	mu      sync.Mutex
-	written []any
-	readCh  chan json.RawMessage
-	closed  bool
+	mu          sync.Mutex
+	written     []any
+	readCh      chan json.RawMessage
+	closed      bool
+	writeNotify chan struct{} // signals after each stdinWrite, for synchronization
 }
 
 func newMockProcessIO() *mockProcessIO {
 	return &mockProcessIO{
-		readCh: make(chan json.RawMessage, 10),
+		readCh:      make(chan json.RawMessage, 10),
+		writeNotify: make(chan struct{}, 1),
 	}
 }
 
@@ -31,7 +33,28 @@ func (m *mockProcessIO) stdinWrite(v any) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.written = append(m.written, v)
+	// Non-blocking signal: don't block if no one is listening.
+	select {
+	case m.writeNotify <- struct{}{}:
+	default:
+	}
 	return nil
+}
+
+// waitWrite blocks until at least one write has occurred.
+func (m *mockProcessIO) waitWrite(ctx context.Context) error {
+	m.mu.Lock()
+	if len(m.written) > 0 {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+	select {
+	case <-m.writeNotify:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (m *mockProcessIO) stdoutRead() (json.RawMessage, error) {
@@ -155,9 +178,12 @@ func TestGrpcPluginTransport_SendProgress(t *testing.T) {
 // TestGrpcPluginTransport_HandlePluginRPC verifies plugin→xbot RPC dispatch.
 func TestGrpcPluginTransport_HandlePluginRPC(t *testing.T) {
 	pio := newMockProcessIO()
-	var receivedMethod string
+	type dispatchResult struct {
+		method string
+	}
+	dispatchCh := make(chan dispatchResult, 1)
 	dispatch := func(ctx context.Context, method string, payload json.RawMessage) (json.RawMessage, error) {
-		receivedMethod = method
+		dispatchCh <- dispatchResult{method: method}
 		return json.Marshal(map[string]string{"status": "ok"})
 	}
 	eventCh := make(chan protocol.WSMessage, 10)
@@ -183,11 +209,19 @@ func TestGrpcPluginTransport_HandlePluginRPC(t *testing.T) {
 	defer cancel()
 	go transport.readLoop(ctx)
 
-	// Wait for the dispatch to be called.
-	time.Sleep(200 * time.Millisecond)
+	// Wait for dispatch to be called.
+	select {
+	case dr := <-dispatchCh:
+		if dr.method != "send_inbound" {
+			t.Errorf("expected method 'send_inbound', got %s", dr.method)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for dispatch to be called")
+	}
 
-	if receivedMethod != "send_inbound" {
-		t.Errorf("expected method 'send_inbound', got %s", receivedMethod)
+	// Wait for writeRPCResponse to complete (called after dispatch returns).
+	if err := pio.waitWrite(ctx); err != nil {
+		t.Fatal("timed out waiting for response write")
 	}
 
 	// Check that a response was written back.

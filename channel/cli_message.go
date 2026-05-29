@@ -2525,6 +2525,7 @@ func (m *cliModel) setViewportContent(content string) {
 	}
 
 	atBottom := m.viewport.AtBottom()
+	prevYOffset := m.viewport.YOffset()
 	// Use SetContentLines with pre-split lines to avoid viewport's internal
 	// strings.Split. We also bypass the expensive maxLineWidth scan inside
 	// SetContentLines by directly setting the internal lines and width.
@@ -2533,6 +2534,10 @@ func (m *cliModel) setViewportContent(content string) {
 		m.viewport.GotoBottom()
 		m.newContentHint = false
 	} else {
+		// Defensive: if the viewport height was changed by autoExpandInput
+		// or relayoutViewport, the yOffset may now exceed maxYOffset.
+		// Restore user's previous scroll position, clamped to valid range.
+		m.viewport.SetYOffset(prevYOffset)
 		m.newContentHint = true
 	}
 }

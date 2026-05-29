@@ -259,12 +259,24 @@ func (a *Agent) buildMainRunConfig(
 	cfg.OAuthHandler = a.buildOAuthHandler(channel, chatID, senderID, sessionKey)
 
 	// 进度通知
-	// Web 渠道始终启用结构化进度，但不发送文本进度消息
-	if channel == "web" || channel == "cli" {
-		// Web: no-op notifier — structured progress goes via ProgressEventHandler
+	// Web/CLI 渠道: no-op notifier — structured progress goes via ProgressEventHandler
+	// Plugin channels (ProgressSender): same — structured progress via ProgressEventHandler
+	// Other channels: fallback to sendMessage-based progress (legacy behavior)
+	isProgressSenderCh := false
+	if channel != "web" && channel != "cli" && a.channelFinder != nil {
+		if ch, ok := a.channelFinder(channel); ok {
+			if _, ok := ch.(channelpkg.ProgressSender); ok {
+				isProgressSenderCh = true
+			}
+		}
+	}
+
+	if channel == "web" || channel == "cli" || isProgressSenderCh {
+		// Structured progress goes via ProgressEventHandler below.
 		// Setting ProgressNotifier to non-nil enables autoNotify in engine.Run()
 		cfg.ProgressNotifier = func(lines []string, _ string) {}
 	} else if autoNotify {
+		// Legacy fallback: send progress text as messages (no patch support)
 		cfg.ProgressNotifier = func(lines []string, _ string) {
 			if len(lines) > 0 {
 				_ = a.sendMessage(channel, chatID, lines[0])
@@ -272,9 +284,8 @@ func (a *Agent) buildMainRunConfig(
 		}
 	}
 
-	// 结构化进度事件推送（web 和 cli 渠道）
-	if (channel == "web" || channel == "cli") && a.channelFinder != nil {
-		// CLI 渠道进度处理
+	// 结构化进度事件推送（web, cli, and plugin ProgressSender channels）
+	if (channel == "web" || channel == "cli" || isProgressSenderCh) && a.channelFinder != nil {
 		switch channel {
 		case "cli":
 			if handler := a.buildCLIProgressEventHandler(chatID, channel); handler != nil {
@@ -282,6 +293,12 @@ func (a *Agent) buildMainRunConfig(
 			}
 		case "web":
 			if handler := a.buildWebProgressEventHandler(chatID, channel); handler != nil {
+				cfg.ProgressEventHandler = handler
+			}
+		default:
+			// Plugin channel with ProgressSender (e.g. TG) — build a handler
+			// that sends progress_structured events via the channel's SendProgress.
+			if handler := a.buildPluginProgressEventHandler(chatID, channel); handler != nil {
 				cfg.ProgressEventHandler = handler
 			}
 		}
@@ -1801,9 +1818,87 @@ func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*Progr
 	}
 }
 
-// buildStreamCallbacks resolves CLI and Web channels and returns stream content
-// and reasoning stream callbacks. Returns nil, nil if streaming is disabled or
-// no channels are available.
+// buildPluginProgressEventHandler creates the progress event handler for plugin channels
+// (e.g. TG) that implement channel.ProgressSender.
+// Returns nil if no suitable channel is available.
+func (a *Agent) buildPluginProgressEventHandler(chatID, channel string) func(*ProgressEvent) {
+	if a.channelFinder == nil {
+		return nil
+	}
+	ch, ok := a.channelFinder(channel)
+	if !ok {
+		return nil
+	}
+	ps, ok := ch.(channelpkg.ProgressSender)
+	if !ok {
+		return nil
+	}
+	progressKey := qualifyChatID(channel, chatID)
+	return func(event *ProgressEvent) {
+		if event == nil || event.Structured == nil {
+			return
+		}
+		s := event.Structured
+		payload := &protocol.ProgressEvent{
+			ChatID:           progressKey,
+			Phase:            string(s.Phase),
+			Seq:              s.Seq,
+			Iteration:        s.Iteration,
+			Thinking:         s.ThinkingContent,
+			Reasoning:        s.ReasoningContent,
+			HistoryCompacted: s.HistoryCompacted,
+			CWD:              s.CWD,
+		}
+		for _, t := range s.ActiveTools {
+			payload.ActiveTools = append(payload.ActiveTools, protocol.ToolProgress{
+				Name:      t.Name,
+				Label:     t.Label,
+				Status:    string(t.Status),
+				Elapsed:   t.Elapsed.Milliseconds(),
+				Summary:   t.Summary,
+				Detail:    t.Detail,
+				Args:      t.Args,
+				Iteration: t.Iteration,
+			})
+		}
+		for _, t := range s.CompletedTools {
+			payload.CompletedTools = append(payload.CompletedTools, protocol.ToolProgress{
+				Name:      t.Name,
+				Label:     t.Label,
+				Status:    string(t.Status),
+				Elapsed:   t.Elapsed.Milliseconds(),
+				Summary:   t.Summary,
+				Detail:    t.Detail,
+				Args:      t.Args,
+				Iteration: t.Iteration,
+			})
+		}
+		if len(s.Todos) > 0 {
+			payload.Todos = make([]protocol.TodoItem, len(s.Todos))
+			for i, td := range s.Todos {
+				payload.Todos[i] = protocol.TodoItem{
+					ID:   td.ID,
+					Text: td.Text,
+					Done: td.Done,
+				}
+			}
+		}
+		if s.TokenUsage != nil {
+			payload.TokenUsage = &protocol.TokenUsage{
+				PromptTokens:     s.TokenUsage.PromptTokens,
+				CompletionTokens: s.TokenUsage.CompletionTokens,
+				TotalTokens:      s.TokenUsage.TotalTokens,
+				CacheHitTokens:   s.TokenUsage.CacheHitTokens,
+				MaxOutputTokens:  s.TokenUsage.MaxOutputTokens,
+			}
+		}
+		ps.SendProgress(chatID, payload)
+	}
+}
+
+// buildStreamCallbacks resolves CLI, Web, and source-channel (e.g. plugin) channels
+// and returns stream content and reasoning stream callbacks.
+// Returns nil, nil if streaming is disabled or no channels are available.
 func (a *Agent) buildStreamCallbacks(chatID, channel string, progressSeq *atomic.Uint64) (streamContentFunc func(string), streamReasoningFunc func(string)) {
 	var cliCh *channelpkg.CLIChannel
 	var remoteCLICh channelpkg.ProgressSender
@@ -1821,6 +1916,16 @@ func (a *Agent) buildStreamCallbacks(chatID, channel string, progressSeq *atomic
 		}
 	}
 
+	// Also resolve the source channel as a ProgressSender (for plugin channels like TG).
+	var srcProgressCh channelpkg.ProgressSender
+	if channel != "cli" && channel != "web" && a.channelFinder != nil {
+		if ch, ok := a.channelFinder(channel); ok {
+			if ps, ok := ch.(channelpkg.ProgressSender); ok {
+				srcProgressCh = ps
+			}
+		}
+	}
+
 	streamContentFunc = func(content string) {
 		seq := progressSeq.Add(1)
 		if cliCh != nil {
@@ -1831,6 +1936,9 @@ func (a *Agent) buildStreamCallbacks(chatID, channel string, progressSeq *atomic
 		}
 		if webCh != nil {
 			webCh.SendStreamContent(chatID, content, "")
+		}
+		if srcProgressCh != nil {
+			srcProgressCh.SendProgress(chatID, &protocol.ProgressEvent{ChatID: qualifyChatID(channel, chatID), Seq: seq, StreamContent: content})
 		}
 	}
 	streamReasoningFunc = func(content string) {
@@ -1843,6 +1951,9 @@ func (a *Agent) buildStreamCallbacks(chatID, channel string, progressSeq *atomic
 		}
 		if webCh != nil {
 			webCh.SendStreamContent(chatID, "", content)
+		}
+		if srcProgressCh != nil {
+			srcProgressCh.SendProgress(chatID, &protocol.ProgressEvent{ChatID: qualifyChatID(channel, chatID), Seq: seq, ReasoningStreamContent: content})
 		}
 	}
 	return streamContentFunc, streamReasoningFunc

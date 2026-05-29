@@ -258,6 +258,8 @@ func (t *GrpcPluginTransport) Send(msg channel.OutboundMsg) (string, error) {
 	if meta == nil {
 		meta = make(map[string]string)
 	}
+	// Send is only called for final outbound messages (LLM reply, tool results, etc.)
+	// Intermediate progress/stream events come through SendProgress/SendStreamContent.
 	meta["is_final"] = "true"
 	wsMsg := protocol.WSMessage{
 		Type:     protocol.MsgTypeText,

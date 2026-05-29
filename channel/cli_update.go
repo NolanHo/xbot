@@ -510,9 +510,15 @@ func (m *cliModel) autoExpandInput() {
 	currentVP := m.viewport.Height()
 	if currentVP != expectedVP {
 		wasAtBottom := m.viewport.AtBottom()
+		oldYOffset := m.viewport.YOffset()
 		m.viewport.SetHeight(expectedVP)
 		if wasAtBottom {
 			m.viewport.GotoBottom()
+		} else {
+			// Height changed while user was scrolled up. Clamp yOffset to
+			// the new maxYOffset so the next setViewportContent doesn't
+			// detect "at bottom" (via yOffset >= maxYOffset) and force-scroll.
+			m.viewport.SetYOffset(oldYOffset)
 		}
 	}
 }
@@ -596,6 +602,8 @@ func (m *cliModel) relayoutViewport() {
 
 	cw := m.chatWidth()
 	oldWidth := m.viewport.Width()
+	oldHeight := m.viewport.Height()
+	oldYOffset := m.viewport.YOffset()
 
 	m.viewport.SetWidth(cw)
 	m.viewport.SetHeight(m.layoutViewportHeight())
@@ -609,6 +617,7 @@ func (m *cliModel) relayoutViewport() {
 	m.textarea.SetWidth(iw)
 
 	widthChanged := cw != oldWidth
+	heightChanged := m.viewport.Height() != oldHeight
 
 	// Only invalidate render caches when width changes.
 	// Height-only changes don't affect message rendering — just viewport scrolling.
@@ -631,10 +640,18 @@ func (m *cliModel) relayoutViewport() {
 		}
 	}
 
+	// Check AtBottom BEFORE updateViewportContent so height changes don't
+	// cause false-positive "at bottom" detection. When height increases
+	// (e.g. todo bar removed), maxYOffset decreases, making AtBottom() true
+	// even though the user was scrolled up.
 	wasAtBottom := m.viewport.AtBottom()
 	m.updateViewportContent()
 	if wasAtBottom {
 		m.viewport.GotoBottom()
+	} else if heightChanged {
+		// Height changed while user was scrolled up. Restore relative
+		// scroll position to prevent jarring jumps.
+		m.viewport.SetYOffset(oldYOffset)
 	}
 }
 

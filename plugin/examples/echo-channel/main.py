@@ -8,6 +8,7 @@ full RPC client. The plugin:
 1. Receives WSMessage events from xbot via stdin (progress, replies, etc.)
 2. Sends JSON-RPC requests to xbot via stdout (send_inbound, get_history, etc.)
 3. Runs an HTTP echo server that forwards messages to/from xbot
+4. Stores conversation history in memory and serves it via GET /history
 
 Protocol format (same as WebSocket):
   - xbot → plugin (event push):  {"type":"progress","progress":{...}}
@@ -16,19 +17,22 @@ Protocol format (same as WebSocket):
   - plugin → xbot (RPC request): {"id":"1","method":"send_inbound","params":{...}}
   - plugin → xbot (RPC response):{"id":"1","result":{...}}
 
-Usage:
-  1. Install: cp -r echo-channel/ ~/.xbot/plugins/echo-channel/
-  2. Configure: Add "echo" to config.json channels with {"enabled":"true","port":"9876"}
-  3. Restart xbot
-  4. Test: curl -X POST http://localhost:9876/message -d 'Hello xbot!'
+Endpoints:
+  POST /message          — send message to xbot
+  POST /message?chat_id= — send message with custom chat_id
+  GET  /message?q=hello  — send message via query param
+  GET  /history          — list conversation history (all chats)
+  GET  /history?chat_id= — list history for specific chat
+  GET  /health           — health check
 """
 
 import sys
 import json
 import threading
+import time
+from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
-import time
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -38,6 +42,10 @@ config = {}
 rpc_id = 0
 lock = threading.Lock()
 channel_name = "echo"
+
+# Conversation history: chat_id → list of {role, content, time, ...}
+history = defaultdict(list)
+history_max = 200  # max messages per chat
 
 # ---------------------------------------------------------------------------
 # stdio JSON-RPC helpers
@@ -59,16 +67,8 @@ def next_rpc_id():
 
 
 def send_rpc_request(method, params=None):
-    """Send an RPC request to xbot and wait for the response.
-
-    NOTE: In a real implementation you'd track pending requests and
-    match responses by ID in the read loop. This example sends fire-and-forget
-    for simplicity (send_inbound doesn't need a response).
-    """
-    req = {
-        "id": next_rpc_id(),
-        "method": method,
-    }
+    """Send an RPC request to xbot."""
+    req = {"id": next_rpc_id(), "method": method}
     if params:
         req["params"] = params
     write_stdout(req)
@@ -85,11 +85,43 @@ def send_rpc_response(req_id, result=None, error=None):
 
 
 # ---------------------------------------------------------------------------
+# Conversation history
+# ---------------------------------------------------------------------------
+
+def add_to_history(chat_id, role, content, **extra):
+    """Record a message in the conversation history."""
+    entry = {
+        "role": role,
+        "content": content,
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    entry.update(extra)
+    with lock:
+        h = history[chat_id]
+        h.append(entry)
+        # Trim old messages if exceeding max
+        if len(h) > history_max:
+            history[chat_id] = h[-history_max:]
+
+
+def get_history(chat_id=None):
+    """Get conversation history. If chat_id is None, return all chats."""
+    with lock:
+        if chat_id:
+            return list(history.get(chat_id, []))
+        return {k: list(v) for k, v in history.items()}
+
+
+# ---------------------------------------------------------------------------
 # Inbound: push user messages to xbot
 # ---------------------------------------------------------------------------
 
 def send_inbound_message(chat_id, content, sender_id="http_user", sender_name="HTTP User"):
     """Send a user message to xbot via the send_inbound RPC method."""
+    # Record it locally
+    add_to_history(chat_id, "user", content,
+                   sender_id=sender_id, sender_name=sender_name)
+    # Send to xbot
     send_rpc_request("send_inbound", {
         "channel": channel_name,
         "chat_id": chat_id,
@@ -114,9 +146,7 @@ def handle_activate(params):
     }
 
 
-HANDLERS = {
-    "activate": handle_activate,
-}
+HANDLERS = {"activate": handle_activate}
 
 
 def handle_plugin_request(request):
@@ -148,28 +178,22 @@ def handle_incoming(raw_line):
     msg_id = msg.get("id", "")
     msg_type = msg.get("type", "")
     msg_method = msg.get("method", "")
-    msg_result = msg.get("result", None)
-    msg_error = msg.get("error", "")
 
     # 1. RPC request from xbot (has id + method) → handle and respond
     if msg_id and msg_method:
         handle_xbot_rpc(msg_id, msg_method, msg.get("params", {}))
         return
 
-    # 2. RPC response from xbot (has id, no method) → deliver to pending call
+    # 2. RPC response from xbot (has id, no method)
     if msg_id and not msg_method:
-        # In a real implementation, match by ID and deliver to waiting goroutine
-        # For this example, we just log it
-        if msg_error:
-            print(f"[echo] RPC error for {msg_id}: {msg_error}", file=sys.stderr)
         return
 
-    # 3. Old-style plugin request (has method, no id) → legacy protocol
+    # 3. Old-style plugin request (has method, no id)
     if msg_method and not msg_id:
         handle_plugin_request(msg)
         return
 
-    # 4. Event push from xbot (has type) → handle event
+    # 4. Event push from xbot (has type)
     if msg_type:
         handle_xbot_event(msg)
 
@@ -177,11 +201,11 @@ def handle_incoming(raw_line):
 def handle_xbot_rpc(req_id, method, params):
     """Handle an RPC request from xbot."""
     if method == "channel_send":
-        # xbot wants to send a message to the HTTP client
-        # In a real implementation, forward to connected HTTP clients
         content = params.get("content", "")
         chat_id = params.get("chat_id", "")
-        print(f"[echo] Agent reply for {chat_id}: {content[:100]}", file=sys.stderr)
+        # Record agent reply in history
+        if content:
+            add_to_history(chat_id, "assistant", content)
         send_rpc_response(req_id, result="ok")
     else:
         send_rpc_response(req_id, error=f"Unknown method: {method}")
@@ -195,7 +219,6 @@ def handle_xbot_event(msg):
     chat_id = msg.get("chat_id", "")
 
     if msg_type == "channel_config":
-        # Initial configuration from xbot
         meta = msg.get("metadata", {})
         if "config" in meta:
             try:
@@ -203,86 +226,108 @@ def handle_xbot_event(msg):
                 config.update(parsed)
             except json.JSONDecodeError:
                 pass
-        print(f"[echo] Received config: {config}", file=sys.stderr)
-        # Start HTTP server with the configured port
         start_http_server()
-        return
 
-    if msg_type == "progress_structured":
-        # Progress event — log it
-        phase = progress.get("phase", "")
-        message = progress.get("message", "")
-        if message:
-            print(f"[echo] Progress [{chat_id}]: {phase} - {message[:80]}", file=sys.stderr)
-        return
+    elif msg_type == "stream_content":
+        # Accumulate streaming content
+        if content:
+            _accumulate_stream(chat_id, content)
 
-    if msg_type == "stream_content":
-        # Streaming content — forward to HTTP clients
-        print(f"[echo] Stream [{chat_id}]: {content[:80]}", file=sys.stderr)
-        return
+    elif msg_type == "text":
+        # Final text reply from agent
+        if content:
+            add_to_history(chat_id, "assistant", content)
+            # Clear any accumulated stream
+            _clear_stream(chat_id)
 
-    if msg_type == "text":
-        # Final text message from agent
-        print(f"[echo] Reply [{chat_id}]: {content[:100]}", file=sys.stderr)
-        return
-
-    if msg_type == "session":
-        # Session state change
-        session = msg.get("session", {})
-        state = session.get("state", "")
-        print(f"[echo] Session [{chat_id}]: {state}", file=sys.stderr)
-        return
-
-    # Ignore unknown event types
-    print(f"[echo] Event [{msg_type}]: {str(msg)[:100]}", file=sys.stderr)
+    elif msg_type == "session":
+        pass  # not stored
 
 
 # ---------------------------------------------------------------------------
-# HTTP echo server
+# Stream content accumulation (for in-progress replies)
+# ---------------------------------------------------------------------------
+
+_stream_buf = {}  # chat_id → accumulated text
+
+
+def _accumulate_stream(chat_id, chunk):
+    _stream_buf[chat_id] = _stream_buf.get(chat_id, "") + chunk
+
+
+def _clear_stream(chat_id):
+    _stream_buf.pop(chat_id, None)
+
+
+# ---------------------------------------------------------------------------
+# HTTP server
 # ---------------------------------------------------------------------------
 
 http_server = None
 
 
+def _json_response(handler, data, status=200):
+    """Send a JSON response."""
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+    handler.wfile.write(json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"))
+
+
 class EchoHandler(BaseHTTPRequestHandler):
-    """Simple HTTP handler that echoes messages through xbot."""
+    """HTTP handler for the echo channel."""
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+
+        # ── /message?q=hello ──────────────────────────────────
         if parsed.path == "/message":
-            # GET /message?q=hello
-            params = parse_qs(parsed.query)
             content = params.get("q", [""])[0]
+            chat_id = params.get("chat_id", ["http_default"])[0]
             if content:
-                send_inbound_message("http_default", content)
+                send_inbound_message(chat_id, content)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
-                self.wfile.write(b"Message sent to xbot!\n")
+                self.wfile.write(b"Message sent!\n")
             else:
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b"Missing 'q' parameter\n")
+
+        # ── /history — list conversation history ──────────────────
+        elif parsed.path == "/history":
+            chat_id = params.get("chat_id", [None])[0]
+            result = get_history(chat_id)
+            _json_response(self, result)
+
+        # ── /health ───────────────────────────────────────────
         elif parsed.path == "/health":
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"ok\n")
+
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+
         if parsed.path == "/message":
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode("utf-8", errors="replace")
-            if body:
-                send_inbound_message("http_default", body)
+            chat_id = params.get("chat_id", ["http_default"])[0]
+            if body.strip():
+                send_inbound_message(chat_id, body.strip())
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
-                self.wfile.write(b"Message sent to xbot!\n")
+                self.wfile.write(b"Message sent!\n")
             else:
                 self.send_response(400)
                 self.end_headers()
@@ -292,7 +337,6 @@ class EchoHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        """Suppress default HTTP logging."""
         pass
 
 
@@ -314,21 +358,12 @@ def start_http_server():
 # ---------------------------------------------------------------------------
 
 def main():
-    """
-    Main loop: read JSON lines from stdin (from xbot), route them.
-
-    This handles both:
-    - Old-style plugin protocol (activate, etc.) — for initial activation
-    - New-style WS JSON-RPC protocol — for channel communication
-    """
     print("[echo] Echo channel plugin starting...", file=sys.stderr)
-
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
         handle_incoming(line)
-
     print("[echo] stdin closed, shutting down", file=sys.stderr)
     if http_server:
         http_server.shutdown()

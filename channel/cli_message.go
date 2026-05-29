@@ -2809,25 +2809,41 @@ func (m *cliModel) fullRebuild() {
 	m.renderCacheValid = true
 	m.cachedMsgCount = len(m.messages)
 
-	// Rebuild cachedHistoryLines from the freshly built cachedHistory.
-	// This ensures the direct-lines tick path has up-to-date pre-split lines.
-	m.cachedHistoryLines = strings.Split(m.cachedHistory, "\n")
-	m.cachedWrappedHistory = m.cachedHistory
-	m.cachedWrappedHistoryRaw = m.cachedHistory
-	m.cachedWrappedHistoryWidth = cw
-	// Track max width of cached history (unwrapped) for the fast-path bypass.
-	// These lines are NOT yet hard-wrapped — setViewportContent's fast path
-	// checks cachedWrappedHistoryWidth == cw and skips wrapping, trusting
-	// the cached lines as-is. So we must record the real max width.
-	{
-		hmax := 0
-		for _, hl := range m.cachedHistoryLines {
-			if w := lipgloss.Width(hl); w > hmax {
+	// Wrap all cached history lines to cw.
+	// renderMessage() does NOT guarantee all lines fit within cw:
+	// - User messages body is raw content (no width constraint on UserContent style)
+	// - Assistant messages go through glamour but edge cases can overshoot
+	// If we skip wrapping here and mark as "cachedWrappedHistory", the fast path in
+	// setViewportContent reuses unwrapped lines, which overflow the viewport.
+	rawLines := strings.Split(m.cachedHistory, "\n")
+	var wrappedLines []string
+	hmax := 0
+	for _, line := range rawLines {
+		trimmed := strings.TrimRight(line, " \t")
+		if trimmed != line {
+			visualW := lipgloss.Width(line)
+			trimmedW := lipgloss.Width(trimmed)
+			if visualW == trimmedW {
+				line = trimmed
+			}
+		}
+		wrapped := wrapPreservingGuide(line, cw)
+		for _, wl := range wrapped {
+			if w := lipgloss.Width(wl); w > hmax {
 				hmax = w
 			}
 		}
-		m.cachedHistoryMaxWidth = hmax
+		wrappedLines = append(wrappedLines, wrapped...)
 	}
+
+	// Rebuild cachedHistoryLines from the freshly built cachedHistory.
+	// This ensures the direct-lines tick path has up-to-date pre-split lines
+	// that are actually wrapped to cw.
+	m.cachedHistoryLines = wrappedLines
+	m.cachedWrappedHistory = strings.Join(wrappedLines, "\n") + "\n"
+	m.cachedWrappedHistoryRaw = m.cachedHistory
+	m.cachedWrappedHistoryWidth = cw
+	m.cachedHistoryMaxWidth = hmax
 
 	// 拼接最终内容：历史 + 当前流式消息（如有） + progress block + rewind result
 	var sb strings.Builder

@@ -506,6 +506,7 @@ func (m *cliModel) resetToIdleState() {
 	m.cachedWrappedHistory = ""
 	m.cachedWrappedHistoryRaw = ""
 	m.cachedWrappedHistoryWidth = 0
+	m.cachedHistoryMaxWidth = 0
 	m.cachedHistoryLines = nil
 	m.cachedProgressHistory = ""
 	m.cachedProgressHistoryLen = 0
@@ -1067,6 +1068,7 @@ type cliModel struct {
 	cachedWrappedHistory      string   // hard-wrapped cachedHistory (already split/wrapped at m.width)
 	cachedWrappedHistoryRaw   string   // the raw cachedHistory that was wrapped (for invalidation)
 	cachedWrappedHistoryWidth int      // width at which cachedWrappedHistory was built
+	cachedHistoryMaxWidth     int      // actual max display width of cached wrapped history lines
 	cachedHistoryLines        []string // pre-split lines from cachedWrappedHistory (avoids O(N) strings.Split every tick)
 
 	// --- progress block cache ---

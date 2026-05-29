@@ -624,6 +624,7 @@ func (m *cliModel) relayoutViewport() {
 		m.cachedWrappedHistory = ""
 		m.cachedWrappedHistoryRaw = ""
 		m.cachedWrappedHistoryWidth = 0
+		m.cachedHistoryMaxWidth = 0
 		m.cachedHistoryLines = nil
 		for i := range m.messages {
 			m.messages[i].dirty = true

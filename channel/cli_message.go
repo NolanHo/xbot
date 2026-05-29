@@ -859,6 +859,7 @@ func (m *cliModel) handleAgentMessage(msg OutboundMsg) {
 			m.cachedWrappedHistory = ""
 			m.cachedWrappedHistoryRaw = ""
 			m.cachedWrappedHistoryWidth = 0
+			m.cachedHistoryMaxWidth = 0
 			m.cachedHistoryLines = nil
 			// PhaseDone from emitBuiltinProgressDone should arrive before this outbound,
 			// so endAgentTurn is usually a no-op (turn already ended). Kept as safety net.
@@ -2432,10 +2433,15 @@ func (m *cliModel) setViewportContent(content string) {
 	m.lastViewportContent = content
 	m.lastViewportWidth = cw
 
-	// Since we wrap all lines to cw, maxLineWidth is at most cw.
-	// We pass cw as the precomputed max width to bypass viewport's
-	// expensive maxLineWidth() scan (ansi.StringWidth on every line).
-	maxW := cw
+	// Track actual max width across all wrapped lines.
+	// The performance optimization bypasses viewport's internal maxLineWidth()
+	// scan (which was ~49% CPU), but we must pass the REAL max width — not cw —
+	// to viewportSetLinesBypassMaxWidth. Otherwise viewport's visibleLines()
+	// trusts longestLineWidth <= maxWidth and skips truncation. Any line wider
+	// than maxWidth slips through, lipgloss.Wrap in viewport.View() re-wraps it,
+	// producing extra rendered lines that overflow the viewport height and push
+	// the input box off screen.
+	maxW := 0
 	var lines []string // pre-split lines to avoid viewport's strings.Split
 	if cw > 0 {
 		// Two-tier wrap: find the cachedHistory boundary in content.
@@ -2452,6 +2458,7 @@ func (m *cliModel) setViewportContent(content string) {
 			if len(m.cachedHistoryLines) > 0 {
 				lines = make([]string, len(m.cachedHistoryLines))
 				copy(lines, m.cachedHistoryLines)
+				maxW = m.cachedHistoryMaxWidth
 			}
 			dynamicPart := content[historyEnd:]
 			if dynamicPart != "" {
@@ -2465,6 +2472,11 @@ func (m *cliModel) setViewportContent(content string) {
 						}
 					}
 					wrapped := wrapPreservingGuide(line, cw)
+					for _, wl := range wrapped {
+						if w := lipgloss.Width(wl); w > maxW {
+							maxW = w
+						}
+					}
 					lines = append(lines, wrapped...)
 				}
 			}
@@ -2489,6 +2501,11 @@ func (m *cliModel) setViewportContent(content string) {
 					}
 				}
 				wrapped := wrapPreservingGuide(line, cw)
+				for _, wl := range wrapped {
+					if w := lipgloss.Width(wl); w > maxW {
+						maxW = w
+					}
+				}
 				if i < historyLineCount {
 					wrappedHistoryParts = append(wrappedHistoryParts, wrapped...)
 				}
@@ -2500,6 +2517,7 @@ func (m *cliModel) setViewportContent(content string) {
 				m.cachedHistoryLines = wrappedHistoryParts
 				m.cachedWrappedHistoryRaw = m.cachedHistory
 				m.cachedWrappedHistoryWidth = cw
+				m.cachedHistoryMaxWidth = maxW
 			}
 		}
 	} else {
@@ -2797,6 +2815,19 @@ func (m *cliModel) fullRebuild() {
 	m.cachedWrappedHistory = m.cachedHistory
 	m.cachedWrappedHistoryRaw = m.cachedHistory
 	m.cachedWrappedHistoryWidth = cw
+	// Track max width of cached history (unwrapped) for the fast-path bypass.
+	// These lines are NOT yet hard-wrapped — setViewportContent's fast path
+	// checks cachedWrappedHistoryWidth == cw and skips wrapping, trusting
+	// the cached lines as-is. So we must record the real max width.
+	{
+		hmax := 0
+		for _, hl := range m.cachedHistoryLines {
+			if w := lipgloss.Width(hl); w > hmax {
+				hmax = w
+			}
+		}
+		m.cachedHistoryMaxWidth = hmax
+	}
 
 	// 拼接最终内容：历史 + 当前流式消息（如有） + progress block + rewind result
 	var sb strings.Builder

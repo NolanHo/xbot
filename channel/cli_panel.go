@@ -5,6 +5,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -3358,7 +3359,7 @@ func (m *cliModel) ensureAskUserVisible() {
 // §Channel Config Panel — /channel command
 // ---------------------------------------------------------------------------
 
-var channelNames = []string{"web", "feishu", "qq", "napcat"}
+var builtinChannelNames = []string{"web", "feishu", "qq", "napcat"}
 var channelLabels = map[string]string{
 	"web":    "🌐 Web Channel",
 	"feishu": "🐦 Feishu (飞书)",
@@ -3371,9 +3372,8 @@ func (m *cliModel) openChannelPanel() {
 	m.panelMode = "channel"
 	m.relayoutViewport()
 	m.panelChannelCursor = 0
-	m.panelChannelItems = channelNames
 
-	// Fetch current channel configs
+	// Fetch current channel configs (includes plugin channels)
 	if m.channel != nil && m.channel.config.ChannelConfigGetFn != nil {
 		cfgs, err := m.channel.config.ChannelConfigGetFn()
 		if err != nil {
@@ -3382,6 +3382,24 @@ func (m *cliModel) openChannelPanel() {
 		}
 		m.panelChannelCfg = cfgs
 	}
+
+	// Build channel list: built-in first (in fixed order), then plugin channels
+	items := make([]string, 0, len(builtinChannelNames)+len(m.panelChannelCfg))
+	seen := make(map[string]bool)
+	for _, name := range builtinChannelNames {
+		items = append(items, name)
+		seen[name] = true
+	}
+	// Add plugin channels from config keys
+	if m.panelChannelCfg != nil {
+		for name := range m.panelChannelCfg {
+			if !seen[name] {
+				items = append(items, name)
+				seen[name] = true
+			}
+		}
+	}
+	m.panelChannelItems = items
 }
 
 // updateChannelPanel handles key events in the channel config panel.
@@ -3471,6 +3489,48 @@ func (m *cliModel) viewChannelPanel() string {
 	return sb.String()
 }
 
+// pluginChannelSchema extracts the settings schema for a plugin channel
+// from the _schema field in panelChannelCfg (populated by getChannelConfigs RPC).
+func (m *cliModel) pluginChannelSchema(channel string) []SettingDefinition {
+	if m.panelChannelCfg == nil {
+		return nil
+	}
+	cfg, ok := m.panelChannelCfg[channel]
+	if !ok {
+		return nil
+	}
+	schemaJSON, ok := cfg["_schema"]
+	if !ok {
+		return nil
+	}
+
+	var rawSchema []struct {
+		Key          string `json:"key"`
+		Label        string `json:"label"`
+		Description  string `json:"description"`
+		Type         string `json:"type"`
+		DefaultValue string `json:"default_value"`
+		Category     string `json:"category"`
+	}
+	if err := json.Unmarshal([]byte(schemaJSON), &rawSchema); err != nil {
+		return nil
+	}
+
+	schema := make([]SettingDefinition, 0, len(rawSchema))
+	for _, r := range rawSchema {
+		sd := SettingDefinition{
+			Key:          r.Key,
+			Label:        r.Label,
+			Description:  r.Description,
+			Type:         SettingType(r.Type),
+			DefaultValue: r.DefaultValue,
+			Category:     r.Category,
+		}
+		schema = append(schema, sd)
+	}
+	return schema
+}
+
 // channelSettingsSchema returns the settings schema for a specific channel.
 func channelSettingsSchema(channel string) []SettingDefinition {
 	switch channel {
@@ -3502,6 +3562,7 @@ func channelSettingsSchema(channel string) []SettingDefinition {
 			{Key: "token", Label: "Token", Description: "NapCat access token", Type: SettingTypePassword, Category: "NapCat", DefaultValue: ""},
 		}
 	default:
+		// Plugin channel: try to parse _schema from channel config
 		return nil
 	}
 }
@@ -3509,6 +3570,10 @@ func channelSettingsSchema(channel string) []SettingDefinition {
 // openChannelSettingsPanel opens the settings panel for a specific channel.
 func (m *cliModel) openChannelSettingsPanel(channel string) {
 	schema := channelSettingsSchema(channel)
+	if schema == nil {
+		// Plugin channel: try to parse _schema from panelChannelCfg
+		schema = m.pluginChannelSchema(channel)
+	}
 	if schema == nil {
 		m.showSystemMsg("Unknown channel: "+channel, feedbackWarning)
 		return

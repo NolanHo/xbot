@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -54,6 +55,10 @@ func getChannelConfigs() (map[string]map[string]string, error) {
 				if _, exists := pluginCfg[def.Key]; !exists {
 					pluginCfg[def.Key] = def.DefaultValue
 				}
+			}
+			// Attach schema as JSON string so CLI can render settings panel
+			if schemaJSON, err := json.Marshal(provider.ConfigSchema()); err == nil {
+				pluginCfg["_schema"] = string(schemaJSON)
 			}
 			result[name] = pluginCfg
 		}

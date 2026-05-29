@@ -357,6 +357,8 @@ func (m *cliModel) invalidateProgressHistoryCache() {
 	m.cachedProgressBlockOut = ""
 	m.cachedProgressBlockFP = 0
 	m.cachedProgressBlockWidth = 0
+	m.cachedProgressBlockLines = nil
+	m.cachedProgressHistoryFP = 0
 }
 
 // resetProgressState resets iteration tracking for a new agent turn.
@@ -1090,6 +1092,7 @@ func (m *cliModel) renderProgressBlock() string {
 	if !m.typing && m.progress == nil {
 		m.cachedProgressBlockOut = ""
 		m.cachedProgressBlockFP = 0
+		m.cachedProgressBlockLines = nil
 		return ""
 	}
 	// Cross-session guard: if progress payload carries a ChatID that doesn't match
@@ -1103,6 +1106,7 @@ func (m *cliModel) renderProgressBlock() string {
 			m.typing = false
 			m.cachedProgressBlockOut = ""
 			m.cachedProgressBlockFP = 0
+			m.cachedProgressBlockLines = nil
 			return ""
 		}
 	}
@@ -1191,6 +1195,7 @@ func (m *cliModel) renderProgressBlock() string {
 		m.cachedProgressHistory = histBuf.String()
 		m.cachedProgressHistoryLen = len(m.iterationHistory)
 		m.cachedProgressHistoryWidth = bubbleWidth
+		m.cachedProgressHistoryFP = fnvHash64(m.cachedProgressHistory)
 		sb.WriteString(m.cachedProgressHistory)
 	}
 
@@ -1218,8 +1223,9 @@ func (m *cliModel) renderProgressBlock() string {
 	// across 100ms ticks. Without this, formatElapsed changes every 100ms
 	// (e.g. "1.2s" → "1.3s"), preventing the cache from ever hitting.
 	elapsed := ""
+	var elapsedSec int64
 	if !m.typingStartTime.IsZero() {
-		elapsedSec := time.Since(m.typingStartTime).Milliseconds() / 1000
+		elapsedSec = time.Since(m.typingStartTime).Milliseconds() / 1000
 		elapsed = " " + elapsedStyle.Render(formatElapsed(elapsedSec*1000))
 	}
 
@@ -1228,35 +1234,85 @@ func (m *cliModel) renderProgressBlock() string {
 	header := headerStyle.Render("Progress") + elapsed
 
 	// --- Full progress block output cache ---
-	// blockStyle.Render is extremely expensive (ANSI width calculation on every
-	// character of the full content). Avoid re-running it when the pre-render
-	// content hasn't changed. The fingerprint covers all rendered sub-blocks,
-	// elapsed (seconds), cursor state, and active tools.
-	preRender := header + "\n" + content
-	fp := m.progressBlockFullFP(preRender, bubbleWidth)
+	// Uses O(1) composite fingerprint (sub-block FPs + active tool state)
+	// instead of O(N) hash of the entire pre-render string.
+	fp := m.progressBlockCompositeFP(elapsedSec, bubbleWidth)
 	if fp == m.cachedProgressBlockFP && bubbleWidth == m.cachedProgressBlockWidth && m.cachedProgressBlockOut != "" {
 		return m.cachedProgressBlockOut
 	}
 
-	// Wrap in border
-	blockStyle := s.ProgressBlock.Width(bubbleWidth)
-
-	result := blockStyle.Render(preRender) + "\n\n"
+	// Manual padding: equivalent to Padding(0,1) + Width(bubbleWidth)
+	// but without lipgloss's O(total_chars) ANSI StringWidth scan.
+	// Content is already hard-wrapped to innerWidth, so each line is
+	// at most innerWidth visual columns; adding " " prefix + suffix
+	// gives innerWidth+2 = bubbleWidth visual columns.
+	preRender := header + "\n" + content
+	result := padProgressLines(preRender) + "\n"
 
 	m.cachedProgressBlockOut = result
 	m.cachedProgressBlockFP = fp
 	m.cachedProgressBlockWidth = bubbleWidth
+	m.cachedProgressBlockLines = strings.Split(result, "\n")
 
 	return result
 }
 
-// progressBlockFullFP computes a fast fingerprint for the full progress block
-// pre-render content to detect changes. Uses FNV-1a on the pre-render string
-// (comparing the full string is O(N) with early exit on first byte difference
-// due to elapsed changing, so the hash is effectively O(1) in practice).
-func (m *cliModel) progressBlockFullFP(preRender string, bubbleWidth int) uint64 {
+// padProgressLines adds Padding(0,1) equivalent to each line without
+// lipgloss's O(chars) ANSI StringWidth calculation. Since content lines
+// are already hard-wrapped to innerWidth, " " + line + " " produces the
+// same visual result as ProgressBlock's Padding(0,1).Width(bubbleWidth).
+func padProgressLines(content string) string {
+	var buf strings.Builder
+	buf.Grow(len(content) + strings.Count(content, "\n")*3 + 4)
+	for {
+		idx := strings.IndexByte(content, '\n')
+		if idx < 0 {
+			if content != "" {
+				buf.WriteString(" ")
+				buf.WriteString(content)
+				buf.WriteString(" \n")
+			}
+			break
+		}
+		buf.WriteString(" ")
+		buf.WriteString(content[:idx])
+		buf.WriteString(" \n")
+		content = content[idx+1:]
+	}
+	return buf.String()
+}
+
+// progressBlockCompositeFP computes an O(1) composite fingerprint by combining
+// pre-computed sub-block FPs with active tool state. This replaces the old
+// progressBlockFullFP which hashed the entire pre-render string at O(N) cost.
+func (m *cliModel) progressBlockCompositeFP(elapsedSec int64, bubbleWidth int) uint64 {
 	h := fnv.New64a()
-	h.Write([]byte(preRender))
+	var eb [8]byte
+	binary.LittleEndian.PutUint64(eb[:], uint64(elapsedSec))
+	h.Write(eb[:])
+	binary.LittleEndian.PutUint64(eb[:], uint64(bubbleWidth))
+	h.Write(eb[:])
+	binary.LittleEndian.PutUint64(eb[:], m.cachedProgressHistoryFP)
+	h.Write(eb[:])
+	binary.LittleEndian.PutUint64(eb[:], m.cachedCurrentStaticFP)
+	h.Write(eb[:])
+	binary.LittleEndian.PutUint64(eb[:], m.cachedReasoningBlockFP)
+	h.Write(eb[:])
+	binary.LittleEndian.PutUint64(eb[:], m.cachedThinkingBlockFP)
+	h.Write(eb[:])
+	binary.LittleEndian.PutUint64(eb[:], m.cachedStreamBlockFP)
+	h.Write(eb[:])
+	// Active tools (dynamic — changes every tick during tool execution)
+	if m.progress != nil {
+		for _, t := range m.progress.ActiveTools {
+			if t.Status != "done" && t.Status != "error" {
+				h.Write([]byte(t.Name))
+				h.Write([]byte(t.Status))
+				binary.LittleEndian.PutUint64(eb[:], uint64(t.Elapsed))
+				h.Write(eb[:])
+			}
+		}
+	}
 	return h.Sum64()
 }
 
@@ -2309,6 +2365,29 @@ func splitGuidePrefix(line string) (prefix, rest string, prefixW int) {
 	return "", line, 0
 }
 
+// wrapDynamicPart wraps a dynamic content string (e.g. rewind block) into
+// pre-wrapped lines for direct viewport assembly. This is the same logic as
+// setViewportContent's dynamic-part wrapping, but returns []string directly.
+func wrapDynamicPart(content string, cw int) []string {
+	if content == "" {
+		return nil
+	}
+	var lines []string
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimRight(line, " \t")
+		if trimmed != line {
+			visualW := lipgloss.Width(line)
+			trimmedW := lipgloss.Width(trimmed)
+			if visualW == trimmedW {
+				line = trimmed
+			}
+		}
+		wrapped := wrapPreservingGuide(line, cw)
+		lines = append(lines, wrapped...)
+	}
+	return lines
+}
+
 // setViewportContent sets viewport content while preserving scroll position.
 // If the user was at the bottom before the update, keep them at the bottom.
 // Lines wider than the viewport are truncated to prevent layout breakage.
@@ -2499,6 +2578,55 @@ func (m *cliModel) updateViewportContent() {
 		m.lastTickProgressFP = progressFP
 		m.lastTickRewindFP = rewindFP
 
+		// --- O(1) direct lines assembly ---
+		// Assemble viewport lines from pre-cached components instead of building
+		// a monolithic string and re-wrapping it. This eliminates:
+		//   1. O(cachedHistory_size) string copy (sb.WriteString)
+		//   2. O(N_iters) lipgloss.Width + wrapPreservingGuide on progress block lines
+		// Only rewind block needs wrapping (typically < 5 lines, O(1)).
+		cw := m.chatWidth()
+		if len(m.cachedHistoryLines) > 0 && cw > 0 {
+			// Progress block lines: already pre-split by renderProgressBlock
+			progressLines := m.cachedProgressBlockLines
+
+			// Rewind block lines: cache wrapped version
+			var rewindLines []string
+			if rewindBlock == m.cachedDynamicRaw && cw == m.cachedDynamicWidth {
+				rewindLines = m.cachedDynamicLines
+			} else {
+				rewindLines = wrapDynamicPart(rewindBlock, cw)
+				m.cachedDynamicRaw = rewindBlock
+				m.cachedDynamicLines = rewindLines
+				m.cachedDynamicWidth = cw
+			}
+
+			totalLines := len(m.cachedHistoryLines) + len(progressLines) + len(rewindLines)
+			allLines := make([]string, 0, totalLines)
+			allLines = append(allLines, m.cachedHistoryLines...)
+			allLines = append(allLines, progressLines...)
+			allLines = append(allLines, rewindLines...)
+
+			atBottom := m.viewport.AtBottom()
+			viewportSetLinesBypassMaxWidth(&m.viewport, allLines, cw)
+			if atBottom {
+				m.viewport.GotoBottom()
+				m.newContentHint = false
+			} else {
+				m.newContentHint = true
+			}
+
+			// Keep lastViewportContent in sync for any fallback setViewportContent calls
+			var sb strings.Builder
+			sb.Grow(cachedHistoryLen + len(progressBlock) + len(rewindBlock))
+			sb.WriteString(m.cachedHistory)
+			sb.WriteString(progressBlock)
+			sb.WriteString(rewindBlock)
+			m.lastViewportContent = sb.String()
+			m.lastViewportWidth = cw
+			return
+		}
+
+		// Fallback: string path (first tick before cachedHistoryLines is populated)
 		var sb strings.Builder
 		sb.WriteString(m.cachedHistory)
 		sb.WriteString(progressBlock)

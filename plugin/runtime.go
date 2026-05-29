@@ -18,7 +18,7 @@ import (
 
 // NativeRuntime creates plugins that run in-process.
 type NativeRuntime struct {
-	registry map[string]Plugin // pre-registered native plugins
+	registry map[string]Plugin
 }
 
 // NewNativeRuntime creates a native runtime.
@@ -45,10 +45,9 @@ func (nr *NativeRuntime) Create(manifest *PluginManifest, dir string) (Plugin, e
 // gRPC Runtime — external process plugins
 // ---------------------------------------------------------------------------
 
-// grpcPluginProcess manages an external plugin process communicating via
-// JSON-over-stdin/stdout protocol. Full gRPC with protobuf will be added
-// in a future iteration when the proto definition is finalized.
-type grpcPluginProcess struct {
+// GrpcPluginProcess manages an external plugin process communicating via
+// JSON-over-stdin/stdout protocol.
+type GrpcPluginProcess struct {
 	cmd     *exec.Cmd
 	stdin   *jsonLineWriter
 	stdout  *jsonLineReader
@@ -75,9 +74,10 @@ func (f *grpcRuntimeFactory) Create(manifest *PluginManifest, dir string) (Plugi
 
 // grpcPlugin implements Plugin for external gRPC/stdio processes.
 type grpcPlugin struct {
-	manifest PluginManifest
-	dir      string
-	process  *grpcPluginProcess
+	manifest        PluginManifest
+	dir             string
+	process         *GrpcPluginProcess
+	ChannelProvider *ChannelProviderDecl // exported: set during Activate if plugin provides a channel
 }
 
 func (g *grpcPlugin) Manifest() PluginManifest {
@@ -92,19 +92,19 @@ func (g *grpcPlugin) Activate(ctx PluginContext) error {
 	g.process = proc
 
 	// Send activate command to the external process
-	req := &pluginRequest{
+	req := &PluginRequest{
 		Method: "activate",
 		Params: map[string]any{
 			"pluginId": g.manifest.ID,
 		},
 	}
-	resp, err := proc.call(context.Background(), req)
+	resp, err := proc.Call(context.Background(), req)
 	if err != nil {
-		proc.stop()
+		proc.Stop()
 		return fmt.Errorf("activate call failed: %w", err)
 	}
 	if resp.Error != "" {
-		proc.stop()
+		proc.Stop()
 		return fmt.Errorf("plugin activate error: %s", resp.Error)
 	}
 
@@ -116,7 +116,7 @@ func (g *grpcPlugin) Activate(ctx PluginContext) error {
 			process:  g.process,
 		}
 		if err := ctx.RegisterTool(tool); err != nil {
-			proc.stop()
+			proc.Stop()
 			return fmt.Errorf("register remote tool %q: %w", t.Name, err)
 		}
 	}
@@ -125,7 +125,7 @@ func (g *grpcPlugin) Activate(ctx PluginContext) error {
 	for _, h := range resp.Hooks {
 		handler := g.makeRemoteHookHandler(h.Event, h.Matcher)
 		if err := ctx.OnEvent(HookEvent(h.Event), h.Matcher, handler); err != nil {
-			proc.stop()
+			proc.Stop()
 			return fmt.Errorf("register remote hook %q: %w", h.Event, err)
 		}
 	}
@@ -134,8 +134,24 @@ func (g *grpcPlugin) Activate(ctx PluginContext) error {
 	for _, e := range resp.Enrichers {
 		enricher := g.makeRemoteEnricher(e.Name)
 		if err := ctx.EnrichContext(e.Name, enricher); err != nil {
-			proc.stop()
+			proc.Stop()
 			return fmt.Errorf("register remote enricher %q: %w", e.Name, err)
+		}
+	}
+
+	// If the plugin declares a channel_provider, register it via callback.
+	if resp.ChannelProvider != nil {
+		cp := resp.ChannelProvider
+		if cp.Name == "" {
+			proc.Stop()
+			return fmt.Errorf("plugin %s: channel_provider missing name", g.manifest.ID)
+		}
+		g.ChannelProvider = cp
+
+		// Use RegisterChannelProvider callback to avoid plugin→channel import cycle.
+		if err := ctx.RegisterChannelProvider(cp); err != nil {
+			proc.Stop()
+			return fmt.Errorf("register channel provider %q: %w", cp.Name, err)
 		}
 	}
 
@@ -146,18 +162,18 @@ func (g *grpcPlugin) Deactivate(ctx PluginContext) error {
 	if g.process == nil {
 		return nil
 	}
-	req := &pluginRequest{Method: "deactivate"}
-	if _, err := g.process.call(context.Background(), req); err != nil {
+	req := &PluginRequest{Method: "deactivate"}
+	if _, err := g.process.Call(context.Background(), req); err != nil {
 		log.WithField("plugin", g.manifest.ID).Warn("Deactivate call failed: ", err)
 	}
-	g.process.stop()
+	g.process.Stop()
 	g.process = nil
 	return nil
 }
 
 func (g *grpcPlugin) makeRemoteHookHandler(event, matcher string) HookHandler {
 	return func(ctx context.Context, payload *HookPayload) (*HookResult, error) {
-		req := &pluginRequest{
+		req := &PluginRequest{
 			Method: "hook",
 			Params: map[string]any{
 				"event":     string(payload.Event),
@@ -168,7 +184,7 @@ func (g *grpcPlugin) makeRemoteHookHandler(event, matcher string) HookHandler {
 				"chatId":    payload.ChatID,
 			},
 		}
-		resp, err := g.process.call(ctx, req)
+		resp, err := g.process.Call(ctx, req)
 		if err != nil {
 			return nil, err
 		}
@@ -182,13 +198,13 @@ func (g *grpcPlugin) makeRemoteHookHandler(event, matcher string) HookHandler {
 // makeRemoteEnricher creates a ContextEnricher that calls the remote plugin process.
 func (g *grpcPlugin) makeRemoteEnricher(name string) ContextEnricher {
 	return func(ctx context.Context) (string, error) {
-		req := &pluginRequest{
+		req := &PluginRequest{
 			Method: "enrich",
 			Params: map[string]any{
 				"enricherName": name,
 			},
 		}
-		resp, err := g.process.call(ctx, req)
+		resp, err := g.process.Call(ctx, req)
 		if err != nil {
 			return "", err
 		}
@@ -203,7 +219,7 @@ func (g *grpcPlugin) makeRemoteEnricher(name string) ContextEnricher {
 type remoteTool struct {
 	def      ToolDef
 	pluginID string
-	process  *grpcPluginProcess
+	process  *GrpcPluginProcess
 }
 
 func (rt *remoteTool) Definition() ToolDef {
@@ -211,14 +227,14 @@ func (rt *remoteTool) Definition() ToolDef {
 }
 
 func (rt *remoteTool) Execute(ctx context.Context, input string) (*ToolResult, error) {
-	req := &pluginRequest{
+	req := &PluginRequest{
 		Method: "execute_tool",
 		Params: map[string]any{
 			"toolName": rt.def.Name,
 			"input":    input,
 		},
 	}
-	resp, err := rt.process.call(ctx, req)
+	resp, err := rt.process.Call(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -229,21 +245,27 @@ func (rt *remoteTool) Execute(ctx context.Context, input string) (*ToolResult, e
 }
 
 // ---------------------------------------------------------------------------
-// JSON-over-stdio protocol types
+// JSON-over-stdio protocol types (exported for serverapp bridge)
 // ---------------------------------------------------------------------------
 
-type pluginRequest struct {
+// PluginRequest is a JSON-over-stdio request sent from xbot to the plugin process.
+type PluginRequest struct {
 	Method string         `json:"method"`
 	Params map[string]any `json:"params,omitempty"`
 }
 
-type pluginResponse struct {
+// PluginResponse is a JSON-over-stdio response from the plugin process.
+type PluginResponse struct {
 	Result     string        `json:"result,omitempty"`
 	Error      string        `json:"error,omitempty"`
 	Tools      []ToolDef     `json:"tools,omitempty"`
 	Hooks      []hookReg     `json:"hooks,omitempty"`
 	HookResult *HookResult   `json:"hook_result,omitempty"`
 	Enrichers  []enricherReg `json:"enrichers,omitempty"`
+
+	// ChannelProvider declares that this plugin provides a custom channel.
+	// Only meaningful in the "activate" response.
+	ChannelProvider *ChannelProviderDecl `json:"channel_provider,omitempty"`
 }
 
 type hookReg struct {
@@ -255,16 +277,41 @@ type enricherReg struct {
 	Name string `json:"name"`
 }
 
+// ChannelProviderDecl is the declaration returned by the plugin in its
+// activate response to signal that it provides a custom channel.
+type ChannelProviderDecl struct {
+	Name         string           `json:"name"`
+	ConfigSchema []map[string]any `json:"config_schema,omitempty"`
+}
+
+// GetChannelProviderDecl extracts the channel provider declaration from a grpcPlugin.
+// Returns nil if the plugin does not provide a channel.
+func GetChannelProviderDecl(p Plugin) *ChannelProviderDecl {
+	gp, ok := p.(*grpcPlugin)
+	if !ok {
+		return nil
+	}
+	return gp.ChannelProvider
+}
+
+// GetProcess returns the GrpcPluginProcess for a grpcPlugin, or nil.
+// Used by serverapp's channel bridge to call the plugin process.
+func GetProcess(p Plugin) *GrpcPluginProcess {
+	if gp, ok := p.(*grpcPlugin); ok {
+		return gp.process
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Process lifecycle
 // ---------------------------------------------------------------------------
 
-func startPluginProcess(entry, executable string, args []string, dir string) (*grpcPluginProcess, error) {
+func startPluginProcess(entry, executable string, args []string, dir string) (*GrpcPluginProcess, error) {
 	var cmd *exec.Cmd
 	if executable != "" {
 		cmd = exec.Command(executable, args...)
 	} else {
-		// Fallback: safely split entry into command + args (no shell)
 		parts := strings.Fields(entry)
 		if len(parts) == 0 {
 			return nil, fmt.Errorf("empty entry command")
@@ -287,7 +334,7 @@ func startPluginProcess(entry, executable string, args []string, dir string) (*g
 		return nil, fmt.Errorf("start process: %w", err)
 	}
 
-	return &grpcPluginProcess{
+	return &GrpcPluginProcess{
 		cmd:     cmd,
 		stdin:   &jsonLineWriter{w: stdinPipe},
 		stdout:  newJSONLineReader(stdoutPipe),
@@ -297,7 +344,8 @@ func startPluginProcess(entry, executable string, args []string, dir string) (*g
 
 const pluginCallTimeout = 30 * time.Second
 
-func (p *grpcPluginProcess) call(ctx context.Context, req *pluginRequest) (*pluginResponse, error) {
+// Call sends a request to the plugin process and waits for the response.
+func (p *GrpcPluginProcess) Call(ctx context.Context, req *PluginRequest) (*PluginResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -309,10 +357,10 @@ func (p *grpcPluginProcess) call(ctx context.Context, req *pluginRequest) (*plug
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 
-	done := make(chan *pluginResponse, 1)
+	done := make(chan *PluginResponse, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		resp := &pluginResponse{}
+		resp := &PluginResponse{}
 		if err := p.stdout.read(resp); err != nil {
 			errCh <- err
 			return
@@ -326,26 +374,31 @@ func (p *grpcPluginProcess) call(ctx context.Context, req *pluginRequest) (*plug
 	case err := <-errCh:
 		return nil, err
 	case <-ctx.Done():
-		// Kill the process on context cancellation to prevent goroutine leak.
-		// The read goroutine will unblock when the process exits and stdout closes.
 		p.stopLocked()
 		return nil, ctx.Err()
 	case <-time.After(pluginCallTimeout):
-		// Kill the process on timeout to prevent goroutine leak.
 		p.stopLocked()
 		return nil, fmt.Errorf("plugin call timeout (%v)", pluginCallTimeout)
 	}
 }
 
-func (p *grpcPluginProcess) stop() {
+// Stop kills the plugin process.
+func (p *GrpcPluginProcess) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stopLocked()
 }
 
+// IsRunning returns whether the plugin process is still alive.
+func (p *GrpcPluginProcess) IsRunning() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.running
+}
+
 // stopLocked kills the process without acquiring the lock.
 // Caller must hold p.mu.
-func (p *grpcPluginProcess) stopLocked() {
+func (p *GrpcPluginProcess) stopLocked() {
 	if p.running {
 		_ = p.cmd.Process.Kill()
 		_ = p.cmd.Wait()

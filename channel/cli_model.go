@@ -527,6 +527,11 @@ func (m *cliModel) resetToIdleState() {
 	m.cachedProgressBlockOut = ""
 	m.cachedProgressBlockFP = 0
 	m.cachedProgressBlockWidth = 0
+	m.cachedProgressBlockLines = nil
+	m.cachedProgressHistoryFP = 0
+	m.cachedDynamicRaw = ""
+	m.cachedDynamicLines = nil
+	m.cachedDynamicWidth = 0
 
 	// --- Agent State ---
 	m.agentTurnID = 0
@@ -1068,6 +1073,7 @@ type cliModel struct {
 	cachedProgressHistory      string // cached rendered output of completed iterations (dimmed)
 	cachedProgressHistoryLen   int    // len(iterationHistory) when cache was built
 	cachedProgressHistoryWidth int    // viewport width when cache was built
+	cachedProgressHistoryFP    uint64 // fingerprint of cached history content for O(1) composite FP
 
 	// --- tick-level dirty detection for updateViewportContent fast path ---
 	// Avoids O(total_content) string construction when nothing changed between ticks.
@@ -1101,9 +1107,17 @@ type cliModel struct {
 	// running on every 100ms tick. The cache key is a fingerprint of all rendered
 	// sub-blocks + elapsed seconds + cursor state. Without this, blockStyle.Render()
 	// alone consumes 60%+ CPU in SubAgent sessions with large progress history.
-	cachedProgressBlockOut   string // final rendered blockStyle.Render result
-	cachedProgressBlockFP    uint64 // fingerprint of pre-render content
-	cachedProgressBlockWidth int    // bubbleWidth when cache was built
+	cachedProgressBlockOut   string   // final rendered result (with manual padding)
+	cachedProgressBlockFP    uint64   // composite fingerprint of all sub-blocks
+	cachedProgressBlockWidth int      // bubbleWidth when cache was built
+	cachedProgressBlockLines []string // pre-split lines of cachedProgressBlockOut
+
+	// cachedDynamicLines stores the pre-wrapped lines of the dynamic viewport suffix
+	// (progress block + rewind block). This avoids O(N_iters) lipgloss.Width +
+	// wrapPreservingGuide calls in setViewportContent on every tick.
+	cachedDynamicRaw   string   // raw dynamic part string (progress + rewind)
+	cachedDynamicLines []string // pre-split and wrapped lines
+	cachedDynamicWidth int      // chatWidth when cached
 
 	// --- §2 工具可视化 ---
 	lastCompletedTools []protocol.ToolProgress // 每轮结束时快照，不依赖 m.progress 生命周期

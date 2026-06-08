@@ -2068,13 +2068,10 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 
 	switch msg.role {
 	case "tool_summary":
-		// §20 使用缓存样式（override width to chatWidth for sidebar compat）
-		toolSummaryStyle := s.ToolSummary.Width(cw - 4)
-		toolHeaderStyle := s.ToolHeader
+		// New design: borderless iteration summaries
 		toolItemStyle := s.ToolItem
 		toolErrorItemStyle := s.ToolErrorItem
-		reasoningStyle := s.TextMutedSt
-		reasoningGuide := s.ProgressDim
+		toolHeaderStyle := s.ToolHeader
 		hintStyle := s.ToolHint
 
 		// 统计总工具数和总耗时
@@ -2087,21 +2084,32 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 
 		var toolSb strings.Builder
 
-		// Box internal width: ToolSummary has Border(2) + Padding(0,1 → 2) = 4 cols overhead
-		boxInnerW := contentWidth - 4
-
 		if m.toolSummaryExpanded {
-			// 展开模式：完整渲染
+			// 展开模式：完整渲染每个迭代
 			if iterCount > 0 {
-				toolSb.WriteString(toolHeaderStyle.Render(fmt.Sprintf("Tools (%d iterations, %d calls)", iterCount, totalTools)))
-				toolSb.WriteString("\n")
-				guideW := lipgloss.Width(s.ProgressIndent.Render("  ┊ "))
-				textW := boxInnerW - guideW
 				for ii := range msg.iterations {
 					it := &msg.iterations[ii]
 					iterLabel := fmt.Sprintf("#%d", it.Iteration)
 					if it.ElapsedWall > 0 {
-						iterLabel += " " + reasoningStyle.Render(formatElapsed(it.ElapsedWall))
+						iterLabel += " · " + formatElapsed(it.ElapsedWall)
+					}
+					// Tool count for this iteration
+					iterToolCount := len(it.Tools)
+					if iterToolCount > 0 {
+						successCount, errCount := 0, 0
+						for _, t := range it.Tools {
+							if t.Status == "error" {
+								errCount++
+							} else {
+								successCount++
+							}
+						}
+						iterLabel += fmt.Sprintf(" · %d tools", iterToolCount)
+						if errCount > 0 {
+							iterLabel += fmt.Sprintf(" %s%d %s%d",
+								s.ProgressError.Render("✗"), errCount,
+								s.ProgressDone.Render("✓"), successCount)
+						}
 					}
 					toolSb.WriteString(s.ProgressIter.Render(iterLabel))
 					toolSb.WriteString("\n")
@@ -2115,7 +2123,7 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 							if line == "" {
 								continue
 							}
-							toolSb.WriteString(line)
+							toolSb.WriteString("  " + line)
 							toolSb.WriteString("\n")
 						}
 					}
@@ -2129,7 +2137,7 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 							if line == "" {
 								continue
 							}
-							toolSb.WriteString(line)
+							toolSb.WriteString("  " + line)
 							toolSb.WriteString("\n")
 						}
 					}
@@ -2140,18 +2148,16 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 						if tool.Elapsed > 0 {
 							elapsed = fmt.Sprintf(" (%s)", formatElapsed(tool.Elapsed))
 						}
-						toolSb.WriteString(sty.Render(fmt.Sprintf("    %s %s%s", icon, label, elapsed)))
+						toolSb.WriteString(sty.Render(fmt.Sprintf("  %s %s%s", icon, label, elapsed)))
 						toolSb.WriteString("\n")
 						// Render tool body (diff hints or per-tool output)
-						if content := m.renderToolContentBelow(tool, reasoningGuide.Render("  ┊ "), textW, false, 0); content != "" {
+						if content := m.renderToolContentBelow(tool, "    ", contentWidth, false, 0); content != "" {
 							toolSb.WriteString(content)
 							toolSb.WriteString("\n")
 						}
 					}
 				}
 			} else {
-				toolSb.WriteString(toolHeaderStyle.Render(fmt.Sprintf("Tools (%d)", totalTools)))
-				toolSb.WriteString("\n")
 				for i := range msg.tools {
 					tool := &msg.tools[i]
 					label, icon, sty := toolDisplayInfo(*tool, toolItemStyle, toolErrorItemStyle)
@@ -2161,17 +2167,11 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 					}
 					toolSb.WriteString(sty.Render(fmt.Sprintf("  %s %s%s", icon, label, elapsed)))
 					toolSb.WriteString("\n")
-					// Render tool body for flat tool list too
-					if content := m.renderToolContentBelow(tool, reasoningGuide.Render("  ┊ "), boxInnerW, false, 0); content != "" {
-						toolSb.WriteString(content)
-						toolSb.WriteString("\n")
-					}
 				}
 			}
 		} else {
-			// 折叠模式升级（第 4 轮）：统计摘要 + 成功/失败状态图标
+			// 折叠模式：紧凑单行摘要（无边框）
 			elapsedStr := formatElapsed(totalMs)
-			// 统计成功/失败工具数
 			successCount, errorCount := 0, 0
 			for _, tool := range allTools {
 				if tool.Status == "error" {
@@ -2180,27 +2180,18 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 					successCount++
 				}
 			}
-			var statusIcons string
+			// Build compact summary: "3 calls · 1.2s ✓2 ✗1  [Ctrl+O]"
+			summary := toolHeaderStyle.Render(fmt.Sprintf("%d calls · %s", totalTools, elapsedStr))
 			if errorCount > 0 {
-				statusIcons = s.ProgressError.Render("✗") +
-					s.TextMutedSt.Render(fmt.Sprintf("%d", errorCount))
-			}
-			if successCount > 0 && errorCount > 0 {
-				statusIcons += " "
+				summary += " " + s.ProgressError.Render(fmt.Sprintf("✗%d", errorCount))
 			}
 			if successCount > 0 {
-				statusIcons += s.ProgressDone.Render("✓") +
-					s.TextMutedSt.Render(fmt.Sprintf("%d", successCount))
+				summary += " " + s.ProgressDone.Render(fmt.Sprintf("✓%d", successCount))
 			}
-			toolSb.WriteString(toolHeaderStyle.Render(fmt.Sprintf("Tools %d calls · %s", totalTools, elapsedStr)))
-			if statusIcons != "" {
-				toolSb.WriteString("  ")
-				toolSb.WriteString(statusIcons)
-			}
-			toolSb.WriteString("  ")
-			toolSb.WriteString(hintStyle.Render("[Ctrl+O]"))
+			summary += "  " + hintStyle.Render("[Ctrl+O]")
+			toolSb.WriteString(summary)
 		}
-		sb.WriteString(toolSummaryStyle.Render(toolSb.String()))
+		sb.WriteString(toolSb.String())
 	case "system":
 		if msg.styled {
 			// Pre-styled content: output as-is, no wrapping

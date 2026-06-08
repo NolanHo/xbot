@@ -1349,25 +1349,12 @@ func (m *cliModel) renderProgressBlock() string {
 		return m.cachedProgressBlockOut
 	}
 
-	// Header
-	headerStyle := s.ProgressHeader
-	elapsed := ""
-	if !m.typingStartTime.IsZero() {
-		elapsed = " " + elapsedStyle.Render(formatElapsed(elapsedSec*1000))
-	}
-	header := headerStyle.Render("Progress") + elapsed
-
 	// Assemble padded lines incrementally:
-	// 1. Header line (padded)
-	// 2. History lines (already padded from cache — O(1) reuse)
-	// 3. Current iteration lines (padded — always short, O(1))
-	// This avoids O(N) padProgressLines on the entire content.
-	totalCap := 1 + 1 + len(historyLines) + 20 // header + divider + history + ~20 lines for current
+	// No "Progress" header or divider — clean layout, iterations start immediately.
+	// 1. History lines (already padded from cache — O(1) reuse)
+	// 2. Current iteration lines (padded — always short, O(1))
+	totalCap := len(historyLines) + 20 // history + ~20 lines for current
 	allPaddedLines := make([]string, 0, totalCap)
-	allPaddedLines = append(allPaddedLines, " "+header+" ")
-
-	// Divider at the very start of the progress block
-	allPaddedLines = append(allPaddedLines, " "+s.DimGuideSt.Render(strings.Repeat("─", innerWidth))+" ")
 
 	// History lines are already padded — directly append
 	allPaddedLines = append(allPaddedLines, historyLines...)
@@ -2124,20 +2111,13 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 	default:
 		// assistant 消息 — 无 guide 前缀的干净布局
 		// tool_summary 迭代（如果有）作为 body 开头部分
-		// Streaming: bright header; Completed: dim header
-		var headerSt lipgloss.Style
-		if msg.isPartial {
-			headerSt = s.GuideSt
-		} else {
-			headerSt = s.DimGuideSt
-		}
 
-		// Build header line
+		// Build header line (clean: time + label, no guide prefix)
 		label := streamingLabelStyle.Render("Assistant")
 		if !msg.isPartial {
 			label = lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.TextSecondary)).Render("Assistant")
 		}
-		headerLine := fmt.Sprintf("%s %s", headerSt.Render("┊ ")+timeStr, label)
+		headerLine := fmt.Sprintf("%s %s", timeStr, label)
 		if msg.isPartial {
 			headerLine += " ..."
 		}

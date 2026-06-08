@@ -1073,9 +1073,7 @@ func TestCLIModelRenderProgressBlockThinking(t *testing.T) {
 	if !strings.Contains(result, "Thinking") {
 		t.Errorf("renderProgressBlock should show a thinking verb, got: %q", result)
 	}
-	if !strings.Contains(result, "Progress") {
-		t.Errorf("renderProgressBlock should show Progress header, got: %q", result)
-	}
+	// No "Progress" header anymore — progress block starts directly with content
 }
 
 func TestCLIModelRenderProgressBlockWithTools(t *testing.T) {

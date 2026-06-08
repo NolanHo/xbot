@@ -1176,43 +1176,42 @@ func (m *cliModel) handleAgentMessage(msg OutboundMsg) {
 func (m *cliModel) renderHistoryRange(
 	buf *strings.Builder,
 	snaps []cliIterationSnapshot,
-	innerWidth, reasoningW, thinkingW int,
-	reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle,
-	iterStyle, toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle lipgloss.Style,
-	s *cliStyles,
+	innerWidth int,
+	toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, iterStyle lipgloss.Style,
 ) {
-	// Pre-render guide prefixes once (they're the same for all lines).
-	// Without this, each iteration re-renders "  ┊ " with Style.Render,
-	// which internally walks the string with ANSI parser — O(chars) per call.
-	reasoningGuidePrefix := reasoningGuide.Render("  ┊ ")
-	thinkingGuidePrefix := thinkingGuide.Render("  ┊ ")
+	// Guide prefix for tool body content in history (4-space indent)
+	toolBodyGuide := "    "
 
 	for j := range snaps {
 		snap := &snaps[j]
 		buf.WriteString(dimStyle.Render(iterStyle.Render(fmt.Sprintf("#%d", snap.Iteration))))
 		buf.WriteString("\n")
 		if snap.Reasoning != "" {
-			for _, line := range strings.Split(snap.Reasoning, "\n") {
+			rendered, err := m.renderer.Render(snap.Reasoning)
+			if err != nil {
+				rendered = snap.Reasoning
+			}
+			for _, line := range strings.Split(rendered, "\n") {
 				line = strings.TrimRight(line, " \t\r")
 				if line == "" {
 					continue
 				}
-				for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-reasoningW), "\n") {
-					buf.WriteString(dimStyle.Render(reasoningGuidePrefix + reasoningStyle.Render(wl)))
-					buf.WriteString("\n")
-				}
+				buf.WriteString(dimStyle.Render(line))
+				buf.WriteString("\n")
 			}
 		}
 		if snap.Thinking != "" {
-			for _, line := range strings.Split(snap.Thinking, "\n") {
+			rendered, err := m.renderer.Render(snap.Thinking)
+			if err != nil {
+				rendered = snap.Thinking
+			}
+			for _, line := range strings.Split(rendered, "\n") {
 				line = strings.TrimRight(line, " \t\r")
 				if line == "" {
 					continue
 				}
-				for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n") {
-					buf.WriteString(dimStyle.Render(thinkingGuidePrefix + thinkingStyle.Render(wl)))
-					buf.WriteString("\n")
-				}
+				buf.WriteString(dimStyle.Render(line))
+				buf.WriteString("\n")
 			}
 		}
 		for k := range snap.Tools {
@@ -1224,7 +1223,7 @@ func (m *cliModel) renderHistoryRange(
 			}
 			buf.WriteString(dimStyle.Render(sty.Render(toolLine(icon, label, elapsedStyled, innerWidth))))
 			buf.WriteString("\n")
-			if content := m.renderToolContentBelow(tool, reasoningGuidePrefix, innerWidth, true, 0); content != "" {
+			if content := m.renderToolContentBelow(tool, toolBodyGuide, innerWidth, true, 0); content != "" {
 				buf.WriteString(content)
 				buf.WriteString("\n")
 			}
@@ -1271,17 +1270,10 @@ func (m *cliModel) renderProgressBlock() string {
 	// §20 使用缓存样式
 	s := &m.styles
 	iterStyle := s.ProgressIter
-	thinkingStyle := s.ProgressThinking
-	reasoningStyle := s.TextMutedSt // dimmed style for reasoning chain
 	toolDoneStyle := s.ProgressDone
 	toolRunningStyle := s.ProgressRunning
 	toolErrorStyle := s.ProgressError
 	elapsedStyle := s.ProgressElapsed
-	indentGuide := s.ProgressIndent
-	reasoningGuide := s.ProgressDim // dimmer ┊ for reasoning
-	thinkingGuide := indentGuide    // normal ┊ for thinking
-	reasoningW := lipgloss.Width(reasoningGuide.Render("  ┊ "))
-	thinkingW := lipgloss.Width(thinkingGuide.Render("  ┊ "))
 	dimStyle := s.ProgressDim
 
 	// Render completed iterations (dimmed) — use cache to avoid re-running
@@ -1295,7 +1287,7 @@ func (m *cliModel) renderProgressBlock() string {
 	} else if m.cachedProgressHistoryLen > 0 && m.cachedProgressHistoryWidth == bubbleWidth && m.cachedProgressHistoryLen < len(m.iterationHistory) {
 		// Incremental: only render new iterations [cachedProgressHistoryLen:]
 		var histBuf strings.Builder
-		m.renderHistoryRange(&histBuf, m.iterationHistory[m.cachedProgressHistoryLen:], innerWidth, reasoningW, thinkingW, reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle, iterStyle, toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, s)
+		m.renderHistoryRange(&histBuf, m.iterationHistory[m.cachedProgressHistoryLen:], innerWidth, toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, iterStyle)
 		newHistory := histBuf.String()
 		m.cachedProgressHistory += newHistory
 		m.cachedProgressHistoryLen = len(m.iterationHistory)
@@ -1307,7 +1299,7 @@ func (m *cliModel) renderProgressBlock() string {
 	} else {
 		// Full rebuild (width changed or cache invalidation)
 		var histBuf strings.Builder
-		m.renderHistoryRange(&histBuf, m.iterationHistory, innerWidth, reasoningW, thinkingW, reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle, iterStyle, toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, s)
+		m.renderHistoryRange(&histBuf, m.iterationHistory, innerWidth, toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, iterStyle)
 		m.cachedProgressHistory = histBuf.String()
 		m.cachedProgressHistoryLen = len(m.iterationHistory)
 		m.cachedProgressHistoryWidth = bubbleWidth
@@ -1328,11 +1320,11 @@ func (m *cliModel) renderProgressBlock() string {
 
 		// Render all current-iteration content with correct linear order.
 		// Static cache (completed tools + content) is inserted mid-stream.
-		m.renderCurrentIteration(&currentBuf, s, innerWidth, reasoningW, thinkingW, reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle, toolDoneStyle, toolErrorStyle, toolRunningStyle, elapsedStyle, dimStyle, iterStyle)
+		m.renderCurrentIteration(&currentBuf, s, innerWidth, toolDoneStyle, toolErrorStyle, toolRunningStyle, elapsedStyle)
 	} else if m.typing {
 		currentBuf.WriteString("  ")
 		currentBuf.WriteString(m.ticker.viewFrames(orbitFrames))
-		currentBuf.WriteString(thinkingStyle.Render(" " + m.pickVerb(m.ticker.ticks) + "..."))
+		currentBuf.WriteString(" " + m.pickVerb(m.ticker.ticks) + "...")
 		currentBuf.WriteString("\n")
 	}
 
@@ -1518,7 +1510,7 @@ func (m *cliModel) progressStaticFP() uint64 {
 
 // reasoningBlockFP computes a fingerprint for the reasoning block cache.
 // Includes cursor blink state since it affects the rendered output.
-func (m *cliModel) reasoningBlockFP(innerWidth, reasoningW, cursorState int) uint64 {
+func (m *cliModel) reasoningBlockFP(innerWidth, cursorState int) uint64 {
 	if m.progress == nil {
 		return 0
 	}
@@ -1533,8 +1525,6 @@ func (m *cliModel) reasoningBlockFP(innerWidth, reasoningW, cursorState int) uin
 	h.Write(eb[:])
 	binary.LittleEndian.PutUint64(eb[:], uint64(innerWidth))
 	h.Write(eb[:])
-	binary.LittleEndian.PutUint64(eb[:], uint64(reasoningW))
-	h.Write(eb[:])
 	binary.LittleEndian.PutUint64(eb[:], uint64(cursorState))
 	h.Write(eb[:])
 	binary.LittleEndian.PutUint64(eb[:], uint64(len([]rune(m.progress.ReasoningStreamContent))))
@@ -1544,7 +1534,7 @@ func (m *cliModel) reasoningBlockFP(innerWidth, reasoningW, cursorState int) uin
 
 // streamBlockFP computes a fingerprint for the stream block cache.
 // Includes cursor blink state since it affects the rendered output.
-func (m *cliModel) streamBlockFP(innerWidth, thinkingW, cursorState int) uint64 {
+func (m *cliModel) streamBlockFP(innerWidth, cursorState int) uint64 {
 	if m.progress == nil {
 		return 0
 	}
@@ -1555,15 +1545,13 @@ func (m *cliModel) streamBlockFP(innerWidth, thinkingW, cursorState int) uint64 
 	h.Write(eb[:])
 	binary.LittleEndian.PutUint64(eb[:], uint64(innerWidth))
 	h.Write(eb[:])
-	binary.LittleEndian.PutUint64(eb[:], uint64(thinkingW))
-	h.Write(eb[:])
 	binary.LittleEndian.PutUint64(eb[:], uint64(cursorState))
 	h.Write(eb[:])
 	return h.Sum64()
 }
 
 // thinkingBlockFP computes a fingerprint for the thinking block cache.
-func (m *cliModel) thinkingBlockFP(innerWidth, thinkingW int) uint64 {
+func (m *cliModel) thinkingBlockFP(innerWidth int) uint64 {
 	if m.progress == nil {
 		return 0
 	}
@@ -1571,8 +1559,6 @@ func (m *cliModel) thinkingBlockFP(innerWidth, thinkingW int) uint64 {
 	h.Write([]byte(m.progress.Thinking))
 	var eb [8]byte
 	binary.LittleEndian.PutUint64(eb[:], uint64(innerWidth))
-	h.Write(eb[:])
-	binary.LittleEndian.PutUint64(eb[:], uint64(thinkingW))
 	h.Write(eb[:])
 	return h.Sum64()
 }
@@ -1584,9 +1570,7 @@ func (m *cliModel) thinkingBlockFP(innerWidth, thinkingW int) uint64 {
 // always rendered dynamically to maintain correct linear order.
 func (m *cliModel) getCurrentStaticCache(
 	bubbleWidth, innerWidth int,
-	s *cliStyles,
-	reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle,
-	toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, iterStyle lipgloss.Style,
+	toolDoneStyle, toolErrorStyle, elapsedStyle lipgloss.Style,
 ) string {
 	if m.progress == nil {
 		m.cachedCurrentStatic = ""
@@ -1632,7 +1616,7 @@ func (m *cliModel) getCurrentStaticCache(
 	}
 
 	// Tool content (completed + done/error active)
-	guide := reasoningGuide.Render("  ┊ ")
+	guide := "    " // 4-space indent for tool body
 	for i := range m.progress.CompletedTools {
 		tool := &m.progress.CompletedTools[i]
 		if content := m.renderToolContentBelow(tool, guide, innerWidth, false, 0); content != "" {
@@ -1668,14 +1652,36 @@ func (m *cliModel) getCurrentStaticCache(
 //  6. Phase spinner (only when no content at all)
 //  7. SubAgent tree
 //
-// Reasoning, thinking, and stream blocks are cached to avoid per-line Style.Render,
-// lipgloss.Width, and hardWrapRunes on every tick when content is static.
+// renderStreamMd renders markdown content through the glamour renderer for the
+// progress panel. Returns the rendered string with trailing newline.
+// If showCursor is true, appends a typewriter cursor ▋ to the last content line.
+// This is O(content_length) per call, but only runs for the current iteration
+// (O(1) relative to total iteration count).
+func (m *cliModel) renderStreamMd(content string, cursorStyle lipgloss.Style, showCursor bool) string {
+	rendered, err := m.renderer.Render(content)
+	if err != nil {
+		rendered = content
+	}
+	rendered = strings.TrimRight(rendered, "\n")
+	if rendered == "" {
+		return ""
+	}
+	if showCursor {
+		lines := strings.Split(rendered, "\n")
+		lastIdx := len(lines) - 1
+		lines[lastIdx] += cursorStyle.Render("▋")
+		rendered = strings.Join(lines, "\n")
+	}
+	return rendered + "\n"
+}
+
+// Reasoning, thinking, and stream blocks use glamour for markdown rendering.
+// Each block has an FP-based cache so unchanged content is not re-rendered.
 func (m *cliModel) renderCurrentIteration(
 	sb *strings.Builder,
 	s *cliStyles,
-	innerWidth, reasoningW, thinkingW int,
-	reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle,
-	toolDoneStyle, toolErrorStyle, toolRunningStyle, elapsedStyle, dimStyle, iterStyle lipgloss.Style,
+	innerWidth int,
+	toolDoneStyle, toolErrorStyle, toolRunningStyle, elapsedStyle lipgloss.Style,
 ) {
 	if m.progress == nil {
 		return
@@ -1683,154 +1689,75 @@ func (m *cliModel) renderCurrentIteration(
 
 	cursorState := int((m.ticker.ticks / 5) % 2) // 0 or 1, changes every ~500ms
 
-	// --- 1. Reasoning (cached) ---
+	// --- 1. Reasoning (glamour-rendered) ---
 	isReasoningStreaming := m.progress.ReasoningStreamContent != "" && m.progress.StreamContent == ""
 	reasoningText := m.progress.Reasoning
 	if reasoningText == "" {
 		reasoningText = m.progress.ReasoningStreamContent
 	}
 	if reasoningText != "" {
-		fp := m.reasoningBlockFP(innerWidth, reasoningW, cursorState)
+		fp := m.reasoningBlockFP(innerWidth, cursorState)
 		if m.cachedReasoningBlock != "" && m.cachedReasoningBlockFP == fp && m.cachedReasoningBlockWidth == innerWidth {
 			sb.WriteString(m.cachedReasoningBlock)
 		} else {
-			var blockBuf strings.Builder
 			// Typewriter effect for reasoning streaming
 			if isReasoningStreaming {
 				totalRunes := len([]rune(m.progress.ReasoningStreamContent))
 				runes := []rune(m.progress.ReasoningStreamContent)
 				if m.rwVisible > 0 && m.rwVisible < totalRunes {
-					runes = runes[:m.rwVisible]
+					reasoningText = string(runes[:m.rwVisible])
 				}
-				reasoningText = string(runes)
 			}
-			lines := strings.Split(reasoningText, "\n")
 			reasoningTyping := isReasoningStreaming && m.rwVisible < len([]rune(m.progress.ReasoningStreamContent))
-			cursorVisible := reasoningTyping || cursorState == 0
-			for i, line := range lines {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				isLastLine := i == len(lines)-1
-				wrappedLines := strings.Split(hardWrapRunes(line, innerWidth-reasoningW), "\n")
-				for j, wl := range wrappedLines {
-					isLast := isLastLine && j == len(wrappedLines)-1
-					guide := reasoningGuide.Render("  ┊ ")
-					if isLast && isReasoningStreaming {
-						cursorStr := s.StreamCursor.Render("▋")
-						cursorOverflow := reasoningW+lipgloss.Width(wl)+lipgloss.Width("▋") > innerWidth
-						if cursorOverflow {
-							blockBuf.WriteString(guide + reasoningStyle.Render(wl))
-							blockBuf.WriteString("\n")
-							if cursorVisible {
-								blockBuf.WriteString(guide + cursorStr)
-							} else {
-								blockBuf.WriteString(guide)
-							}
-						} else if cursorVisible {
-							blockBuf.WriteString(guide + reasoningStyle.Render(wl) + cursorStr)
-						} else {
-							blockBuf.WriteString(guide + reasoningStyle.Render(wl))
-						}
-					} else {
-						blockBuf.WriteString(guide + reasoningStyle.Render(wl))
-					}
-					blockBuf.WriteString("\n")
-				}
-			}
-			m.cachedReasoningBlock = blockBuf.String()
+			block := m.renderStreamMd(reasoningText, s.StreamCursor, reasoningTyping && cursorState == 0)
+			m.cachedReasoningBlock = block
 			m.cachedReasoningBlockFP = fp
 			m.cachedReasoningBlockWidth = innerWidth
-			sb.WriteString(m.cachedReasoningBlock)
+			sb.WriteString(block)
 		}
 	}
 
-	// --- 2. Thinking (cached) ---
+	// --- 2. Thinking (glamour-rendered) ---
 	if m.progress.Thinking != "" {
-		fp := m.thinkingBlockFP(innerWidth, thinkingW)
+		fp := m.thinkingBlockFP(innerWidth)
 		if m.cachedThinkingBlock != "" && m.cachedThinkingBlockFP == fp && m.cachedThinkingBlockWidth == innerWidth {
 			sb.WriteString(m.cachedThinkingBlock)
 		} else {
-			var blockBuf strings.Builder
-			for _, line := range strings.Split(m.progress.Thinking, "\n") {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				for _, wl := range strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n") {
-					blockBuf.WriteString(thinkingGuide.Render("  ┊ ") + thinkingStyle.Render(wl))
-					blockBuf.WriteString("\n")
-				}
-			}
-			m.cachedThinkingBlock = blockBuf.String()
+			block := m.renderStreamMd(m.progress.Thinking, lipgloss.Style{}, false)
+			m.cachedThinkingBlock = block
 			m.cachedThinkingBlockFP = fp
 			m.cachedThinkingBlockWidth = innerWidth
-			sb.WriteString(m.cachedThinkingBlock)
+			sb.WriteString(block)
 		}
 	}
 
 	// --- 3. Completed tools + tool content (static cache) ---
 	bubbleWidth := innerWidth + 4 // match the padding used elsewhere
-	static := m.getCurrentStaticCache(bubbleWidth, innerWidth, s, reasoningGuide, reasoningStyle, thinkingGuide, thinkingStyle, toolDoneStyle, toolErrorStyle, elapsedStyle, dimStyle, iterStyle)
+	static := m.getCurrentStaticCache(bubbleWidth, innerWidth, toolDoneStyle, toolErrorStyle, elapsedStyle)
 	if static != "" {
 		sb.WriteString(static)
 	}
 
-	// --- 4. Stream content (assistant text output, cached) ---
+	// --- 4. Stream content (glamour-rendered) ---
 	hasTools := len(m.progress.ActiveTools) > 0 || len(m.progress.CompletedTools) > 0
 
 	if m.progress.StreamContent != "" {
-		fp := m.streamBlockFP(innerWidth, thinkingW, cursorState)
+		fp := m.streamBlockFP(innerWidth, cursorState)
 		if m.cachedStreamBlock != "" && m.cachedStreamBlockFP == fp && m.cachedStreamBlockWidth == innerWidth {
 			sb.WriteString(m.cachedStreamBlock)
 		} else {
-			var blockBuf strings.Builder
 			totalRunes := len([]rune(m.progress.StreamContent))
 			runes := []rune(m.progress.StreamContent)
 			if m.twVisible > 0 && m.twVisible < totalRunes {
 				runes = runes[:m.twVisible]
 			}
 			streamText := string(runes)
-			lines := strings.Split(streamText, "\n")
 			typing := m.twVisible < totalRunes
-			cursorVisible := typing || cursorState == 0
-			for i, line := range lines {
-				line = strings.TrimRight(line, " \t\r")
-				if line == "" {
-					continue
-				}
-				isLastLine := i == len(lines)-1
-				wrappedLines := strings.Split(hardWrapRunes(line, innerWidth-thinkingW), "\n")
-				for j, wl := range wrappedLines {
-					isLast := isLastLine && j == len(wrappedLines)-1
-					guide := thinkingGuide.Render("  ┊ ")
-					if isLast {
-						cursorStr := s.StreamCursor.Render("▋")
-						cursorOverflow := thinkingW+lipgloss.Width(wl)+lipgloss.Width("▋") > innerWidth
-						if cursorOverflow {
-							blockBuf.WriteString(guide + thinkingStyle.Render(wl))
-							blockBuf.WriteString("\n")
-							if cursorVisible {
-								blockBuf.WriteString(guide + cursorStr)
-							} else {
-								blockBuf.WriteString(guide)
-							}
-						} else if cursorVisible {
-							blockBuf.WriteString(guide + thinkingStyle.Render(wl) + cursorStr)
-						} else {
-							blockBuf.WriteString(guide + thinkingStyle.Render(wl))
-						}
-					} else {
-						blockBuf.WriteString(guide + thinkingStyle.Render(wl))
-					}
-					blockBuf.WriteString("\n")
-				}
-			}
-			m.cachedStreamBlock = blockBuf.String()
+			block := m.renderStreamMd(streamText, s.StreamCursor, typing && cursorState == 0)
+			m.cachedStreamBlock = block
 			m.cachedStreamBlockFP = fp
 			m.cachedStreamBlockWidth = innerWidth
-			sb.WriteString(m.cachedStreamBlock)
+			sb.WriteString(block)
 		}
 	} else if !hasTools {
 		// Phase spinner only when no content at all
@@ -1841,22 +1768,22 @@ func (m *cliModel) renderCurrentIteration(
 			case "thinking":
 				sb.WriteString("  ")
 				sb.WriteString(m.ticker.view())
-				sb.WriteString(thinkingStyle.Render(" " + m.pickVerb(m.ticker.ticks) + "..."))
+				sb.WriteString(s.ProgressThinking.Render(" " + m.pickVerb(m.ticker.ticks) + "..."))
 				sb.WriteString("\n")
 			case "compressing":
 				sb.WriteString("  ")
 				sb.WriteString(m.ticker.viewFrames(orbitFrames))
-				sb.WriteString(thinkingStyle.Render(" compressing..."))
+				sb.WriteString(s.ProgressThinking.Render(" compressing..."))
 				sb.WriteString("\n")
 			case "newing":
 				sb.WriteString("  ")
 				sb.WriteString(m.ticker.viewFrames(orbitFrames))
-				sb.WriteString(thinkingStyle.Render(" resetting session..."))
+				sb.WriteString(s.ProgressThinking.Render(" resetting session..."))
 				sb.WriteString("\n")
 			case "retrying":
 				sb.WriteString("  ")
 				sb.WriteString(m.ticker.viewFrames(orbitFrames))
-				sb.WriteString(thinkingStyle.Render(" retrying..."))
+				sb.WriteString(s.ProgressThinking.Render(" retrying..."))
 				sb.WriteString("\n")
 			}
 		}
@@ -2069,7 +1996,7 @@ func toolDisplayInfo(tool protocol.ToolProgress, okStyle, errStyle lipgloss.Styl
 // icon and label are plain text; elapsed may be pre-styled with ANSI codes.
 // Returns the formatted string — caller wraps with style.Render().
 func toolLine(icon, label string, elapsedStyled string, maxWidth int) string {
-	prefix := fmt.Sprintf("  ┊ %s ", icon)
+	prefix := fmt.Sprintf("  %s ", icon)
 	prefixW := lipgloss.Width(prefix)
 
 	elapsedW := lipgloss.Width(elapsedStyled) // strips ANSI, measures visual width
@@ -2146,10 +2073,8 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 		toolHeaderStyle := s.ToolHeader
 		toolItemStyle := s.ToolItem
 		toolErrorItemStyle := s.ToolErrorItem
-		thinkingStyle := s.ProgressThinking
 		reasoningStyle := s.TextMutedSt
 		reasoningGuide := s.ProgressDim
-		thinkingGuide := s.ProgressIndent
 		hintStyle := s.ToolHint
 
 		// 统计总工具数和总耗时
@@ -2181,27 +2106,31 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 					toolSb.WriteString(s.ProgressIter.Render(iterLabel))
 					toolSb.WriteString("\n")
 					if it.Reasoning != "" {
-						for _, line := range strings.Split(it.Reasoning, "\n") {
+						rendered, err := m.renderer.Render(it.Reasoning)
+						if err != nil {
+							rendered = it.Reasoning
+						}
+						for _, line := range strings.Split(rendered, "\n") {
 							line = strings.TrimRight(line, " \t\r")
 							if line == "" {
 								continue
 							}
-							for _, wl := range strings.Split(hardWrapRunes(line, textW), "\n") {
-								toolSb.WriteString(reasoningGuide.Render("  ┊ ") + reasoningStyle.Render(wl))
-								toolSb.WriteString("\n")
-							}
+							toolSb.WriteString(line)
+							toolSb.WriteString("\n")
 						}
 					}
 					if it.Thinking != "" {
-						for _, line := range strings.Split(it.Thinking, "\n") {
+						rendered, err := m.renderer.Render(it.Thinking)
+						if err != nil {
+							rendered = it.Thinking
+						}
+						for _, line := range strings.Split(rendered, "\n") {
 							line = strings.TrimRight(line, " \t\r")
 							if line == "" {
 								continue
 							}
-							for _, wl := range strings.Split(hardWrapRunes(line, textW), "\n") {
-								toolSb.WriteString(thinkingGuide.Render("  ┊ ") + thinkingStyle.Render(wl))
-								toolSb.WriteString("\n")
-							}
+							toolSb.WriteString(line)
+							toolSb.WriteString("\n")
 						}
 					}
 					for k := range it.Tools {

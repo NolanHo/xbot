@@ -2223,12 +2223,12 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 						}
 						// Separator between iterations (dim dotted line)
 						if ii < len(toolIters)-1 {
-							bodyLines = append(bodyLines, s.DimGuideSt.Render("  ···"))
+							bodyLines = append(bodyLines, s.DimGuideSt.Render("  ·· ·· ·· ·· ·· ·· ·· ·· ··"))
 						}
 					}
 					// Thick separator between tool iterations and content
 					bodyLines = append(bodyLines, "") // blank above
-					bodyLines = append(bodyLines, s.DimGuideSt.Render("─────────────────────────────────────────"))
+					bodyLines = append(bodyLines, s.ProgressDone.Render("▎")+" "+s.DimGuideSt.Render("────────────────────────────────────────"))
 					bodyLines = append(bodyLines, "") // blank below
 				} else {
 					// ── Collapsed: single-line summary with accent left bar ──

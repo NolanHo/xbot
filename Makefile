@@ -49,6 +49,9 @@ web-lint:
 web-dev:
 	cd web && yarn dev
 
+gui-build:
+	cd cmd/gui && make build
+
 install-cli:
 	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o /tmp/xbot-cli ./cmd/xbot-cli
 	sudo mv /tmp/xbot-cli /usr/local/bin/

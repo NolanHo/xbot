@@ -82,5 +82,5 @@ func (t *AskUserTool) Execute(ctx *ToolContext, input string) (*ToolResult, erro
 
 // SupportedChannels implements ChannelProvider interface.
 func (t *AskUserTool) SupportedChannels() []string {
-	return []string{"cli", "feishu"}
+	return []string{"cli", "feishu", "web"}
 }

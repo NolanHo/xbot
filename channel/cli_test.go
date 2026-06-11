@@ -1721,20 +1721,23 @@ func TestConvert_NormalCompletedTurn(t *testing.T) {
 	}
 	history := ConvertMessagesToHistory(msgs)
 
-	// Should be: user, tool_summary(from Detail), assistant
-	if len(history) != 3 {
-		t.Fatalf("expected 3 messages, got %d: %+v", len(history), history)
+	// Should be: user, assistant(content + iterations merged)
+	if len(history) != 2 {
+		t.Fatalf("expected 2 messages, got %d: %+v", len(history), history)
 	}
 	assertRole(t, history[0], "user")
-	assertRole(t, history[1], "tool_summary")
-	assertRole(t, history[2], "assistant")
+	assertRole(t, history[1], "assistant")
 
 	if history[1].Iterations == nil || len(history[1].Iterations) != 2 {
-		t.Fatalf("expected 2 iterations in tool_summary, got %d", len(history[1].Iterations))
+		t.Fatalf("expected 2 iterations in assistant message, got %d", len(history[1].Iterations))
 	}
 	// Should come from Detail (has elapsed data), not from pending (elapsed=0)
 	if history[1].Iterations[0].Tools[0].Elapsed != 500 {
 		t.Errorf("expected elapsed=500 from Detail, got %d", history[1].Iterations[0].Tools[0].Elapsed)
+	}
+	// Content should also be on the same assistant message
+	if history[1].Content != "done!" {
+		t.Errorf("expected content='done!' on assistant, got %q", history[1].Content)
 	}
 }
 
@@ -1749,12 +1752,12 @@ func TestConvert_CancelledTurn(t *testing.T) {
 	}
 	history := ConvertMessagesToHistory(msgs)
 
-	// Should be: user, tool_summary (accumulated from both iterations)
+	// Should be: user, assistant (accumulated from both iterations)
 	if len(history) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %+v", len(history), history)
 	}
 	assertRole(t, history[0], "user")
-	assertRole(t, history[1], "tool_summary")
+	assertRole(t, history[1], "assistant")
 
 	if len(history[1].Iterations) != 2 {
 		t.Fatalf("expected 2 iterations, got %d", len(history[1].Iterations))
@@ -1783,23 +1786,26 @@ func TestConvert_MultipleTurns(t *testing.T) {
 	}
 	history := ConvertMessagesToHistory(msgs)
 
-	// Expected: user, tool_summary(Detail, 1 iter), assistant, user, tool_summary(pending, 1 iter)
-	if len(history) != 5 {
-		t.Fatalf("expected 5 messages, got %d: %+v", len(history), history)
+	// Expected: user, assistant(Detail, 1 iter, content), user, assistant(pending, 1 iter)
+	if len(history) != 4 {
+		t.Fatalf("expected 4 messages, got %d: %+v", len(history), history)
 	}
-	assertRole(t, history[0], "user")         // turn1 user
-	assertRole(t, history[1], "tool_summary") // turn1 completed
-	assertRole(t, history[2], "assistant")    // turn1 reply
-	assertRole(t, history[3], "user")         // turn2 user
-	assertRole(t, history[4], "tool_summary") // turn2 cancelled
+	assertRole(t, history[0], "user")      // turn1 user
+	assertRole(t, history[1], "assistant") // turn1 completed (has iterations + content)
+	assertRole(t, history[2], "user")      // turn2 user
+	assertRole(t, history[3], "assistant") // turn2 cancelled (has iterations, no content)
 
-	// Turn 1 tool_summary should have elapsed=100 from Detail
+	// Turn 1 assistant should have elapsed=100 from Detail
 	if history[1].Iterations[0].Tools[0].Elapsed != 100 {
 		t.Errorf("turn1 expected elapsed=100, got %d", history[1].Iterations[0].Tools[0].Elapsed)
 	}
-	// Turn 2 tool_summary should have elapsed=0 from pending
-	if history[4].Iterations[0].Tools[0].Elapsed != 0 {
-		t.Errorf("turn2 expected elapsed=0, got %d", history[4].Iterations[0].Tools[0].Elapsed)
+	// Turn 1 assistant should also have content
+	if history[1].Content != "done1" {
+		t.Errorf("turn1 expected content='done1', got %q", history[1].Content)
+	}
+	// Turn 2 assistant should have elapsed=0 from pending
+	if history[3].Iterations[0].Tools[0].Elapsed != 0 {
+		t.Errorf("turn2 expected elapsed=0, got %d", history[3].Iterations[0].Tools[0].Elapsed)
 	}
 }
 

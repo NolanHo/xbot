@@ -392,7 +392,7 @@ func (r *simRunner) loadHistory() {
 		if msg.timestamp.IsZero() {
 			msg.timestamp = time.Now()
 		}
-		if hm.Role == "tool_summary" && len(hm.Iterations) > 0 {
+		if len(hm.Iterations) > 0 {
 			iters := make([]cliIterationSnapshot, len(hm.Iterations))
 			for i, it := range hm.Iterations {
 				tools := make([]protocol.ToolProgress, len(it.Tools))
@@ -842,7 +842,8 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 			}
 		}
 
-		if len(step.AssertTools) > 0 && step.AssertRole == "tool_summary" {
+		if len(step.AssertTools) > 0 {
+			// assert_tools: verify specific tool names exist in iterations (any role)
 			allToolNames := map[string]bool{}
 			for _, t := range r.collectAllIterationTools() {
 				allToolNames[t.Name] = true
@@ -1151,7 +1152,7 @@ func (r *simRunner) doAssert(idx int, step SimStep) error {
 				Step: idx, Type: "assert_tool_elapsed",
 				Pattern: fmt.Sprintf("tool %q exists", step.AssertToolName),
 				Passed:  false,
-				Actual:  "tool not found in any tool_summary",
+				Actual:  "tool not found in any message iterations",
 			})
 			r.result.OK = false
 			return fmt.Errorf("assert_tool_elapsed: tool %q not found", step.AssertToolName)

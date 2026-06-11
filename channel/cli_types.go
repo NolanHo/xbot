@@ -561,12 +561,13 @@ func ConvertMessagesToHistory(msgs []llm.ChatMessage) []HistoryMessage {
 			ts := lastAssistantTS
 			if ts.IsZero() {
 				// No assistant message in this turn — assign a synthetic
-				// timestamp so each tool_summary gets a unique dedup key.
+				// timestamp so each assistant message gets a unique dedup key.
 				ts = time.Date(2024, 1, 1, 0, 0, 0, syntheticIdx, time.UTC)
 				syntheticIdx++
 			}
 			history = append(history, HistoryMessage{
-				Role:       "tool_summary",
+				Role:       "assistant",
+				Content:    "",
 				Timestamp:  ts,
 				Iterations: pendingIters,
 			})
@@ -613,19 +614,29 @@ func ConvertMessagesToHistory(msgs []llm.ChatMessage) []HistoryMessage {
 						})
 					}
 					if len(iters) > 0 {
+						if m.Content != "" {
+							history = append(history, HistoryMessage{
+								Role:       "assistant",
+								Content:    m.Content,
+								Timestamp:  m.Timestamp,
+								Iterations: iters,
+							})
+						} else {
+							// Detail has iterations but no content (intermediate assistant).
+							history = append(history, HistoryMessage{
+								Role:       "assistant",
+								Content:    "",
+								Timestamp:  m.Timestamp,
+								Iterations: iters,
+							})
+						}
+					} else if m.Content != "" {
 						history = append(history, HistoryMessage{
-							Role:       "tool_summary",
-							Timestamp:  m.Timestamp,
-							Iterations: iters,
+							Role:      "assistant",
+							Content:   m.Content,
+							Timestamp: m.Timestamp,
 						})
 					}
-				}
-				if m.Content != "" {
-					history = append(history, HistoryMessage{
-						Role:      "assistant",
-						Content:   m.Content,
-						Timestamp: m.Timestamp,
-					})
 				}
 			} else if len(m.ToolCalls) > 0 {
 				// Intermediate assistant with tool_calls from incremental persistence.

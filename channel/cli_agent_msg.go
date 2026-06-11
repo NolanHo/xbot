@@ -66,6 +66,23 @@ func (m *cliModel) handleAgentMessage(msg OutboundMsg) {
 	// logic for cancel acks to preserve the new turn's state.
 	isCancelledAck := msg.Metadata != nil && msg.Metadata["cancelled"] == "true"
 	if isCancelledAck {
+		// Preserve streaming message with iteration data from the cancelled turn.
+		// When the user presses Ctrl+C, the streaming assistant message (created by
+		// startAgentTurn) has accumulated content + iteration data. Discarding it
+		// here would lose all progress history for the cancelled turn.
+		// If a new turn has already started, iterationHistory is empty
+		// (resetProgressState cleared it), so the streaming message gets no
+		// stale iterations.
+		if m.streamingMsgIdx >= 0 {
+			msg := &m.messages[m.streamingMsgIdx]
+			msg.isPartial = false
+			msg.dirty = true
+			if m.pendingToolSummary != nil && len(m.pendingToolSummary.iterations) > 0 {
+				msg.iterations = m.pendingToolSummary.iterations
+			} else if len(m.iterationHistory) > 0 {
+				msg.iterations = append([]cliIterationSnapshot{}, m.iterationHistory...)
+			}
+		}
 		// Still clean up progress/streaming state for the cancelled turn.
 		// Do NOT endAgentTurn — the current turn (if any) must remain active.
 		if m.progress != nil {

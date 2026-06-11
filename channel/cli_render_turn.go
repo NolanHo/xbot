@@ -19,15 +19,13 @@ import (
 // Visual hierarchy (per iteration):
 //
 //   ┊  Content text rendered as markdown...
-//   ┊  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+//   ┊
 //   ┊  · Shell ✓  · Read ✓  · FileReplace ✓
 //   ┊
 //   ┊  ▸ Reasoning (8 lines) ─────────────────
 //   ┊
-//   ┊  ────────────────────────────────────────   ← iteration divider
-//   ┊
 //   ┊  Next iteration content...
-//   ┊  🔄 Grep ● 2.1s                           ← live tool
+//   ┊  ◌ Grep ● 2.1s                           ← live tool (animated orbit spinner)
 //   ┊    └── explore [mem-1]: searching...       ← SubAgent tree
 // ---------------------------------------------------------------------------
 
@@ -49,8 +47,6 @@ func (m *cliModel) renderTurnBody(
 		iter := &iterations[i]
 		if i > 0 {
 			sb.WriteString("\n")
-			sb.WriteString(s.ProgressDim.Render(strings.Repeat("─", contentWidth)))
-			sb.WriteString("\n\n")
 		}
 
 		// 1. Iteration content (Thinking = text reply).
@@ -78,8 +74,6 @@ func (m *cliModel) renderTurnBody(
 	if liveProgress != nil {
 		if len(iterations) > 0 {
 			sb.WriteString("\n")
-			sb.WriteString(s.ProgressDim.Render(strings.Repeat("─", contentWidth)))
-			sb.WriteString("\n\n")
 		}
 		sb.WriteString(m.renderLiveIteration(liveProgress, contentWidth))
 	}
@@ -231,7 +225,7 @@ func (m *cliModel) renderLiveIteration(p *protocol.ProgressEvent, width int) str
 		for _, tool := range p.ActiveTools {
 			if tool.Status == "running" || tool.Status == "active" {
 				elapsed := formatElapsed(tool.Elapsed)
-				icon := s.ProgressRunning.Render("🔄")
+				icon := s.ProgressRunning.Render(orbitFrames[m.ticker.frame%len(orbitFrames)])
 				label := tool.Label
 				if label == "" {
 					label = tool.Name

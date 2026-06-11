@@ -76,12 +76,31 @@ func (m *cliModel) renderHistoryRange(
 // only runs when the content actually changes. Elapsed is quantized to whole
 // seconds so the cache stays stable across 100ms ticks.
 func (m *cliModel) renderProgressBlock() string {
+	// Unified rendering: when a streaming assistant message exists,
+	// progress data is rendered inline via renderTurnBody().
+	// When no streaming message exists yet (early in turn), we still
+	// need to show active tools/SubAgent tree.
+	if m.streamingMsgIdx >= 0 {
+		m.rc.progressBlock.content = ""
+		m.rc.progressBlock.fp = 0
+		m.rc.progressBlock.lines = nil
+		return ""
+	}
+	// No streaming message yet — render a minimal live block
+	// showing only active tools and SubAgent tree.
+	// Also render for typing-only (thinking phase, no tools).
 	if !m.typing && m.progress == nil {
 		m.rc.progressBlock.content = ""
 		m.rc.progressBlock.fp = 0
 		m.rc.progressBlock.lines = nil
 		return ""
 	}
+	return m.renderLiveProgressBlock()
+}
+
+// renderLiveProgressBlock renders a minimal block with active tools and SubAgent tree.
+// Used before the streaming assistant message is created.
+func (m *cliModel) renderLiveProgressBlock() string {
 	// Cross-session guard: if progress payload carries a ChatID that doesn't match
 	// the currently viewed session, it's stale — discard it entirely. This prevents
 	// phantom progress blocks when switching sessions while another session's agent

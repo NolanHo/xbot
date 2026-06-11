@@ -240,7 +240,7 @@ func (m *cliModel) renderLiveIteration(p *protocol.ProgressEvent, width int) str
 	// 2. Active tools with elapsed
 	if len(p.ActiveTools) > 0 {
 		for _, tool := range p.ActiveTools {
-			if tool.Status == "running" {
+			if tool.Status == "running" || tool.Status == "active" {
 				elapsed := formatElapsed(tool.Elapsed)
 				icon := s.ProgressRunning.Render("🔄")
 				label := tool.Label

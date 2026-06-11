@@ -369,12 +369,20 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 
 		// Unified turn rendering: if this assistant message has iteration data,
 		// use renderTurnBody instead of separate thinking box + content.
-		if len(msg.iterations) > 0 {
-			bodyContent := m.renderTurnBody(
-				msg.iterations,
-				nil, // idle: no liveProgress
-				contentWidth,
-			)
+		// For streaming (isPartial) messages during busy state, also include
+		// live iteration data from m.iterationHistory + m.progress.
+		hasIterData := len(msg.iterations) > 0
+		isLiveTurn := msg.isPartial && m.typing && (len(m.iterationHistory) > 0 || m.progress != nil)
+		if hasIterData || isLiveTurn {
+			var iterations []cliIterationSnapshot
+			var liveProgress *protocol.ProgressEvent
+			if isLiveTurn {
+				iterations = m.iterationHistory
+				liveProgress = m.progress
+			} else {
+				iterations = msg.iterations
+			}
+			bodyContent := m.renderTurnBody(iterations, liveProgress, contentWidth)
 			if bodyContent != "" {
 				bodyLines = append(bodyLines, strings.Split(bodyContent, "\n")...)
 			}

@@ -66,21 +66,41 @@ func (m *cliModel) handleAgentMessage(msg OutboundMsg) {
 	// logic for cancel acks to preserve the new turn's state.
 	isCancelledAck := msg.Metadata != nil && msg.Metadata["cancelled"] == "true"
 	if isCancelledAck {
-		// Preserve streaming message with iteration data from the cancelled turn.
-		// When the user presses Ctrl+C, the streaming assistant message (created by
-		// startAgentTurn) has accumulated content + iteration data. Discarding it
-		// here would lose all progress history for the cancelled turn.
-		// If a new turn has already started, iterationHistory is empty
-		// (resetProgressState cleared it), so the streaming message gets no
-		// stale iterations.
-		if m.streamingMsgIdx >= 0 {
-			msg := &m.messages[m.streamingMsgIdx]
-			msg.isPartial = false
-			msg.dirty = true
+		// Find the streaming message that belongs to the cancelled turn.
+		// When a new turn starts (via startAgentTurn) before the cancel ack
+		// arrives, m.streamingMsgIdx points to the NEW turn's message and
+		// m.pendingToolSummary may still hold OLD turn's iteration data.
+		// Using cancelTargetTurnID ensures we only finalize the correct message.
+		cancelledIdx := -1
+		if m.cancelTargetTurnID != 0 {
+			for i := len(m.messages) - 1; i >= 0; i-- {
+				if m.messages[i].turnID == m.cancelTargetTurnID && m.messages[i].isPartial {
+					cancelledIdx = i
+					break
+				}
+			}
+		}
+		// Fallback: if cancelTargetTurnID is not set (e.g. cancel from external
+		// source), use the current streaming message index — but only if its
+		// turnID matches m.agentTurnID (i.e. no new turn has started).
+		if cancelledIdx < 0 && m.streamingMsgIdx >= 0 {
+			if m.messages[m.streamingMsgIdx].turnID == m.agentTurnID {
+				cancelledIdx = m.streamingMsgIdx
+			}
+		}
+
+		if cancelledIdx >= 0 {
+			streamingMsg := &m.messages[cancelledIdx]
+			streamingMsg.isPartial = false
+			streamingMsg.dirty = true
+			// Preserve any accumulated content from IsPartial updates.
+			// The cancel outbound has empty Content, but the streaming message
+			// may have accumulated text via IsPartial before the cancel.
+			// Do NOT overwrite existing content — keep what was streamed.
 			if m.pendingToolSummary != nil && len(m.pendingToolSummary.iterations) > 0 {
-				msg.iterations = m.pendingToolSummary.iterations
+				streamingMsg.iterations = m.pendingToolSummary.iterations
 			} else if len(m.iterationHistory) > 0 {
-				msg.iterations = append([]cliIterationSnapshot{}, m.iterationHistory...)
+				streamingMsg.iterations = append([]cliIterationSnapshot{}, m.iterationHistory...)
 			}
 		}
 		// Still clean up progress/streaming state for the cancelled turn.
@@ -91,6 +111,7 @@ func (m *cliModel) handleAgentMessage(msg OutboundMsg) {
 		m.streamingMsgIdx = -1
 		m.progress = nil
 		m.typing = false // clear typing indicator immediately after cancel
+		m.cancelTargetTurnID = 0
 		m.rc.valid = false
 		m.updateViewportContent()
 		return

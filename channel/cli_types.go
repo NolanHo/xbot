@@ -614,7 +614,11 @@ func ConvertMessagesToHistory(msgs []llm.ChatMessage) []HistoryMessage {
 						})
 					}
 					if len(iters) > 0 {
-						if m.Content != "" {
+						// [interrupted] messages carry cancelled-turn iteration history
+						// with full elapsed data. Use empty Content so the UI shows
+						// only the progress block, not the "[interrupted]" marker text.
+						isInterrupted := strings.HasPrefix(m.Content, "[interrupted]")
+						if m.Content != "" && !isInterrupted {
 							history = append(history, HistoryMessage{
 								Role:       "assistant",
 								Content:    m.Content,
@@ -622,7 +626,8 @@ func ConvertMessagesToHistory(msgs []llm.ChatMessage) []HistoryMessage {
 								Iterations: iters,
 							})
 						} else {
-							// Detail has iterations but no content (intermediate assistant).
+							// Detail has iterations but no displayable content
+							// (intermediate assistant, cancelled turn, or [interrupted] marker).
 							history = append(history, HistoryMessage{
 								Role:       "assistant",
 								Content:    "",
@@ -630,7 +635,7 @@ func ConvertMessagesToHistory(msgs []llm.ChatMessage) []HistoryMessage {
 								Iterations: iters,
 							})
 						}
-					} else if m.Content != "" {
+					} else if m.Content != "" && !strings.HasPrefix(m.Content, "[interrupted]") {
 						history = append(history, HistoryMessage{
 							Role:      "assistant",
 							Content:   m.Content,

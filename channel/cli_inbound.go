@@ -81,6 +81,7 @@ func (m *cliModel) sendInboundWait(msg InboundMsg, timeout time.Duration) bool {
 
 // sendCancel sends a cancel request to the agent and adds a system notification.
 func (m *cliModel) sendCancel() {
+	m.cancelTargetTurnID = m.agentTurnID
 	if !m.sendInbound(m.newInbound("/cancel", nil)) {
 		m.showSystemMsg("Cancel failed: agent channel busy, try again", feedbackError)
 		return

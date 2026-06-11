@@ -953,6 +953,7 @@ type cliModel struct {
 	streamingMsgIdx int                   // 当前流式消息的索引（-1 表示无流式消息）
 	newContentHint  bool                  // 有新内容但用户未在底部（显示 ↓ 提示）
 	ready           bool                  // 是否已初始化
+	viewportYStart  int                   // viewport top Y in terminal coords (set in layout)
 
 	// --- Scroll tracking ---
 	// userScrolledUp tracks the user's INTENT to stay scrolled up, independent
@@ -1205,11 +1206,12 @@ type cliModel struct {
 	// --- §Session state save/restore ---
 	// Per-session saved state so switching sessions doesn't lose in-progress state.
 	// Key = "channelName:chatID". Messages are NOT saved here — DB is source of truth.
-	savedSessions    map[string]*sessionState
-	pendingUserMsg   *cliMessage       // most recent user message sent but not yet confirmed in DB
-	pendingSuRestore *suHistoryLoadMsg // pre-start restore data, consumed by Init()
-	turnCancelled    bool              // true after Ctrl+C — prevents auto-start on stale progress
-	idleTickCounter  int               // counts 100ms ticks in idle state; placeholder rotates every 30
+	savedSessions      map[string]*sessionState
+	pendingUserMsg     *cliMessage       // most recent user message sent but not yet confirmed in DB
+	pendingSuRestore   *suHistoryLoadMsg // pre-start restore data, consumed by Init()
+	turnCancelled      bool              // true after Ctrl+C — prevents auto-start on stale progress
+	cancelTargetTurnID uint64            // turnID being cancelled; guards stale cancel ack from modifying wrong message
+	idleTickCounter    int               // counts 100ms ticks in idle state; placeholder rotates every 30
 
 	// --- Deterministic rendering: per-turn completion tracking ---
 	// turnDoneFlags tracks whether specific events have been processed for a turn.
@@ -1319,6 +1321,7 @@ type cliMessage struct {
 	renderedLines         int  // 渲染后的总行数（每次 dirty 重算）
 	originalRenderedLines int  // fold 前的原始行数（fold 时保存，用于 unfold 判断）
 	folded                bool // 是否折叠
+	expandedReasoning     bool // reasoning box 是否展开（点击 toggle）
 
 	// --- Wrapped lines cache ---
 	wrappedLines    []string // pre-wrapped lines for viewport (avoids O(N) re-parse)

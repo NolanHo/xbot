@@ -205,12 +205,7 @@ func (m *cliModel) renderMessage(msg *cliMessage) string {
 			if isLiveTurn {
 				iterations = m.iterationHistory
 				liveProgress = m.progress
-				// During tool execution, liveProgress.StreamContent is empty.
-				// Fall back to the streaming message's accumulated content so
-				// the LLM's latest text doesn't vanish while tools run.
-				if liveProgress != nil && liveProgress.StreamContent == "" && liveProgress.ReasoningStreamContent == "" {
-					fallbackContent = msg.content
-				}
+				fallbackContent = msg.content
 			} else {
 				iterations = msg.iterations
 				fallbackContent = msg.content

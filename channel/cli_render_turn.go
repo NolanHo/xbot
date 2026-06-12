@@ -187,6 +187,11 @@ func (m *cliModel) renderLiveIteration(p *protocol.ProgressEvent, width int, fal
 		displayContent = fallbackContent
 	}
 	if displayContent != "" {
+		if p.ReasoningStreamContent != "" {
+			// already added \n\n after reasoning box above
+		} else {
+			sb.WriteString("\n\n") // blank line before content
+		}
 		rendered := m.renderTurnContent(displayContent, width)
 		sb.WriteString(rendered)
 		sb.WriteString("\n")

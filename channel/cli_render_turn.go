@@ -197,7 +197,7 @@ func (m *cliModel) renderLiveIteration(p *protocol.ProgressEvent, width int, fal
 		sb.WriteString("\n")
 	}
 
-	// 3. Active tools with spinner
+	// 3. Active tools with spinner — aligned with done tool tags: "· ✓ label"
 	if len(p.ActiveTools) > 0 {
 		for _, tool := range p.ActiveTools {
 			if tool.Status == "running" || tool.Status == "active" {
@@ -207,7 +207,8 @@ func (m *cliModel) renderLiveIteration(p *protocol.ProgressEvent, width int, fal
 				if label == "" {
 					label = tool.Name
 				}
-				fmt.Fprintf(&sb, "  %s %s %s",
+				fmt.Fprintf(&sb, "  %s %s %s %s",
+					s.ProgressDim.Render("·"),
 					s.ProgressRunning.Render(frame),
 					s.ProgressRunning.Render(label),
 					s.ProgressElapsed.Render(elapsed))

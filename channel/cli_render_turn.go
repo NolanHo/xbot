@@ -97,23 +97,24 @@ func (m *cliModel) renderTurnContent(text string, width int) string {
 //
 //	· Shell: cd /home/user/... ✓  · Read ✓
 func (m *cliModel) renderToolTags(tools []protocol.ToolProgress, s *cliStyles) string {
-	var tags []string
+	var lines []string
 	for _, tool := range tools {
 		label := tool.Label
 		if label == "" {
 			label = tool.Name
 		}
+		var tag string
 		switch tool.Status {
 		case "error":
-			tags = append(tags, s.ProgressError.Render("✗ "+label))
+			tag = s.ProgressError.Render("✗ " + label)
 		case "done":
-			tags = append(tags, s.ProgressDone.Render("✓")+" "+s.TextMutedSt.Render(label))
+			tag = s.ProgressDone.Render("✓") + " " + s.TextMutedSt.Render(label)
 		default:
-			tags = append(tags, s.ProgressRunning.Render("● "+label))
+			tag = s.ProgressRunning.Render("● " + label)
 		}
+		lines = append(lines, "  "+s.ProgressDim.Render("·")+" "+tag)
 	}
-	sep := " " + s.ProgressDim.Render("·") + " "
-	return "  " + s.ProgressDim.Render("·") + " " + strings.Join(tags, sep)
+	return strings.Join(lines, "\n")
 }
 
 // renderReasoningBox renders reasoning in an always-expanded box:

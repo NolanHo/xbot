@@ -379,8 +379,12 @@ func (m *cliModel) handleAgentMessage(msg ch.OutboundMsg) {
 				m.messages[completedMsgIdx].thinking = thinking
 			}
 		}
+		// Do NOT call updateViewportContent() here — the live streaming display
+		// already shows all content correctly. Forcing a full rebuild here causes
+		// the entire message block to flicker on turn completion. Just invalidate
+		// the cache so the next tick (100ms) picks up the isPartial=false change
+		// (guide color dimming) incrementally, same strategy as cancel ack.
 		m.rc.valid = false
-		m.updateViewportContent()
 
 		// §11.5 Session reset: clear messages and token usage bar after /new
 		if msg.Metadata != nil && msg.Metadata["session_reset"] == "true" {

@@ -4,7 +4,7 @@ import (
 	"embed"
 	"io/fs"
 	"path"
-	"path/filepath"
+	"strings"
 )
 
 // EmbeddedSkills contains skill templates built into the binary.
@@ -49,12 +49,11 @@ func ListEmbeddedSkillFiles(skillName string) ([]string, error) {
 		if d.IsDir() {
 			return nil
 		}
-		// Convert to path relative to skill root
-		rel, err := filepath.Rel(skillDir, p)
-		if err != nil {
-			return nil // skip on error
-		}
-		files = append(files, filepath.ToSlash(rel))
+		// Convert to path relative to skill root.
+		// embed FS always uses forward slashes (per io/fs spec), so
+		// strings.TrimPrefix is semantically correct (no OS dependency).
+		rel := strings.TrimPrefix(p, skillDir+"/")
+		files = append(files, rel)
 		return nil
 	})
 	return files, err

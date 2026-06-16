@@ -1397,15 +1397,14 @@ func (rs *RemoteSandbox) syncEmbeddedSkillToRunner(ctx context.Context, userID, 
 	}
 	// Recursively walk the embedded skill directory
 	skillDir := path.Join("embed_skills", skillName)
-	fs.WalkDir(EmbeddedSkills, skillDir, func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(EmbeddedSkills, skillDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip on error
 		}
-		rel, err := filepath.Rel(skillDir, p)
-		if err != nil {
-			return nil
-		}
-		dstPath := filepath.Join(dstDir, filepath.ToSlash(rel))
+		// embed FS always uses forward slashes; strings.TrimPrefix is
+		// semantically correct without OS dependency.
+		rel := strings.TrimPrefix(p, skillDir+"/")
+		dstPath := filepath.Join(dstDir, rel)
 		if d.IsDir() {
 			if err := rs.MkdirAll(ctx, dstPath, 0o755, userID); err != nil {
 				log.WithError(err).Warn("syncEmbeddedSkill: mkdir failed")
@@ -1421,6 +1420,9 @@ func (rs *RemoteSandbox) syncEmbeddedSkillToRunner(ctx context.Context, userID, 
 		}
 		return nil
 	})
+	if err != nil {
+		log.WithError(err).Warn("syncEmbeddedSkill: walk failed")
+	}
 }
 
 // syncEmbeddedAgentToRunner syncs a single embedded agent to the runner.

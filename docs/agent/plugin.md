@@ -42,7 +42,7 @@
 - Type-safe Storage: StorageInt/StorageBool/StorageJSON/StorageGetJSON — 避免手动类型转换
 - Event Bus: Subscribe/Publish (需要 bus.plugin + bus.read/bus.write 权限)
 - Error Callback: OnPluginError 注册插件级错误回调 (非 tool 错误)
-- Logger: per-plugin 日志文件 + 全局 logrus 双写，支持 Debugf/Infof/Warnf/Errorf 格式化
+- Logger: per-plugin 日志文件 only（不写主日志，保持主日志简洁），支持 Debugf/Infof/Warnf/Errorf 格式化
 
 ### Plugin States
 - StateDiscovered → StateActive → StateDeactivating → StateInactive
@@ -231,7 +231,7 @@ plugin/plog.go
   └── multiWriter         — dynamic writer list (add/remove at runtime)
 
 plugin/context.go
-  └── pluginLogger        — dual-writes: per-plugin file + global logrus (backward compat)
+  └── pluginLogger        — writes ONLY to per-plugin file (fallback to global logrus if writer unavailable)
 ```
 
 ### Log File Locations
@@ -245,8 +245,14 @@ plugin/context.go
 
 - **Single cleanup goroutine**: `pluginLogManager.cleanupLoop()` runs hourly, scans all
   `~/.xbot/plugins/*/logs/` subdirectories + audit directory. Default maxAge: 7 days.
-- **Dual-write**: `pluginLogger` writes to per-plugin file AND global logrus. Main log
-  file still shows all plugin logs (backward compat). Per-plugin files are for isolation.
+- **File-only write**: `pluginLogger` writes ONLY to the per-plugin log file — it does NOT
+  write to the global logrus logger. This keeps the main xbot log clean: plugin operational
+  logs (tool/hook registration, script execution, widget refresh) are isolated in the plugin's
+  own directory. If the per-plugin writer could not be created (fileOut == nil), it falls back
+  to global logrus so no logs are silently lost.
+- **Script runtime logs isolated**: `script_runtime.go` routes all operational logs (script
+  execution, output, trigger firing, refresh) through `p.logger()` → per-plugin log file.
+  Only startup events ("Script plugin X started") use global `log.Info`.
 - **rotateWriter is standalone**: Implemented in plugin package (not reusing logger.dailyRotateFile)
   to avoid circular dependency (plugin → logger → plugin would be circular).
 - **Logger interface extended**: Added `Debugf/Infof/Warnf/Errorf` formatted methods.

@@ -96,15 +96,15 @@ func (m *cliModel) trimToolSummaryPayload(msg *cliMessage) {
 // wrappedLineCount returns the number of viewport display lines after hard-wrapping.
 // The logic mirrors setViewportContent exactly so that msgLineOffsets (computed via
 func (m *cliModel) appendNewMessagesToCache() {
+	cw := m.chatWidth()
 	var sb strings.Builder
 	sb.WriteString(m.rc.history)
 
 	// Calculate starting line offset for new messages
-	cw := m.chatWidth()
 	runningLines := 0
-	if len(m.msgLineOffsets) > 0 {
-		// Approximate: use the line count of cachedHistory at current width.
-		// This is an estimate but sufficient for msgLineOffsets (used for Ctrl+E folding).
+	if len(m.rc.histLines) > 0 {
+		runningLines = len(m.rc.histLines)
+	} else if len(m.msgLineOffsets) > 0 {
 		runningLines = wrappedLineCount(m.rc.history, cw)
 	}
 
@@ -116,29 +116,55 @@ func (m *cliModel) appendNewMessagesToCache() {
 		msg.rendered = rendered
 		msg.dirty = false
 		msg.renderWidth = cw
-		// Release large fields from tool_summary iterations after rendering.
 		m.trimToolSummaryPayload(msg)
 		sb.WriteString(rendered)
-		runningLines += wrappedLineCount(rendered, cw)
+		// Wrap rendered lines and append to histLines so the tick fast path
+		// can assemble viewport content without setViewportContent's re-wrap.
+		for _, line := range strings.Split(rendered, "\n") {
+			for _, wl := range wrapPreservingGuide(line, cw) {
+				if w := lipgloss.Width(wl); w > m.rc.histMaxW {
+					m.rc.histMaxW = w
+				}
+				m.rc.histLines = append(m.rc.histLines, wl)
+				runningLines++
+			}
+		}
 	}
 
 	m.rc.history = sb.String()
 	m.rc.valid = true
 	m.rc.msgCount = len(m.messages)
 
-	// Invalidate cachedHistoryLines so setViewportContent's slow path
-	// re-wraps and re-caches the lines. Without this, cachedHistoryLines
-	// is stale (missing the new messages) and the tick fast path renders
-	// incomplete history, causing visual duplication or missing content.
-	m.rc.histLines = nil
-	m.rc.wrapRaw = ""
-	m.rc.bumpHistGen() // invalidate allLines cache — histLines cleared
+	// Sync wrap cache so setViewportContent's fast path can reuse histLines
+	// if it is ever called later (e.g. on terminal resize).
+	m.rc.wrapHistory = m.rc.history
+	m.rc.wrapRaw = m.rc.history
+	m.rc.wrapWidth = cw
+	m.rc.bumpHistGen() // invalidate allLines cache — histLines changed
 
-	// Set viewport with new content + rewind block
-	var vp strings.Builder
-	vp.WriteString(m.rc.history)
-	vp.WriteString(m.renderRewindResultBlock())
-	m.setViewportContent(vp.String())
+	// Set viewport lines directly using the same efficient path as the tick
+	// fast path (viewportSetLinesBypassMaxWidth). This avoids the expensive
+	// re-wrap inside setViewportContent while still updating the viewport.
+	// In the streaming flow, the viewport already has the correct content
+	// from updateStreamingOnly, so this is a no-op visually (no flicker).
+	// In non-streaming flows (tests, session restore), this ensures the
+	// viewport is actually populated.
+	rewindBlock := m.renderRewindResultBlock()
+	var rewindLines []string
+	if rewindBlock != "" {
+		rewindLines = wrapDynamicPart(rewindBlock, cw)
+	}
+	totalLines := len(m.rc.histLines) + len(rewindLines)
+	m.rc.allLines = make([]string, totalLines)
+	copy(m.rc.allLines, m.rc.histLines)
+	copy(m.rc.allLines[len(m.rc.histLines):], rewindLines)
+	m.rc.allLinesHistLen = len(m.rc.histLines)
+	m.rc.allLinesGen = m.rc.histGen
+	viewportSetLinesBypassMaxWidth(&m.viewport, m.rc.allLines, m.rc.histMaxW)
+
+	// Prime tick fast-path dedup keys so the next tick skips redundant work.
+	m.rc.lastTickHistLen = len(m.rc.history)
+	m.rc.lastTickRewFP = fnvHash64(rewindBlock)
 }
 
 // fullRebuild 全量重建渲染缓存（慢速路径）

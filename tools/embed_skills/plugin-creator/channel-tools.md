@@ -123,7 +123,7 @@ When someone @mentions the bot on a PR, this plugin:
 2. Declares tools the agent can use to interact with GitHub
 3. Executes tool calls (fetch diff, post review) via GitHub API
 """
-import sys, json, os
+import sys, json, os, uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 GITHUB_TOKEN = ""
@@ -134,7 +134,7 @@ def write_stdout(obj):
 
 def send_inbound(chat_id, content, sender_name):
     write_stdout({
-        "id": f"inbound-{id(content)}",
+        "id": f"inbound-{uuid.uuid4().hex}",
         "method": "send_inbound",
         "params": {
             "channel": "github",

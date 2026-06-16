@@ -148,7 +148,7 @@ Channel names must NOT conflict with built-in channels: `feishu`, `qq`, `napcat`
 
 ```python
 #!/usr/bin/env python3
-import sys, json, threading
+import sys, json, threading, uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 def write_stdout(obj):
@@ -157,7 +157,7 @@ def write_stdout(obj):
 
 def send_inbound(chat_id, content, sender_id="user", sender_name="User"):
     write_stdout({
-        "id": f"plugin-{id(content)}",
+        "id": f"plugin-{uuid.uuid4().hex}",
         "method": "send_inbound",
         "params": {
             "channel": "mychannel",

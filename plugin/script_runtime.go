@@ -108,6 +108,32 @@ func (p *scriptPlugin) Manifest() PluginManifest {
 	return p.manifest
 }
 
+// logger returns the plugin-scoped logger for operational logs. If pctx is
+// not yet initialized (only in tests that bypass Activate), returns a no-op
+// logger so calls are safe. In production pctx is always set in Activate
+// before any runtime method can be called.
+func (p *scriptPlugin) logger() Logger {
+	if p.pctx != nil {
+		return p.pctx.Logger()
+	}
+	return noopLogger{}
+}
+
+// noopLogger silently discards all log calls. Safe fallback when the plugin
+// context is not initialized (tests bypassing Activate).
+type noopLogger struct{}
+
+func (noopLogger) Debug(string, ...Field)         {}
+func (noopLogger) Info(string, ...Field)          {}
+func (noopLogger) Warn(string, ...Field)          {}
+func (noopLogger) Error(string, ...Field)         {}
+func (noopLogger) Debugf(string, ...any)          {}
+func (noopLogger) Infof(string, ...any)           {}
+func (noopLogger) Warnf(string, ...any)           {}
+func (noopLogger) Errorf(string, ...any)          {}
+func (n noopLogger) WithField(string, any) Logger { return n }
+func (n noopLogger) WithFields(...Field) Logger   { return n }
+
 // GetHintContent returns the last hint output from a synchronous trigger.
 // Used by the engine to include markdown hints in ToolProgress.
 func (p *scriptPlugin) GetHintContent() string {
@@ -147,8 +173,9 @@ func (p *scriptPlugin) Activate(ctx PluginContext) error {
 					interval = d
 				}
 			} else if err != nil {
-				log.Info(fmt.Sprintf("Script plugin %s: invalid refreshInterval %q for widget %s: %v",
-					p.manifest.ID, ui.RefreshInterval, ui.ID, err))
+				// Config detail — route to plugin log only, not main log.
+				ctx.Logger().Warnf("invalid refreshInterval %q for widget %s: %v",
+					ui.RefreshInterval, ui.ID, err)
 			}
 		}
 	}
@@ -158,7 +185,8 @@ func (p *scriptPlugin) Activate(ctx PluginContext) error {
 	for _, ui := range p.manifest.Contributes.UI {
 		for _, trigger := range ui.Triggers {
 			if err := p.subscribeTrigger(ctx, trigger); err != nil {
-				log.Info(fmt.Sprintf("Script plugin %s: trigger %q subscribe failed: %v", p.manifest.ID, trigger, err))
+				// Config detail — route to plugin log only, not main log.
+				ctx.Logger().Warnf("trigger %q subscribe failed: %v", trigger, err)
 			}
 		}
 	}
@@ -219,7 +247,7 @@ func (p *scriptPlugin) renderForWidget(widgetID string, width int, fallbackWorkD
 			}
 			p.outputs[wd][widgetID] = output
 			p.outputMu.Unlock()
-			log.Debugf("[plugin:%s] output[%s][%s]=%q", p.manifest.ID, wd, widgetID, output)
+			p.logger().Debugf("output[%s][%s]=%q", wd, widgetID, output)
 			text = output
 		}
 	}
@@ -340,7 +368,7 @@ func (p *scriptPlugin) runAndUpdate() {
 	for wd := range workDirSet {
 		workDirs = append(workDirs, wd)
 	}
-	log.Debugf("[plugin:%s] runAndUpdate: workDirs=%v widgetIDs=%v", p.manifest.ID, workDirs, p.widgetIDs)
+	p.logger().Debugf("runAndUpdate: workDirs=%v widgetIDs=%v", workDirs, p.widgetIDs)
 
 	// Snapshot current outputs for change detection (before eviction + re-run).
 	// Deep-copy the two-level map: workDir → widgetID → output.
@@ -382,7 +410,7 @@ func (p *scriptPlugin) runAndUpdate() {
 	for _, wd := range workDirs {
 		output, err := p.runScript(wd, primaryWidgetID)
 		if err != nil {
-			log.Info(fmt.Sprintf("Script plugin %s execution failed for %s: %v", p.manifest.ID, wd, err))
+			p.logger().Errorf("script execution failed for %s: %v", wd, err)
 			continue
 		}
 		p.outputMu.Lock()
@@ -458,7 +486,7 @@ func (p *scriptPlugin) subscribeTrigger(ctx PluginContext, trigger string) error
 			p.lastHookMu.Lock()
 			p.lastHook = hp
 			p.lastHookMu.Unlock()
-			log.Debugf("[plugin:%s] trigger fired: tool=%s", p.manifest.ID, hp.ToolName)
+			p.logger().Debugf("trigger fired: tool=%s", hp.ToolName)
 		}
 
 		if len(p.syncWidgets) > 0 {
@@ -471,7 +499,7 @@ func (p *scriptPlugin) subscribeTrigger(ctx PluginContext, trigger string) error
 			// Use the first sync widget ID as primary for the hint content.
 			primaryWidgetID := p.syncWidgets[0]
 			output, err := p.runScript(wd, primaryWidgetID)
-			log.Debugf("[plugin:%s] hint sync: wd=%s widget=%s len=%d", p.manifest.ID, wd, primaryWidgetID, len(output))
+			p.logger().Debugf("hint sync: wd=%s widget=%s len=%d", wd, primaryWidgetID, len(output))
 			if err == nil && output != "" {
 				p.outputMu.Lock()
 				if p.outputs == nil {
@@ -649,10 +677,10 @@ func (p *scriptPlugin) runScript(workDir, widgetID string) (string, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
-		log.Infof("[plugin:%s] runScript(%s) failed: %v", p.manifest.ID, workDir, err)
+		p.logger().Errorf("runScript(%s) failed: %v", workDir, err)
 		return "", fmt.Errorf("script %q: %w", entry, err)
 	}
-	log.Debugf("[plugin:%s] runScript(%s) output: %s", p.manifest.ID, workDir, strings.TrimSpace(string(out)))
+	p.logger().Debugf("runScript(%s) output: %s", workDir, strings.TrimSpace(string(out)))
 
 	trimmed := strings.TrimSpace(string(out))
 	// For "md|" and "diff|" prefixes, preserve full multi-line output

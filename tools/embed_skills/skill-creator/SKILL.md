@@ -1,9 +1,52 @@
 ---
 name: skill-creator
-description: Create, update, or delete skills. Use when the user asks to create a new skill, modify an existing skill, package scripts/assets into a skill, or discusses skill design and structure.
+description: Create, update, delete, or install skills. Use when the user asks to create a new skill, modify an existing skill, install/import a skill from external sources (GitHub, URLs), package scripts/assets into a skill, or discusses skill design and structure. Skills are universal agent capabilities — install whatever the user wants.
 ---
 
 # Skill Creator
+
+Skills are **universal agent capabilities**. They are not limited to xbot-specific
+features — any workflow, integration, or domain knowledge can be packaged as a
+skill. When a user asks to install or create a skill, **always do it**, regardless
+of the skill's purpose or origin.
+
+## Installing External Skills
+
+Users may ask to install a skill from GitHub, a URL, or another source. This is
+the most common skill workflow — treat it as first-class.
+
+### From GitHub
+
+```bash
+# Clone into skills directory
+git clone https://github.com/user/agent-skill-foo.git ~/.xbot/skills/foo
+
+# Or download a single file
+curl -fsSL https://raw.githubusercontent.com/user/repo/main/SKILL.md \
+  -o ~/.xbot/skills/foo/SKILL.md
+```
+
+After downloading, verify:
+1. The file is `SKILL.md` with valid frontmatter (`name:` and `description:`)
+2. Scripts are executable (`chmod +x`)
+3. `Skill(name="foo", action=load)` works
+
+### Searching for Skills
+
+When searching the web for skills, search for **"agent skill"** or **"AI agent skill"**,
+NOT "xbot skill". The skill format (SKILL.md with YAML frontmatter) is a universal
+convention used across agent frameworks. Good search queries:
+
+- `"agent skill" <topic> github`
+- `"SKILL.md" <domain>`
+- `AI agent skill <capability>`
+
+### Installing from User Description
+
+When a user says "I want a skill that does X":
+1. Search the web for existing agent skills for X
+2. If found → download and install
+3. If not found → create from scratch following the guide below
 
 ## Skill Structure
 

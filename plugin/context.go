@@ -755,20 +755,22 @@ func (d *deniedStorage) Clear() error {
 }
 
 // ---------------------------------------------------------------------------
-// Default Logger — per-plugin log file + global logrus fallback
+// Default Logger — per-plugin log file only (keeps main log clean)
 // ---------------------------------------------------------------------------
 
-// pluginLogger writes structured logs to a per-plugin log file (daily-rotating)
-// AND also writes to the global logrus logger for backward compatibility.
-// This ensures plugin logs are both isolated (per-plugin file) and aggregated
-// (in the main xbot log file).
+// pluginLogger writes structured logs ONLY to a per-plugin log file
+// (daily-rotating, stored under ~/.xbot/plugins/<id>/logs/). This keeps the
+// main xbot log clean — plugin operational logs (tool/hook registration,
+// script execution, widget refresh, etc.) are isolated in the plugin's own
+// directory. If the per-plugin writer could not be created (fileOut == nil),
+// it falls back to the global logrus logger so that no logs are silently lost.
 type pluginLogger struct {
 	id      string
 	fileOut io.Writer // per-plugin rotateWriter (may be nil if creation failed)
 }
 
-// newPluginLogger creates a plugin logger that writes to both the per-plugin
-// log file and the global logrus logger.
+// newPluginLogger creates a plugin logger that writes to the per-plugin log
+// file only.
 func newPluginLogger(pluginID string, logMgr *pluginLogManager) *pluginLogger {
 	pl := &pluginLogger{id: pluginID}
 	if logMgr != nil {
@@ -792,24 +794,41 @@ func (l *pluginLogger) writeToFile(level, msg string, fields []Field) {
 	l.fileOut.Write([]byte(line)) // ignore error — logging must not block
 }
 
+// emit writes to the per-plugin file. If no file writer is available it falls
+// back to the global logrus logger so logs are never silently lost.
+func (l *pluginLogger) emit(level, msg string, fields []Field) {
+	if l.fileOut != nil {
+		l.writeToFile(level, msg, fields)
+		return
+	}
+	// Fallback: per-plugin writer unavailable — use global logrus.
+	fieldsMap := l.buildLogrusFields(fields)
+	switch level {
+	case "DEBUG":
+		log.WithFields(fieldsMap).Debug(msg)
+	case "INFO":
+		log.WithFields(fieldsMap).Info(msg)
+	case "WARN":
+		log.WithFields(fieldsMap).Warn(msg)
+	case "ERROR":
+		log.WithFields(fieldsMap).Error(msg)
+	}
+}
+
 func (l *pluginLogger) Debug(msg string, fields ...Field) {
-	log.WithFields(l.buildLogrusFields(fields)).Debug(msg)
-	l.writeToFile("DEBUG", msg, fields)
+	l.emit("DEBUG", msg, fields)
 }
 
 func (l *pluginLogger) Info(msg string, fields ...Field) {
-	log.WithFields(l.buildLogrusFields(fields)).Info(msg)
-	l.writeToFile("INFO", msg, fields)
+	l.emit("INFO", msg, fields)
 }
 
 func (l *pluginLogger) Warn(msg string, fields ...Field) {
-	log.WithFields(l.buildLogrusFields(fields)).Warn(msg)
-	l.writeToFile("WARN", msg, fields)
+	l.emit("WARN", msg, fields)
 }
 
 func (l *pluginLogger) Error(msg string, fields ...Field) {
-	log.WithFields(l.buildLogrusFields(fields)).Error(msg)
-	l.writeToFile("ERROR", msg, fields)
+	l.emit("ERROR", msg, fields)
 }
 
 func (l *pluginLogger) Debugf(format string, args ...any) {

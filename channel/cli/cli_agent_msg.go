@@ -379,8 +379,12 @@ func (m *cliModel) handleAgentMessage(msg ch.OutboundMsg) {
 				m.messages[completedMsgIdx].thinking = thinking
 			}
 		}
+		// Do NOT call updateViewportContent() here — the live streaming display
+		// already shows all content correctly. Forcing a full rebuild here causes
+		// the entire message block to flicker on turn completion. Just invalidate
+		// the cache so the next tick (100ms) picks up the isPartial=false change
+		// (guide color dimming) incrementally, same strategy as cancel ack.
 		m.rc.valid = false
-		m.updateViewportContent()
 
 		// §11.5 Session reset: clear messages and token usage bar after /new
 		if msg.Metadata != nil && msg.Metadata["session_reset"] == "true" {
@@ -605,9 +609,22 @@ func (m *cliModel) cancelledTurnIterations() []cliIterationSnapshot {
 	if reasoning == "" {
 		reasoning = m.lastReasoning
 	}
+	// Capture streamed reasoning as fallback (LLM was still streaming when
+	// Ctrl+C interrupted). m.progressState.current is the live progress the
+	// user was watching — ReasoningStreamContent is what they saw on screen.
+	if reasoning == "" && m.progressState.current.ReasoningStreamContent != "" {
+		reasoning = m.progressState.current.ReasoningStreamContent
+	}
+	// Capture streamed content as fallback when structured Thinking is empty.
+	// This preserves partial LLM output that was streamed but not yet finalized
+	// by recordAssistantMsg when Ctrl+C interrupted.
+	content := m.progressState.current.Thinking
+	if content == "" && m.progressState.current.StreamContent != "" {
+		content = m.progressState.current.StreamContent
+	}
 	snap := cliIterationSnapshot{
 		Iteration:   iterNum,
-		Thinking:    m.progressState.current.Thinking,
+		Thinking:    content,
 		Reasoning:   reasoning,
 		Tools:       tools,
 		ElapsedWall: time.Since(m.progressState.iterStart).Milliseconds(),

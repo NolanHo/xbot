@@ -1388,32 +1388,40 @@ func (rs *RemoteSandbox) syncFileToRunner(ctx context.Context, userID, srcPath, 
 
 // syncEmbeddedSkillToRunner syncs a single embedded skill to the runner.
 // Skips if the skill directory already exists on the runner.
+// Recursively syncs subdirectories (supports multi-file embed skills).
 func (rs *RemoteSandbox) syncEmbeddedSkillToRunner(ctx context.Context, userID, workspace, skillName, dstSkillsDir string) {
 	dstDir := filepath.Join(dstSkillsDir, skillName)
 	// Check if already exists on runner
 	if _, err := rs.Stat(ctx, dstDir, userID); err == nil {
 		return // already exists
 	}
-	entries, err := fs.ReadDir(EmbeddedSkills, path.Join("embed_skills", skillName))
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		data, err := ReadEmbeddedSkillFile(skillName, e.Name())
+	// Recursively walk the embedded skill directory
+	skillDir := path.Join("embed_skills", skillName)
+	err := fs.WalkDir(EmbeddedSkills, skillDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			continue
+			return nil // skip on error
 		}
-		dstPath := filepath.Join(dstDir, e.Name())
-		if err := rs.MkdirAll(ctx, dstDir, 0o755, userID); err != nil {
-			log.WithError(err).Warn("syncEmbeddedSkill: mkdir failed")
-			return
+		// embed FS always uses forward slashes; strings.TrimPrefix is
+		// semantically correct without OS dependency.
+		rel := strings.TrimPrefix(p, skillDir+"/")
+		dstPath := filepath.Join(dstDir, rel)
+		if d.IsDir() {
+			if err := rs.MkdirAll(ctx, dstPath, 0o755, userID); err != nil {
+				log.WithError(err).Warn("syncEmbeddedSkill: mkdir failed")
+			}
+			return nil
+		}
+		data, err := EmbeddedSkills.ReadFile(p)
+		if err != nil {
+			return nil
 		}
 		if err := rs.WriteFile(ctx, dstPath, data, 0o644, userID); err != nil {
 			log.WithError(err).Warn("syncEmbeddedSkill: write failed")
 		}
+		return nil
+	})
+	if err != nil {
+		log.WithError(err).Warn("syncEmbeddedSkill: walk failed")
 	}
 }
 

@@ -140,8 +140,8 @@ func (m *cliModel) buildPaletteCommands() []paletteCommand {
 		Category: PaletteCategorySystem, ActionKind: paletteActionOpenPanel, ActionData: "danger",
 	})
 	cmds = append(cmds, paletteCommand{
-		ID: "reload_plugins", Title: "Reload Plugins", Description: "refresh all plugin widgets",
-		Category: PaletteCategorySystem, ActionKind: paletteActionSendText, ActionData: "/plugin reload",
+		ID: "reload_plugins", Title: "Reload All Plugins", Description: "reload all plugins",
+		Category: PaletteCategorySystem, ActionKind: paletteActionSendText, ActionData: "/plugin reload-all",
 	})
 	cmds = append(cmds, paletteCommand{
 		ID: "install_plugin", Title: "Install Plugin", Description: "install a plugin from URL or path",

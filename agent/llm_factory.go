@@ -414,7 +414,7 @@ func (f *LLMFactory) createEntryFromSub(sub *sqlite.LLMSubscription, model strin
 	}
 	cfg := &sqlite.UserLLMConfig{
 		Provider: sub.Provider, BaseURL: sub.BaseURL, APIKey: sub.APIKey,
-		Model: model, MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode,
+		Model: model, MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode, APIType: sub.APIType,
 	}
 	client, _ := f.createClient(cfg)
 	if client == nil {
@@ -764,7 +764,7 @@ func (f *LLMFactory) createClient(cfg *sqlite.UserLLMConfig) (llm.LLM, string) {
 	default:
 		client = llm.NewOpenAILLM(llm.OpenAIConfig{
 			BaseURL: cfg.BaseURL, APIKey: cfg.APIKey,
-			DefaultModel: model, MaxTokens: cfg.MaxOutputTokens,
+			DefaultModel: model, MaxTokens: cfg.MaxOutputTokens, APIType: cfg.APIType,
 			OnModelsLoaded: cfg.OnModelsLoaded, SubscriptionID: cfg.ID,
 		})
 	}
@@ -793,7 +793,7 @@ func (f *LLMFactory) createClientFromSub(sub *sqlite.LLMSubscription, model stri
 	f.mu.RUnlock()
 	cfg := &sqlite.UserLLMConfig{
 		Provider: sub.Provider, BaseURL: sub.BaseURL, APIKey: sub.APIKey,
-		Model: model, MaxOutputTokens: maxTokens,
+		Model: model, MaxOutputTokens: maxTokens, APIType: sub.APIType,
 	}
 	client, _ := f.createClient(cfg)
 	return client

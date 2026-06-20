@@ -123,6 +123,7 @@ type Subscription struct {
 	MaxOutputTokens int                       `json:"max_output_tokens,omitempty"`
 	MaxContext      int                       `json:"max_context,omitempty"` // subscription-level max context (0 = use default)
 	ThinkingMode    string                    `json:"thinking_mode,omitempty"`
+	APIType         string                    `json:"api_type,omitempty"` // "chat_completions" (default) | "responses"
 	PerModelConfigs map[string]PerModelConfig `json:"per_model_configs,omitempty"`
 	Active          bool                      `json:"active"`
 }

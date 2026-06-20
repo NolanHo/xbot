@@ -162,6 +162,13 @@ func (db *DB) migrateSchema(from int) error {
 		}
 	}
 
+	// v36: add api_type column to user_llm_subscriptions
+	if from < 36 {
+		if err := migrateV35ToV36(db.Conn()); err != nil {
+			return fmt.Errorf("migrate to v36: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -1269,5 +1276,23 @@ func migrateV34ToV35(db *DB) error {
 		return fmt.Errorf("update schema version: %w", err)
 	}
 	log.Info("Database migrated to v35: added subscription_models table")
+	return nil
+}
+
+// migrateV35ToV36 adds api_type column to user_llm_subscriptions.
+// This column stores the API endpoint type: "" (default=chat_completions) or "responses".
+func migrateV35ToV36(conn *sql.DB) error {
+	var count int
+	err := conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('user_llm_subscriptions') WHERE name = 'api_type'").Scan(&count)
+	if err == nil && count == 0 {
+		_, err = conn.Exec("ALTER TABLE user_llm_subscriptions ADD COLUMN api_type TEXT DEFAULT ''")
+		if err != nil {
+			return fmt.Errorf("migrate v35->v36 add api_type: %w", err)
+		}
+	}
+	if _, err := conn.Exec("UPDATE schema_version SET version = 36"); err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+	log.Info("Database migrated to v36: added api_type column to user_llm_subscriptions")
 	return nil
 }

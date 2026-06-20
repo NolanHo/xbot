@@ -28,6 +28,7 @@ type LLMSubscription struct {
 	MaxContext      int                       // max context token limit (0 = use default)
 	MaxOutputTokens int                       // max output token limit (0 = use default 8192)
 	ThinkingMode    string                    // thinking mode: "" (auto), "enabled", "disabled"
+	APIType         string                    // API type: "" (default=chat_completions), "responses"
 	IsDefault       bool                      // whether this is the active subscription
 	CachedModels    []string                  // cached model list from API (JSON in DB)
 	PerModelConfigs map[string]PerModelConfig // per-model token overrides (JSON in DB)
@@ -68,7 +69,7 @@ func scanSubscription(scanner interface{ Scan(...any) error }, sub *LLMSubscript
 	var cachedModelsJSON string
 	var perModelConfigsJSON string
 	err := scanner.Scan(&sub.ID, &sub.SenderID, &sub.Name, &sub.Provider, &sub.BaseURL,
-		&encryptedAPIKey, &sub.Model, &isDefault, &sub.MaxContext, &sub.MaxOutputTokens, &sub.ThinkingMode,
+		&encryptedAPIKey, &sub.Model, &isDefault, &sub.MaxContext, &sub.MaxOutputTokens, &sub.ThinkingMode, &sub.APIType,
 		&cachedModelsJSON, &perModelConfigsJSON, &createdAt, &updatedAt)
 	if err != nil {
 		return "", 0, err
@@ -102,7 +103,7 @@ func decryptAPIKey(sub *LLMSubscription, encryptedAPIKey string) {
 func (s *LLMSubscriptionService) ListAll() ([]*LLMSubscription, error) {
 	conn := s.db.Conn()
 	rows, err := conn.Query(`
-		SELECT id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, cached_models, per_model_configs, created_at, updated_at
+		SELECT id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, api_type, cached_models, per_model_configs, created_at, updated_at
 			FROM user_llm_subscriptions
 			ORDER BY created_at ASC
 		`)
@@ -128,7 +129,7 @@ func (s *LLMSubscriptionService) ListAll() ([]*LLMSubscription, error) {
 func (s *LLMSubscriptionService) List(senderID string) ([]*LLMSubscription, error) {
 	conn := s.db.Conn()
 	rows, err := conn.Query(`
-			SELECT id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, cached_models, per_model_configs, created_at, updated_at
+			SELECT id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, api_type, cached_models, per_model_configs, created_at, updated_at
 				FROM user_llm_subscriptions
 				WHERE sender_id = ?
 				ORDER BY created_at ASC
@@ -155,7 +156,7 @@ func (s *LLMSubscriptionService) List(senderID string) ([]*LLMSubscription, erro
 func (s *LLMSubscriptionService) GetDefault(senderID string) (*LLMSubscription, error) {
 	conn := s.db.Conn()
 	row := conn.QueryRow(`
-		SELECT id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, cached_models, per_model_configs, created_at, updated_at
+		SELECT id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, api_type, cached_models, per_model_configs, created_at, updated_at
 			FROM user_llm_subscriptions
 			WHERE sender_id = ? AND is_default = 1
 			LIMIT 1
@@ -177,7 +178,7 @@ func (s *LLMSubscriptionService) GetDefault(senderID string) (*LLMSubscription, 
 func (s *LLMSubscriptionService) Get(id string) (*LLMSubscription, error) {
 	conn := s.db.Conn()
 	row := conn.QueryRow(`
-		SELECT id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, cached_models, per_model_configs, created_at, updated_at
+		SELECT id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, api_type, cached_models, per_model_configs, created_at, updated_at
 			FROM user_llm_subscriptions
 			WHERE id = ?
 		`, id)
@@ -237,9 +238,9 @@ func (s *LLMSubscriptionService) Add(sub *LLMSubscription) error {
 		}
 	}
 	_, err = tx.Exec(`
-		INSERT INTO user_llm_subscriptions (id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, per_model_configs, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, sub.ID, sub.SenderID, sub.Name, sub.Provider, sub.BaseURL, encryptedAPIKey, sub.Model, isDefault, sub.MaxContext, sub.MaxOutputTokens, sub.ThinkingMode, perModelConfigsJSON, now, now)
+		INSERT INTO user_llm_subscriptions (id, sender_id, name, provider, base_url, api_key, model, is_default, max_context, max_output_tokens, thinking_mode, api_type, per_model_configs, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, sub.ID, sub.SenderID, sub.Name, sub.Provider, sub.BaseURL, encryptedAPIKey, sub.Model, isDefault, sub.MaxContext, sub.MaxOutputTokens, sub.ThinkingMode, sub.APIType, perModelConfigsJSON, now, now)
 	if err != nil {
 		return fmt.Errorf("insert subscription: %w", err)
 	}
@@ -316,11 +317,11 @@ func (s *LLMSubscriptionService) Update(sub *LLMSubscription) error {
 	_, err = tx.Exec(`
 		UPDATE user_llm_subscriptions SET
 		name = ?, provider = ?, base_url = ?, api_key = ?, model = ?,
-		max_context = ?, max_output_tokens = ?, thinking_mode = ?,
+		max_context = ?, max_output_tokens = ?, thinking_mode = ?, api_type = ?,
 		per_model_configs = ?,
 		is_default = ?, updated_at = ?
 		WHERE id = ? AND sender_id = ?
-	`, sub.Name, sub.Provider, sub.BaseURL, encryptedAPIKey, sub.Model, sub.MaxContext, sub.MaxOutputTokens, sub.ThinkingMode, perModelConfigsJSON, isDefault, now, sub.ID, sub.SenderID)
+	`, sub.Name, sub.Provider, sub.BaseURL, encryptedAPIKey, sub.Model, sub.MaxContext, sub.MaxOutputTokens, sub.ThinkingMode, sub.APIType, perModelConfigsJSON, isDefault, now, sub.ID, sub.SenderID)
 	if err != nil {
 		return fmt.Errorf("update subscription: %w", err)
 	}

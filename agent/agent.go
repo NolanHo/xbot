@@ -1670,7 +1670,20 @@ func (a *Agent) Run(ctx context.Context) error {
 					select {
 					case ch.(chan struct{}) <- struct{}{}:
 						log.Info("Cancel signal sent to processing goroutine")
-						_ = a.sendMessage(msg.Channel, msg.ChatID, "已取消请求 ✋", cancelMeta)
+						// 对正在输出的消息添加 ❌ 表情回复
+						if existingID, ok := a.sessionMsgIDs.Load(qualifyChatID(msg.Channel, msg.ChatID)); ok {
+							if id, ok := existingID.(string); ok {
+								_, _ = a.directSend(channel.OutboundMsg{
+									Channel: msg.Channel,
+									ChatID:  msg.ChatID,
+									Metadata: map[string]string{
+										"add_reaction":        "CrossMark",
+										"reaction_message_id": id,
+									},
+								})
+							}
+						}
+						_ = a.sendMessage(msg.Channel, msg.ChatID, "⚠️ 已取消请求", cancelMeta)
 					default:
 						// cancel 信号已发过
 						log.WithField("cancel_key", cancelKey).Warn("Cancel signal already sent (buffer full)")
@@ -1679,7 +1692,7 @@ func (a *Agent) Run(ctx context.Context) error {
 					// cancelCh 尚未注册（消息还在排队或等信号量），记录 pending
 					a.pendingCancel.Store(cancelKey, true)
 					log.WithField("cancel_key", cancelKey).Info("Cancel pending: request not yet active, will cancel when it starts")
-					_ = a.sendMessage(msg.Channel, msg.ChatID, "请求已排队等待取消 ⏳", cancelMeta)
+					_ = a.sendMessage(msg.Channel, msg.ChatID, "⏳ 请求已排队等待取消", cancelMeta)
 				}
 				continue
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,7 +32,6 @@ import (
 func toResponsesParams(model string, messages []ChatMessage, thinkingMode string, maxTokens int) responses.ResponseNewParams {
 	var instructions []string
 	inputItems := make([]responses.ResponseInputItemUnionParam, 0, len(messages))
-	reasoningHistoryObserved := hasAssistantReasoningHistory(messages)
 
 	for _, msg := range messages {
 		switch msg.Role {
@@ -132,10 +132,6 @@ func toResponsesParams(model string, messages []ChatMessage, thinkingMode string
 		}
 	}
 
-	// Suppress unused variable warning for reasoningHistoryObserved — it's used
-	// to decide whether to include reasoning items in context (already handled above).
-	_ = reasoningHistoryObserved
-
 	p := responses.ResponseNewParams{
 		Model: openai.ResponsesModel(model),
 		Input: responses.ResponseNewParamsInputUnion{
@@ -170,6 +166,11 @@ func toResponsesTools(tools []ToolDefinition) []responses.ToolUnionParam {
 				required = append(required, p.Name)
 			}
 		}
+		// Sort required array for deterministic JSON serialization.
+		// MCP tool parameters come from map iteration (non-deterministic order),
+		// which produces different "required" arrays across requests,
+		// breaking API-side prefix caching.
+		slices.Sort(required)
 		result = append(result, responses.ToolUnionParam{
 			OfFunction: &responses.FunctionToolParam{
 				Name:        tool.Name(),
@@ -264,7 +265,7 @@ func (o *OpenAILLM) generateResponses(ctx context.Context, model string, message
 		"stream":        false,
 		"msg_count":     len(messages),
 		"tools_count":   len(tools),
-		"thinking_mode":  thinkingMode,
+		"thinking_mode": thinkingMode,
 		"max_tokens":    o.maxTokens,
 	}).Info("[LLM] Starting non-stream request (Responses API)")
 
@@ -290,10 +291,11 @@ func (o *OpenAILLM) generateResponses(ctx context.Context, model string, message
 		params.Tools = toResponsesTools(tools)
 	}
 
-	// Build thinking options (for non-reasoning custom params like temperature overrides)
-	opts := o.buildThinkingOptions(thinkingMode)
+	// Note: buildThinkingOptions is NOT called here — it injects Chat
+	// Completions-specific "thinking" params that are invalid for the
+	// Responses API. Reasoning is handled above via params.Reasoning.
 
-	resp, err := o.client.Responses.New(ctx, params, opts...)
+	resp, err := o.client.Responses.New(ctx, params)
 	if err != nil {
 		log.Ctx(ctx).WithFields(log.Fields{
 			"provider": "openai-responses",
@@ -358,7 +360,7 @@ func (o *OpenAILLM) generateResponses(ctx context.Context, model string, message
 	fields := log.Fields{
 		"provider":          "openai-responses",
 		"duration":          time.Since(startTime).String(),
-		"output_count":     len(resp.Output),
+		"output_count":      len(resp.Output),
 		"content_len":       len(result.Content),
 		"reasoning_len":     len(result.ReasoningContent),
 		"tool_calls":        len(result.ToolCalls),
@@ -439,10 +441,11 @@ func (o *OpenAILLM) generateStreamResponses(ctx context.Context, model string, m
 		params.Tools = toResponsesTools(tools)
 	}
 
-	// Build thinking options
-	opts := o.buildThinkingOptions(thinkingMode)
+	// Note: buildThinkingOptions is NOT called here — it injects Chat
+	// Completions-specific "thinking" params that are invalid for the
+	// Responses API. Reasoning is handled above via params.Reasoning.
 
-	stream := o.client.Responses.NewStreaming(ctx, params, opts...)
+	stream := o.client.Responses.NewStreaming(ctx, params)
 	if err := stream.Err(); err != nil {
 		log.Ctx(ctx).WithFields(log.Fields{
 			"provider": "openai-responses",

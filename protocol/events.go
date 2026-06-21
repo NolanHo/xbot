@@ -130,8 +130,9 @@ type Subscription struct {
 
 // PerModelConfig stores per-model token overrides within a subscription.
 type PerModelConfig struct {
-	MaxOutputTokens int `json:"max_output_tokens,omitempty"` // 0 = use subscription default
-	MaxContext      int `json:"max_context,omitempty"`       // 0 = use subscription default
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"` // 0 = use subscription default
+	MaxContext      int    `json:"max_context,omitempty"`       // 0 = use subscription default
+	APIType         string `json:"api_type,omitempty"`          // "" = use subscription default
 }
 
 type OutboundEvent struct {

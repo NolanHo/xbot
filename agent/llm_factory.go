@@ -412,9 +412,14 @@ func (f *LLMFactory) createEntryFromSub(sub *sqlite.LLMSubscription, model strin
 	if model == "" {
 		model = f.defaultModel
 	}
+	// Resolve per-model APIType override, fallback to subscription-level
+	apiType := sub.APIType
+	if pm := sub.GetPerModelAPIType(model); pm != "" {
+		apiType = pm
+	}
 	cfg := &sqlite.UserLLMConfig{
 		Provider: sub.Provider, BaseURL: sub.BaseURL, APIKey: sub.APIKey,
-		Model: model, MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode, APIType: sub.APIType,
+		Model: model, MaxOutputTokens: sub.MaxOutputTokens, ThinkingMode: sub.ThinkingMode, APIType: apiType,
 	}
 	client, _ := f.createClient(cfg)
 	if client == nil {
@@ -791,9 +796,14 @@ func (f *LLMFactory) createClientFromSub(sub *sqlite.LLMSubscription, model stri
 		maxTokens = f.globalMaxTokens
 	}
 	f.mu.RUnlock()
+	// Resolve per-model APIType override, fallback to subscription-level
+	apiType := sub.APIType
+	if pm := sub.GetPerModelAPIType(model); pm != "" {
+		apiType = pm
+	}
 	cfg := &sqlite.UserLLMConfig{
 		Provider: sub.Provider, BaseURL: sub.BaseURL, APIKey: sub.APIKey,
-		Model: model, MaxOutputTokens: maxTokens, APIType: sub.APIType,
+		Model: model, MaxOutputTokens: maxTokens, APIType: apiType,
 	}
 	client, _ := f.createClient(cfg)
 	return client

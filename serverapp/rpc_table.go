@@ -530,6 +530,8 @@ func registerSubscriptionHandlers(t RPCTable, h *RPCContext) {
 		if err := svc.Update(existing); err != nil {
 			return err
 		}
+		// Also write to subscription_models table (authoritative source for v35+)
+		svc.UpsertModel(existing.ID, p.Model, p.Config.MaxContext, p.Config.MaxOutputTokens, "", p.Config.APIType)
 		// Invalidate ALL cached entries for this sender (user-level + per-session).
 		// Must use Invalidate() not InvalidateSender() because per-session entries
 		// (senderID:chatID keys) hold a cached *LLMSubscription pointer with stale
@@ -1247,6 +1249,7 @@ func mergeSubscriptionModels(svc *sqlite.LLMSubscriptionService, sub *sqlite.LLM
 		sub.PerModelConfigs[m.Model] = sqlite.PerModelConfig{
 			MaxContext:      m.MaxContext,
 			MaxOutputTokens: m.MaxOutputTokens,
+			APIType:         m.APIType,
 		}
 	}
 }

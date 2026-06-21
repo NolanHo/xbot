@@ -169,6 +169,13 @@ func (db *DB) migrateSchema(from int) error {
 		}
 	}
 
+	// v37: add api_type column to subscription_models table
+	if from < 37 {
+		if err := migrateV36ToV37(db.Conn()); err != nil {
+			return fmt.Errorf("migrate to v37: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -1294,5 +1301,24 @@ func migrateV35ToV36(conn *sql.DB) error {
 		return fmt.Errorf("update schema version: %w", err)
 	}
 	log.Info("Database migrated to v36: added api_type column to user_llm_subscriptions")
+	return nil
+}
+
+// migrateV36ToV37 adds api_type column to subscription_models table.
+// This enables per-model API type overrides (e.g. gpt-4o uses chat_completions
+// while o3 uses responses API within the same subscription).
+func migrateV36ToV37(conn *sql.DB) error {
+	var count int
+	err := conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('subscription_models') WHERE name = 'api_type'").Scan(&count)
+	if err == nil && count == 0 {
+		_, err = conn.Exec("ALTER TABLE subscription_models ADD COLUMN api_type TEXT NOT NULL DEFAULT ''")
+		if err != nil {
+			return fmt.Errorf("migrate v36->v37 add api_type: %w", err)
+		}
+	}
+	if _, err := conn.Exec("UPDATE schema_version SET version = 37"); err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+	log.Info("Database migrated to v37: added api_type column to subscription_models")
 	return nil
 }

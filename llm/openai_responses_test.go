@@ -224,8 +224,8 @@ func TestToResponsesParams_AssistantWithReasoningContent(t *testing.T) {
 	if r == nil {
 		t.Fatal("expected OfReasoning to be set for reasoning_content")
 	}
-	if r.ID != "rs_0" {
-		t.Errorf("reasoning ID = %q, want %q", r.ID, "rs_0")
+	if r.ID != "rs_x_0" {
+		t.Errorf("reasoning ID = %q, want %q", r.ID, "rs_x_0")
 	}
 	if len(r.Summary) != 1 {
 		t.Fatalf("expected 1 summary entry, got %d", len(r.Summary))
@@ -489,8 +489,8 @@ func TestResponsesStatusToFinishReason(t *testing.T) {
 		{"completed with tool calls", responses.ResponseStatusCompleted, true, FinishReasonToolCalls},
 		{"incomplete", responses.ResponseStatusIncomplete, false, FinishReasonLength},
 		{"incomplete with tool calls still length", responses.ResponseStatusIncomplete, true, FinishReasonLength},
-		{"failed", responses.ResponseStatusFailed, false, FinishReasonStop},
-		{"cancelled", responses.ResponseStatusCancelled, false, FinishReasonStop},
+		{"failed", responses.ResponseStatusFailed, false, FinishReasonContentFilter},
+		{"cancelled", responses.ResponseStatusCancelled, false, FinishReasonContentFilter},
 		{"in_progress", responses.ResponseStatusInProgress, false, FinishReasonStop},
 		{"queued", responses.ResponseStatusQueued, false, FinishReasonStop},
 	}

@@ -16,6 +16,27 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
+// sanitizeID ensures a string is safe to embed in an item ID.
+// Returns a truncated, alphanumeric-only version; empty input yields "x".
+func sanitizeID(s string) string {
+	if s == "" {
+		return "x"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
+		if b.Len() >= 32 {
+			break
+		}
+	}
+	if b.Len() == 0 {
+		return "x"
+	}
+	return b.String()
+}
+
 // ---------------------------------------------------------------------------
 // Message conversion: ChatMessage[] → ResponseNewParams
 // ---------------------------------------------------------------------------
@@ -79,7 +100,7 @@ func toResponsesParams(model string, messages []ChatMessage, maxTokens int) resp
 			if msg.ReasoningContent != "" {
 				inputItems = append(inputItems, responses.ResponseInputItemUnionParam{
 					OfReasoning: &responses.ResponseReasoningItemParam{
-						ID: fmt.Sprintf("rs_%d", len(inputItems)),
+						ID: fmt.Sprintf("rs_%s_%d", sanitizeID(msg.ToolCallID), len(inputItems)),
 						Summary: []responses.ResponseReasoningItemSummaryParam{
 							{Text: msg.ReasoningContent},
 						},
@@ -249,7 +270,10 @@ func buildResponsesReasoning(thinkingMode string) openai.ReasoningParam {
 				return rp
 			}
 			log.WithField("thinking_mode", thinkingMode).Warn("[LLM] Failed to parse thinking mode as JSON for Responses API, ignoring")
+			return openai.ReasoningParam{}
 		}
+		// Non-JSON unknown value
+		log.WithField("thinking_mode", thinkingMode).Warn("[LLM] Unknown thinking mode is not valid JSON for Responses API, ignoring")
 		return openai.ReasoningParam{}
 	}
 }
@@ -388,7 +412,7 @@ func responsesStatusToFinishReason(status responses.ResponseStatus, hasToolCalls
 	case "incomplete":
 		return FinishReasonLength
 	case "failed", "cancelled":
-		return FinishReasonStop
+		return FinishReasonContentFilter
 	case "in_progress", "queued":
 		return FinishReasonStop
 	default:
@@ -725,8 +749,10 @@ func (o *OpenAILLM) processResponsesStream(ctx context.Context, stream *ssestrea
 		"provider":       "openai-responses",
 		"event_count":    eventCount,
 		"total_duration": time.Since(startTime).String(),
-		"ttft":           firstEventTime.Sub(startTime).String(),
 		"finish_reason":  lastFinishReason,
+	}
+	if eventCount > 0 {
+		fields["ttft"] = firstEventTime.Sub(startTime).String()
 	}
 	if lastUsage != nil {
 		fields["prompt_tokens"] = lastUsage.PromptTokens

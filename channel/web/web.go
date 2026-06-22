@@ -957,7 +957,18 @@ func (wc *WebChannel) readPump(c *Client, si *sessionInfo) {
 				log.WithError(err).Debug("Invalid RPC message from CLI client")
 				continue
 			}
-			result, rpcErr := wc.callbacks.RPCHandler(rpcReq.Method, rpcReq.Params, c.userID)
+			var result json.RawMessage
+			var rpcErr error
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.WithField("method", rpcReq.Method).WithField("rpc_id", rpcReq.ID).
+							WithError(fmt.Errorf("%v", r)).Error("RPC handler panic")
+						rpcErr = fmt.Errorf("internal error: %v", r)
+					}
+				}()
+				result, rpcErr = wc.callbacks.RPCHandler(rpcReq.Method, rpcReq.Params, c.userID)
+			}()
 			rpcMsg := protocol.WSMessage{Type: protocol.MsgTypeRPCResponse, ID: rpcReq.ID}
 			if rpcErr != nil {
 				rpcMsg.Error = rpcErr.Error()

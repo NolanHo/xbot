@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -962,8 +963,11 @@ func (wc *WebChannel) readPump(c *Client, si *sessionInfo) {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						log.WithField("method", rpcReq.Method).WithField("rpc_id", rpcReq.ID).
-							WithError(fmt.Errorf("%v", r)).Error("RPC handler panic")
+						log.WithField("method", rpcReq.Method).
+							WithField("rpc_id", rpcReq.ID).
+							WithField("stack", string(debug.Stack())).
+							WithError(fmt.Errorf("%v", r)).
+							Error("RPC handler panic")
 						rpcErr = fmt.Errorf("internal error: %v", r)
 					}
 				}()

@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -53,7 +54,7 @@ func TestFormatToolLabel_LongToolName(t *testing.T) {
 
 func TestFormatToolLabel_VeryLongToolName(t *testing.T) {
 	// Extremely long tool name — must NOT panic.
-	extremeName := "a" + string(make([]byte, 500))
+	extremeName := "a" + strings.Repeat("x", 500)
 	got := formatToolLabel(extremeName, `{"param":"val"}`)
 	if got == "" {
 		t.Fatal("expected non-empty result")

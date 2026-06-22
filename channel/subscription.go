@@ -52,8 +52,9 @@ type iterToolSnap struct {
 	Summary   string `json:"summary,omitempty"`
 }
 
-// truncateLabel safely truncates a string to maxRunes, appending "..." if truncated.
-// If maxRunes <= 0 or >= len(runes), returns the original string unchanged.
+// truncateLabel safely truncates a string to maxRunes.
+// Appends "..." if truncated and maxRunes > 3.
+// If maxRunes <= 0 or the string already fits, returns original unchanged.
 func truncateLabel(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return s
@@ -90,6 +91,7 @@ func formatToolLabel(name, argsJSON string) string {
 
 	// budget returns the max runes available for the argument value,
 	// accounting for "name(" + ")" wrapper. Returns 0 if name itself exceeds maxLen.
+	// Tool names are always ASCII, so len(name) == rune count.
 	budget := func() int {
 		n := maxLen - len(name) - 2 // len("name(") + len(")") = len(name) + 2
 		if n < 0 {

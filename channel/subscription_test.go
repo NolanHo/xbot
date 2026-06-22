@@ -75,13 +75,13 @@ func TestTruncateLabel(t *testing.T) {
 		maxRunes int
 		want     string
 	}{
-		{"hello", 10, "hello"},       // no truncation needed
-		{"hello", 5, "hello"},        // exactly fits
-		{"hello", 3, "hel"},          // maxRunes <= 3, no "..."
-		{"hello world", 8, "hello..."},  // truncate with ellipsis
-		{"hello", 0, "hello"},         // maxRunes <= 0, return original
-		{"hello", -1, "hello"},        // negative, return original
-		{"hi", 1, "h"},                // very short maxRunes
+		{"hello", 10, "hello"},         // no truncation needed
+		{"hello", 5, "hello"},          // exactly fits
+		{"hello", 3, "hel"},            // maxRunes <= 3, no "..."
+		{"hello world", 8, "hello..."}, // truncate with ellipsis
+		{"hello", 0, "hello"},          // maxRunes <= 0, return original
+		{"hello", -1, "hello"},         // negative, return original
+		{"hi", 1, "h"},                 // very short maxRunes
 	}
 	for _, tt := range tests {
 		got := truncateLabel(tt.s, tt.maxRunes)

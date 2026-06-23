@@ -52,6 +52,23 @@ type iterToolSnap struct {
 	Summary   string `json:"summary,omitempty"`
 }
 
+// truncateLabel safely truncates a string to maxRunes.
+// Appends "..." if truncated and maxRunes > 3.
+// If maxRunes <= 0 or the string already fits, returns original unchanged.
+func truncateLabel(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
+}
+
 // formatToolLabel generates a short human-readable label from a tool name and its JSON arguments.
 // Used when restoring progress from intermediate assistant messages (no Detail snapshot),
 // e.g. after server restart. Produces labels like "Shell(tail -100 file.log)" or "Read(path)".
@@ -72,14 +89,22 @@ func formatToolLabel(name, argsJSON string) string {
 		return ""
 	}
 
+	// budget returns the max runes available for the argument value,
+	// accounting for "name(" + ")" wrapper. Returns 0 if name itself exceeds maxLen.
+	// Tool names are always ASCII, so len(name) == rune count.
+	budget := func() int {
+		n := maxLen - len(name) - 2 // len("name(") + len(")") = len(name) + 2
+		if n < 0 {
+			n = 0
+		}
+		return n
+	}
+
 	switch name {
 	case "Shell":
 		cmd := get("command")
 		if cmd != "" {
-			if len(cmd) > maxLen-len(name)-2 {
-				cmd = cmd[:maxLen-len(name)-5] + "..."
-			}
-			return name + "(" + cmd + ")"
+			return name + "(" + truncateLabel(cmd, budget()) + ")"
 		}
 	case "Read":
 		p := get("path")
@@ -115,8 +140,8 @@ func formatToolLabel(name, argsJSON string) string {
 		r := get("role")
 		t := get("task")
 		if r != "" {
-			if t != "" && len(t) > 30 {
-				t = t[:27] + "..."
+			if t != "" {
+				t = truncateLabel(t, 30)
 			}
 			if t != "" {
 				return name + "(" + r + ": " + t + ")"
@@ -127,10 +152,7 @@ func formatToolLabel(name, argsJSON string) string {
 		// Generic: show first string parameter
 		for _, v := range args {
 			if s, ok := v.(string); ok && s != "" {
-				if len(s) > maxLen-len(name)-2 {
-					s = s[:maxLen-len(name)-5] + "..."
-				}
-				return name + "(" + s + ")"
+				return name + "(" + truncateLabel(s, budget()) + ")"
 			}
 		}
 	}

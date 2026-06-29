@@ -1446,6 +1446,9 @@ func main() {
 		cliCfg.SessionsDeleteFn = func(channelName, chatID string) error {
 			return backend.DeleteChat(channelName, cliSenderID, chatID)
 		}
+		cliCfg.ChatRenameFn = func(channelName, chatID, newName string) error {
+			return backend.RenameChat(channelName, cliSenderID, chatID, newName)
+		}
 		// sessionsListRefresh will be assigned when refreshAgentCache is defined below.
 		// We defer wiring via a pointer so the closure can capture the later-defined func.
 		cliCfg.SessionsListRefresh = func() {

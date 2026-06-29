@@ -193,6 +193,29 @@ func (m *cliModel) handleSlashCommand(cmd string) tea.Cmd {
 		// /ss — Open Sessions panel
 		m.openSessionsPanel()
 
+	case "/rename":
+		// /rename — Rename current session (DB label):
+		//   /rename <new name>  — rename current session
+		if len(parts) < 2 {
+			m.showSystemMsg("用法: /rename <新名称>", feedbackInfo)
+			return nil
+		}
+		newName := strings.TrimSpace(strings.Join(parts[1:], " "))
+		if newName == "" {
+			m.showSystemMsg("❌ 名称不能为空", feedbackInfo)
+			return nil
+		}
+		if m.channel != nil && m.channel.config.ChatRenameFn != nil {
+			if err := m.channel.config.ChatRenameFn(m.channelName, m.chatID, newName); err != nil {
+				m.showSystemMsg("❌ 重命名失败: "+err.Error(), feedbackInfo)
+				return nil
+			}
+			m.scheduleSessionsRefresh()
+			m.showSystemMsg(fmt.Sprintf("✅ 会话已重命名为: %s", newName), feedbackInfo)
+		} else {
+			m.showSystemMsg("❌ 重命名功能不可用", feedbackInfo)
+		}
+
 	case "/chat":
 		// /chat — Chat room management:
 		//   /chat new [label] — 创建新会话

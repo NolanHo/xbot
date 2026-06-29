@@ -290,8 +290,8 @@ func newGlamourRenderer(wrapWidth int) *glamour.TermRenderer {
 // cliCommands 已知命令列表（用于 Tab 补全，§8）
 var cliCommands = []string{
 	"/cancel", "/channel", "/chat", "/clear", "/commands", "/compress", "/context", "/exit",
-	"/help", "/model", "/models", "/new", "/palette", "/plugin", "/quit", "/rewind", "/search",
-	"/sessions", "/settings", "/setup", "/ss", "/su", "/tasks", "/update",
+	"/help", "/model", "/models", "/new", "/palette", "/plugin", "/quit", "/rename", "/rewind",
+	"/search", "/sessions", "/settings", "/setup", "/ss", "/su", "/tasks", "/update",
 	"/usage", "/user",
 }
 
@@ -386,6 +386,7 @@ type CLIChannelConfig struct {
 	AgentMessages          func(roleName, instance string) []ch.SessionChatMessage                                                                                      // 获取 interactive agent 的对话消息
 	ChatCreateFn           func(channelName, senderID, label string) (string, error)                                                                                    // 创建新 ChatRoom（返回 chatID）
 	SessionsDeleteFn       func(channelName, chatID string) error                                                                                                       // 删除 session（本地 JSON + 服务端 DB 级联）
+	ChatRenameFn           func(channelName, chatID, newName string) error                                                                                              // 重命名 session（DB label）
 	SessionsListRefresh    func()                                                                                                                                       // 侧边栏刷新：session 创建/删除后立即调用，确保 sidebar 不显示过期数据
 	SessionsList           func() []SessionPanelEntry                                                                                                                   // 列出所有 session（main + subagent）
 	GetActiveProgressFn    func(channelName, chatID string) *protocol.ProgressEvent                                                                                     // 获取目标 session 的活跃进度（session switch 恢复用）

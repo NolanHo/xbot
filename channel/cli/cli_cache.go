@@ -70,7 +70,8 @@ func (m *cliModel) resetProgressState() {
 	// (Seq=1,2,3...) would be blocked by the previous turn's high Seq.
 	m.progressState.lastAppliedSeq = 0
 	m.progressState.lastStreamSeq = 0
-	m.progressState.pullTick = 0
+	m.progressState.lastReceivedSeq = 0
+	m.progressState.gapDetected = false
 	m.progressState.current = nil
 	m.progressState.iterStart = time.Now() // wall-clock start for iteration 0
 	m.typingStartTime = time.Now()
@@ -152,10 +153,61 @@ func (m *cliModel) rerenderCachedMessage(msgIdx int) {
 	m.appendNewMessagesToCache()
 }
 
+// dedupConsecutiveAssistants eliminates consecutive assistant messages before
+// rendering. Two cases:
+//  1. SAME turnID: true duplicates from different creation paths → merge content+iterations
+//  2. DIFFERENT turnID + first is empty placeholder (isPartial, content="", no iterations)
+//     → remove the empty placeholder
+//
+// This ensures the user NEVER sees two consecutive Assistant blocks.
+// Called by both appendNewMessagesToCache and fullRebuild.
+func (m *cliModel) dedupConsecutiveAssistants() {
+	if len(m.messages) <= 1 {
+		return
+	}
+	merged := false
+	for i := 0; i < len(m.messages)-1; i++ {
+		if m.messages[i].role != "assistant" || m.messages[i+1].role != "assistant" {
+			continue
+		}
+		if m.messages[i].turnID == m.messages[i+1].turnID {
+			// Case 1: same turnID — merge i+1 into i
+			if m.messages[i].content == "" {
+				m.messages[i].content = m.messages[i+1].content
+			} else if m.messages[i+1].content != "" && m.messages[i+1].content != m.messages[i].content {
+				m.messages[i].content = m.messages[i].content + "\n\n" + m.messages[i+1].content
+			}
+			m.messages[i].iterations = mergeIterations(m.messages[i].iterations, m.messages[i+1].iterations)
+			if m.messages[i+1].reasoning != "" && m.messages[i].reasoning == "" {
+				m.messages[i].reasoning = m.messages[i+1].reasoning
+			}
+			m.messages[i].isPartial = m.messages[i+1].isPartial
+			m.messages[i].dirty = true
+			m.messages = append(m.messages[:i+1], m.messages[i+2:]...)
+			merged = true
+			i--
+		} else if m.messages[i].isPartial && m.messages[i].content == "" && len(m.messages[i].iterations) == 0 {
+			// Case 2: different turnID, truly empty placeholder — remove it
+			m.messages = append(m.messages[:i], m.messages[i+1:]...)
+			merged = true
+			i--
+		}
+	}
+	if merged {
+		m.rc.valid = false
+		if m.streamingMsgIdx >= len(m.messages) {
+			m.streamingMsgIdx = len(m.messages) - 1
+		}
+	}
+}
+
 // wrappedLineCount returns the number of viewport display lines after hard-wrapping.
 // The logic mirrors setViewportContent exactly so that msgLineOffsets (computed via
 func (m *cliModel) appendNewMessagesToCache() {
 	cw := m.chatWidth()
+
+	m.dedupConsecutiveAssistants()
+
 	var sb strings.Builder
 	sb.WriteString(m.rc.history)
 
@@ -228,6 +280,8 @@ func (m *cliModel) appendNewMessagesToCache() {
 
 // fullRebuild 全量重建渲染缓存（慢速路径）
 func (m *cliModel) fullRebuild() {
+	m.dedupConsecutiveAssistants()
+
 	// splitIdx 确保当前流式消息不进入 cachedHistory
 	splitIdx := len(m.messages)
 	if m.streamingMsgIdx >= 0 && m.streamingMsgIdx < len(m.messages) {

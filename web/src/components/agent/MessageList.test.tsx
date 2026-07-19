@@ -285,6 +285,9 @@ describe('MessageList virtualization', () => {
     // Ten pixels from the real bottom is inside the old 48px threshold, but the
     // strict follow contract treats it as intentional history reading.
     const tenPixelsFromBottom = scroller.scrollHeight - scroller.clientHeight - 10
+    // User scrolls up via wheel — this is what pauses following, not the
+    // scroll event itself (programmatic scrolls must not pause).
+    fireEvent.wheel(scroller, { deltaY: -10 })
     scroller.scrollTop = tenPixelsFromBottom
     fireEvent.scroll(scroller)
     rerender(

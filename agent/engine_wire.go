@@ -15,7 +15,6 @@ import (
 	"xbot/bus"
 	channelpkg "xbot/channel"
 	"xbot/channel/cli"
-	"xbot/channel/web"
 	"xbot/llm"
 	log "xbot/logger"
 	"xbot/memory"
@@ -292,25 +291,9 @@ func (a *Agent) buildMainRunConfig(
 	// OAuth 处理
 	cfg.OAuthHandler = a.buildOAuthHandler(channel, chatID, senderID, sessionKey)
 
-	// 进度通知
-	// Web/CLI 渠道: no-op notifier — structured progress goes via ProgressEventHandler
-	// Plugin channels (ProgressSender): same — structured progress via ProgressEventHandler
-	// Other channels: fallback to sendMessage-based progress (legacy behavior)
-	isProgressSenderCh := false
-	if channel != "web" && channel != "cli" && a.channelFinder != nil {
-		if ch, ok := a.channelFinder(channel); ok {
-			if _, ok := ch.(channelpkg.ProgressSender); ok {
-				isProgressSenderCh = true
-			}
-		}
-	}
-
-	if channel == "web" || channel == "cli" || isProgressSenderCh {
-		// Structured progress goes via ProgressEventHandler below.
-		// Setting ProgressNotifier to non-nil enables autoNotify in engine.Run()
-		cfg.ProgressNotifier = func(lines []string, _ string) {}
-	} else if autoNotify {
-		// Legacy fallback: send progress text as messages (no patch support)
+	// A non-nil notifier enables the structured progress finalizer for every
+	// channel. Optional text notifications are an independent transport concern.
+	if autoNotify {
 		cfg.ProgressNotifier = func(lines []string, _ string) {
 			if len(lines) > 0 {
 				if err := a.sendMessage(channel, chatID, lines[0]); err != nil {
@@ -319,66 +302,26 @@ func (a *Agent) buildMainRunConfig(
 			}
 		}
 	} else {
-		// Non-cli/web channel without preReplyNotify: still set a no-op notifier
-		// so autoNotify is enabled and progressFinalizer generates PhaseDone.
-		// Without this, CLI users viewing this session via /su never receive
-		// PhaseDone → TUI stuck in busy state forever.
 		cfg.ProgressNotifier = func(lines []string, _ string) {}
 	}
 
-	// 结构化进度事件推送（web, cli, and plugin ProgressSender channels）
-	// Progress handlers are wrapped with ctx so that when the user presses Ctrl+C
-	// (reqCancel cancels ctx), stale progress events are not forwarded to the CLI.
-	//
-	// EXCEPTION: PhaseDone is always allowed through, even after cancellation.
-	// PhaseDone carries the authoritative final iteration snapshot (completed
-	// tools, content, reasoning). Without it, the CLI's finalizeTurnFromSnapshot
-	// never runs, and the latest live iteration is lost from the TUI (even though
-	// it was persisted to DB by recordIterationSnapshot). The cancel ack's
-	// handleCancelAck has a fallback (cancelledTurnIterations), but it's not
-	// guaranteed to capture the live iteration in all code paths.
-	if a.channelFinder != nil {
-		done := ctx.Done() // capture for closure
-		wrap := func(h func(*ProgressEvent)) func(*ProgressEvent) {
-			return func(ev *ProgressEvent) {
-				select {
-				case <-done:
-					// Allow PhaseDone through even after cancellation — it carries
-					// the final iteration data needed by the CLI for proper turn
-					// finalization. Other events are dropped (stale progress).
-					if ev != nil && ev.Structured != nil && ev.Structured.Phase == PhaseDone {
-						h(ev)
-					}
-					return
-				default:
+	// Structured progress has one channel-agnostic snapshot/log producer.
+	// Every ProgressSender receives the exact same protocol event; channel
+	// transports only handle delivery and never derive semantic history.
+	if handler := a.buildProgressEventHandler(chatID, channel); handler != nil {
+		done := ctx.Done()
+		cfg.ProgressEventHandler = func(ev *ProgressEvent) {
+			select {
+			case <-done:
+				// PhaseDone is the authoritative final snapshot and must survive
+				// cancellation for every channel.
+				if ev != nil && ev.Structured != nil && ev.Structured.Phase == PhaseDone {
+					handler(ev)
 				}
-				h(ev)
+				return
+			default:
 			}
-		}
-		switch channel {
-		case "cli":
-			if handler := a.buildCLIProgressEventHandler(chatID, channel); handler != nil {
-				cfg.ProgressEventHandler = wrap(handler)
-			}
-		case "web":
-			if handler := a.buildWebProgressEventHandler(chatID, channel); handler != nil {
-				cfg.ProgressEventHandler = wrap(handler)
-			}
-		default:
-			// For all other channels (feishu, qq, etc.) and plugin ProgressSender
-			// channels — build a CLI progress handler so the CLI TUI receives
-			// structured progress events and PhaseDone when viewing these sessions
-			// via /su. Without this, CLI never gets PhaseDone → finalizeTurnFromSnapshot
-			// never runs → m.typing stays true forever (TUI stuck in busy state).
-			if isProgressSenderCh {
-				if handler := a.buildPluginProgressEventHandler(chatID, channel); handler != nil {
-					cfg.ProgressEventHandler = wrap(handler)
-				}
-			} else {
-				if handler := a.buildCLIProgressEventHandler(chatID, channel); handler != nil {
-					cfg.ProgressEventHandler = wrap(handler)
-				}
-			}
+			handler(ev)
 		}
 	}
 
@@ -1368,7 +1311,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*cha
 		}
 	} else if originChannel != "" && originChatID != "" && originChannel != "cli" {
 		// 非 CLI 渠道（飞书、Web 等）：发送 text-based progress 到聊天窗口。
-		// CLI 模式下由 wireSubAgentCLIProgress 的 StructuredProgress 处理，
+		// CLI 模式下由 wireSubAgentProgress 的 StructuredProgress 处理，
 		// 不需要 sendMessage（否则会把工具行渲染成主 session 的 assistant 消息）。
 		rn := roleName
 		cfg.ProgressNotifier = func(lines []string, _ string) {
@@ -1385,7 +1328,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*cha
 		}
 	} else if originChannel == "cli" {
 		// CLI 渠道 + 无父 callback：设置 dummy notifier 使 autoNotify=true，
-		// 这样 wireSubAgentCLIProgress 设置的 ProgressEventHandler 才会被调用。
+		// 这样 wireSubAgentProgress 设置的 ProgressEventHandler 才会被调用。
 		cfg.ProgressNotifier = func(lines []string, _ string) {}
 	}
 
@@ -1418,7 +1361,7 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*cha
 	}
 
 	// Wire CLI progress + stream callbacks so Ctrl+T shows real-time progress.
-	a.wireSubAgentCLIProgress(oneshotKey, originChatID, &cfg)
+	a.wireSubAgentProgress(oneshotKey, originChatID, &cfg)
 
 	// Wire incremental snapshot callback so iteration history is available
 	// during Run() for panel preview and inspect — not only after completion.
@@ -1571,26 +1514,6 @@ func (a *Agent) spawnSubAgent(ctx context.Context, msg bus.InboundMessage) (*cha
 	return out.OutboundMsg, nil
 }
 
-// convertWsSubAgentTree 将 agent.SubAgentNode 转换为 protocol.SubAgentInfo 树。
-func convertWsSubAgentTree(nodes []SubAgentNode) []protocol.SubAgentInfo {
-	if len(nodes) == 0 {
-		return nil
-	}
-	result := make([]protocol.SubAgentInfo, len(nodes))
-	for i, n := range nodes {
-		result[i] = protocol.SubAgentInfo{
-			Role:       n.Role,
-			Instance:   n.Instance,
-			SessionKey: n.SessionKey,
-			Status:     n.Status,
-			Desc:       n.Desc,
-			Children:   convertWsSubAgentTree(n.Children),
-		}
-	}
-	return result
-}
-
-// convertCLISubAgentTree 将 agent.SubAgentNode 转换为 protocol.SubAgentInfo 树。
 // resolveSubAgents extracts the SubAgent tree from a ProgressEvent.
 // It prefers the structured SubAgents field (reliable), falling back to
 // text-based ExtractSubAgentTree only if structured data is unavailable.
@@ -1604,20 +1527,6 @@ func resolveSubAgents(event *ProgressEvent) []protocol.SubAgentInfo {
 		subAgents := ExtractSubAgentTree(event.Lines)
 		if len(subAgents) > 0 {
 			return convertCLISubAgentTree(subAgents)
-		}
-	}
-	return nil
-}
-
-// resolveWsSubAgents is the WsSubAgent variant of resolveSubAgents.
-func resolveWsSubAgents(event *ProgressEvent) []protocol.SubAgentInfo {
-	if event.Structured != nil && len(event.Structured.SubAgents) > 0 {
-		return convertWsSubAgentTree(event.Structured.SubAgents)
-	}
-	if len(event.Lines) > 0 {
-		subAgents := ExtractSubAgentTree(event.Lines)
-		if len(subAgents) > 0 {
-			return convertWsSubAgentTree(subAgents)
 		}
 	}
 	return nil
@@ -1642,390 +1551,80 @@ func convertCLISubAgentTree(nodes []SubAgentNode) []protocol.SubAgentInfo {
 	return result
 }
 
-// buildCLIProgressEventHandler creates the progress event handler for CLI channels
-// (both local and remote). Returns nil if no CLI channel is available.
-func (a *Agent) buildCLIProgressEventHandler(chatID, channel string) func(*ProgressEvent) {
-	var cliCh *cli.CLIChannel
-	var remoteCLICh channelpkg.ProgressSender
-	if a.channelFinder != nil {
-		if ch, ok := a.channelFinder("cli"); ok {
-			if cc, ok := ch.(*cli.CLIChannel); ok {
-				cliCh = cc
-			} else if rc, ok := ch.(channelpkg.ProgressSender); ok {
-				// RemoteCLIChannel, ChannelCliChannel, or any other ProgressSender
-				remoteCLICh = rc
-			} else {
-				log.WithField("type", fmt.Sprintf("%T", ch)).Warn("buildCLIProgressEventHandler: channelFinder('cli') returned unexpected type")
-			}
-		} else {
-			log.Warn("buildCLIProgressEventHandler: channelFinder('cli') returned not found")
-		}
-	} else {
-		log.Warn("buildCLIProgressEventHandler: channelFinder is nil")
-	}
-	log.WithFields(log.Fields{
-		"hasCliCh":       cliCh != nil,
-		"hasRemoteCLICh": remoteCLICh != nil,
-		"progressKey":    qualifyChatID(channel, chatID),
-	}).Info("buildCLIProgressEventHandler: cli channel resolution")
-
-	if cliCh == nil && remoteCLICh == nil {
+// buildProgressPayload converts one engine progress event into the shared
+// protocol consumed by every ProgressSender channel. Snapshot/log identity is
+// assigned once before fan-out; transports never derive iteration history.
+func buildProgressPayload(progressKey string, event *ProgressEvent) *protocol.ProgressEvent {
+	if event == nil || event.Structured == nil {
 		return nil
 	}
-
-	progressKey := qualifyChatID(channel, chatID)
-	return func(event *ProgressEvent) {
-		if event == nil || event.Structured == nil {
-			return
-		}
-		s := event.Structured
-		if cliCh != nil {
-			payload := &protocol.ProgressEvent{
-				ChatID:           progressKey,
-				Phase:            string(s.Phase),
-				Seq:              s.Seq,
-				Iteration:        s.Iteration,
-				Content:          s.Content,
-				Reasoning:        s.ReasoningContent,
-				HistoryCompacted: s.HistoryCompacted,
-				CWD:              s.CWD,
-			}
-			for _, t := range s.ActiveTools {
-				payload.ActiveTools = append(payload.ActiveTools, protocol.ToolProgress{
-					Name:      t.Name,
-					Label:     t.Label,
-					Status:    string(t.Status),
-					Elapsed:   t.Elapsed.Milliseconds(),
-					Iteration: t.Iteration,
-					Summary:   t.Summary,
-					Detail:    t.Detail,
-					Args:      t.Args,
-					ToolHints: t.ToolHints,
-				})
-			}
-			for _, t := range s.CompletedTools {
-				payload.CompletedTools = append(payload.CompletedTools, protocol.ToolProgress{
-					Name:      t.Name,
-					Label:     t.Label,
-					Status:    string(t.Status),
-					Elapsed:   t.Elapsed.Milliseconds(),
-					Iteration: t.Iteration,
-					Summary:   t.Summary,
-					Detail:    t.Detail,
-					Args:      t.Args,
-					ToolHints: t.ToolHints,
-				})
-			}
-			if cliSubAgents := resolveSubAgents(event); len(cliSubAgents) > 0 {
-				payload.SubAgents = cliSubAgents
-			}
-			if len(s.Todos) > 0 {
-				payload.Todos = make([]protocol.TodoItem, len(s.Todos))
-				for i, td := range s.Todos {
-					payload.Todos[i] = protocol.TodoItem{ID: td.ID, Text: td.Text, Done: td.Done}
-				}
-			}
-			if s.TokenUsage != nil {
-				payload.TokenUsage = &protocol.TokenUsage{
-					PromptTokens:     s.TokenUsage.PromptTokens,
-					CompletionTokens: s.TokenUsage.CompletionTokens,
-					TotalTokens:      s.TokenUsage.TotalTokens,
-					CacheHitTokens:   s.TokenUsage.CacheHitTokens,
-					MaxOutputTokens:  s.TokenUsage.MaxOutputTokens,
-				}
-			}
-			a.attachIterationDelta(progressKey, s.Iteration, payload)
-			cliCh.SendProgress(chatID, payload)
-			a.lastProgressSnapshot.Store(progressKey, progressSnapshotWithoutHistory(payload))
-			a.clearStreamState(progressKey)
-		}
-		if remoteCLICh != nil {
-			payload := &protocol.ProgressEvent{
-				ChatID:           progressKey,
-				Seq:              s.Seq,
-				Phase:            string(s.Phase),
-				Iteration:        s.Iteration,
-				Content:          s.Content,
-				Reasoning:        s.ReasoningContent,
-				HistoryCompacted: s.HistoryCompacted,
-				CWD:              s.CWD,
-			}
-			for _, t := range s.ActiveTools {
-				payload.ActiveTools = append(payload.ActiveTools, protocol.ToolProgress{
-					Name:      t.Name,
-					Label:     t.Label,
-					Status:    string(t.Status),
-					Elapsed:   t.Elapsed.Milliseconds(),
-					Summary:   t.Summary,
-					Detail:    t.Detail,
-					Args:      t.Args,
-					ToolHints: t.ToolHints,
-					Iteration: t.Iteration,
-				})
-			}
-			for _, t := range s.CompletedTools {
-				payload.CompletedTools = append(payload.CompletedTools, protocol.ToolProgress{
-					Name:      t.Name,
-					Label:     t.Label,
-					Status:    string(t.Status),
-					Elapsed:   t.Elapsed.Milliseconds(),
-					Summary:   t.Summary,
-					Detail:    t.Detail,
-					Args:      t.Args,
-					ToolHints: t.ToolHints,
-					Iteration: t.Iteration,
-				})
-			}
-			if wsSubAgents := resolveWsSubAgents(event); len(wsSubAgents) > 0 {
-				payload.SubAgents = wsSubAgents
-			}
-			if len(s.Todos) > 0 {
-				payload.Todos = make([]protocol.TodoItem, len(s.Todos))
-				for i, td := range s.Todos {
-					payload.Todos[i] = protocol.TodoItem{ID: td.ID, Text: td.Text, Done: td.Done}
-				}
-			}
-			if s.TokenUsage != nil {
-				payload.TokenUsage = &protocol.TokenUsage{
-					PromptTokens:     s.TokenUsage.PromptTokens,
-					CompletionTokens: s.TokenUsage.CompletionTokens,
-					TotalTokens:      s.TokenUsage.TotalTokens,
-					CacheHitTokens:   s.TokenUsage.CacheHitTokens,
-					MaxOutputTokens:  s.TokenUsage.MaxOutputTokens,
-				}
-			}
-			// Build cliPayload for lastProgressSnapshot (same fields as payload).
-			cliPayload := &protocol.ProgressEvent{
-				ChatID:           progressKey,
-				Seq:              s.Seq,
-				Phase:            string(s.Phase),
-				Iteration:        s.Iteration,
-				Content:          s.Content,
-				Reasoning:        s.ReasoningContent,
-				HistoryCompacted: s.HistoryCompacted,
-				CWD:              s.CWD,
-			}
-			for _, t := range s.ActiveTools {
-				cliPayload.ActiveTools = append(cliPayload.ActiveTools, protocol.ToolProgress{
-					Name: t.Name, Label: t.Label, Status: string(t.Status),
-					Elapsed: t.Elapsed.Milliseconds(), Iteration: t.Iteration, Summary: t.Summary, Detail: t.Detail, Args: t.Args, ToolHints: t.ToolHints,
-				})
-			}
-			for _, t := range s.CompletedTools {
-				cliPayload.CompletedTools = append(cliPayload.CompletedTools, protocol.ToolProgress{
-					Name: t.Name, Label: t.Label, Status: string(t.Status),
-					Elapsed: t.Elapsed.Milliseconds(), Iteration: t.Iteration, Summary: t.Summary, Detail: t.Detail, Args: t.Args, ToolHints: t.ToolHints,
-				})
-			}
-			if cliSubAgents := resolveSubAgents(event); len(cliSubAgents) > 0 {
-				cliPayload.SubAgents = cliSubAgents
-			}
-			if len(s.Todos) > 0 {
-				cliPayload.Todos = make([]protocol.TodoItem, len(s.Todos))
-				for i, td := range s.Todos {
-					cliPayload.Todos[i] = protocol.TodoItem{ID: td.ID, Text: td.Text, Done: td.Done}
-				}
-			}
-			if s.TokenUsage != nil {
-				cliPayload.TokenUsage = &protocol.TokenUsage{
-					PromptTokens:     s.TokenUsage.PromptTokens,
-					CompletionTokens: s.TokenUsage.CompletionTokens,
-					TotalTokens:      s.TokenUsage.TotalTokens,
-					CacheHitTokens:   s.TokenUsage.CacheHitTokens,
-					MaxOutputTokens:  s.TokenUsage.MaxOutputTokens,
-				}
-			}
-			a.attachIterationDelta(progressKey, s.Iteration, cliPayload)
-			if len(cliPayload.IterationHistory) > 0 {
-				payload.IterationHistory = make([]protocol.ProgressEvent, len(cliPayload.IterationHistory))
-				copy(payload.IterationHistory, cliPayload.IterationHistory)
-			}
-			remoteCLICh.SendProgress(chatID, payload)
-			a.lastProgressSnapshot.Store(progressKey, progressSnapshotWithoutHistory(cliPayload))
-			a.clearStreamState(progressKey)
-			log.WithFields(log.Fields{
-				"key":       progressKey,
-				"phase":     cliPayload.Phase,
-				"iteration": cliPayload.Iteration,
-				"active":    len(cliPayload.ActiveTools),
-				"completed": len(cliPayload.CompletedTools),
-			}).Info("remote CLI: stored progress snapshot")
+	s := event.Structured
+	payload := &protocol.ProgressEvent{
+		ChatID: progressKey, Phase: string(s.Phase), Seq: s.Seq,
+		Iteration: s.Iteration, Content: s.Content, Reasoning: s.ReasoningContent,
+		HistoryCompacted: s.HistoryCompacted, CWD: s.CWD,
+	}
+	for _, t := range s.ActiveTools {
+		payload.ActiveTools = append(payload.ActiveTools, protocol.ToolProgress{
+			Name: t.Name, Label: t.Label, Status: string(t.Status),
+			Elapsed: t.Elapsed.Milliseconds(), Iteration: t.Iteration,
+			Summary: t.Summary, Detail: t.Detail, Args: t.Args, ToolHints: t.ToolHints,
+		})
+	}
+	for _, t := range s.CompletedTools {
+		payload.CompletedTools = append(payload.CompletedTools, protocol.ToolProgress{
+			Name: t.Name, Label: t.Label, Status: string(t.Status),
+			Elapsed: t.Elapsed.Milliseconds(), Iteration: t.Iteration,
+			Summary: t.Summary, Detail: t.Detail, Args: t.Args, ToolHints: t.ToolHints,
+		})
+	}
+	payload.SubAgents = resolveSubAgents(event)
+	if len(s.Todos) > 0 {
+		payload.Todos = make([]protocol.TodoItem, len(s.Todos))
+		for i, td := range s.Todos {
+			payload.Todos[i] = protocol.TodoItem{ID: td.ID, Text: td.Text, Done: td.Done}
 		}
 	}
+	if s.TokenUsage != nil {
+		payload.TokenUsage = &protocol.TokenUsage{
+			PromptTokens: s.TokenUsage.PromptTokens, CompletionTokens: s.TokenUsage.CompletionTokens,
+			TotalTokens: s.TokenUsage.TotalTokens, CacheHitTokens: s.TokenUsage.CacheHitTokens,
+			MaxOutputTokens: s.TokenUsage.MaxOutputTokens,
+		}
+	}
+	return payload
 }
 
-// buildWebProgressEventHandler creates the progress event handler for the Web channel.
-// Returns nil if no Web channel is available.
-func (a *Agent) buildWebProgressEventHandler(chatID, channel string) func(*ProgressEvent) {
-	if a.channelFinder == nil {
+// buildProgressEventHandler creates the single channel-agnostic structured
+// progress pipeline. It derives one semantic snapshot/log event, stores it
+// once, then broadcasts that exact immutable payload to every registered
+// ProgressSender (CLI, Web, and plugin channels).
+func (a *Agent) buildProgressEventHandler(chatID, originatingChannel string) func(*ProgressEvent) {
+	if a.channelRange == nil {
 		return nil
 	}
-	ch, ok := a.channelFinder("web")
-	if !ok {
+	var senders []channelpkg.ProgressSender
+	a.channelRange(func(_ string, ch channelpkg.Channel) bool {
+		if sender, ok := ch.(channelpkg.ProgressSender); ok {
+			senders = append(senders, sender)
+		}
+		return true
+	})
+	if len(senders) == 0 {
 		return nil
 	}
-	wc, ok := ch.(*web.WebChannel)
-	if !ok {
-		log.WithField("channel", channel).Warn("Web channel found but type assertion failed, skipping ProgressEventHandler")
-		return nil
-	}
-	progressKey := qualifyChatID(channel, chatID)
+	progressKey := qualifyChatID(originatingChannel, chatID)
 	return func(event *ProgressEvent) {
-		if event == nil || event.Structured == nil {
+		payload := buildProgressPayload(progressKey, event)
+		if payload == nil {
 			return
 		}
-		s := event.Structured
-		payload := &protocol.ProgressEvent{
-			ChatID:           progressKey,
-			Phase:            string(s.Phase),
-			Seq:              s.Seq,
-			Iteration:        s.Iteration,
-			Content:          s.Content,
-			Reasoning:        s.ReasoningContent,
-			HistoryCompacted: s.HistoryCompacted,
-			CWD:              s.CWD,
-		}
-		for _, t := range s.ActiveTools {
-			payload.ActiveTools = append(payload.ActiveTools, protocol.ToolProgress{
-				Name:      t.Name,
-				Label:     t.Label,
-				Status:    string(t.Status),
-				Elapsed:   t.Elapsed.Milliseconds(),
-				Summary:   t.Summary,
-				Detail:    t.Detail,
-				Args:      t.Args,
-				ToolHints: t.ToolHints,
-				Iteration: t.Iteration,
-			})
-		}
-		for _, t := range s.CompletedTools {
-			payload.CompletedTools = append(payload.CompletedTools, protocol.ToolProgress{
-				Name:      t.Name,
-				Label:     t.Label,
-				Status:    string(t.Status),
-				Elapsed:   t.Elapsed.Milliseconds(),
-				Summary:   t.Summary,
-				Detail:    t.Detail,
-				Args:      t.Args,
-				ToolHints: t.ToolHints,
-				Iteration: t.Iteration,
-			})
-		}
-		// Resolve sub-agent tree (structured data preferred over text parsing)
-		if wsSubAgents := resolveWsSubAgents(event); len(wsSubAgents) > 0 {
-			payload.SubAgents = wsSubAgents
-		}
-		// Copy todo items for web display
-		if len(s.Todos) > 0 {
-			payload.Todos = make([]protocol.TodoItem, len(s.Todos))
-			for i, td := range s.Todos {
-				payload.Todos[i] = protocol.TodoItem{
-					ID:   td.ID,
-					Text: td.Text,
-					Done: td.Done,
-				}
-			}
-		}
-		// Pass token usage snapshot
-		if s.TokenUsage != nil {
-			payload.TokenUsage = &protocol.TokenUsage{
-				PromptTokens:     s.TokenUsage.PromptTokens,
-				CompletionTokens: s.TokenUsage.CompletionTokens,
-				TotalTokens:      s.TokenUsage.TotalTokens,
-				CacheHitTokens:   s.TokenUsage.CacheHitTokens,
-				MaxOutputTokens:  s.TokenUsage.MaxOutputTokens,
-			}
-		}
-
-		// Keep event order stable for frontend rendering. SendProgress itself is non-blocking.
-		wc.SendProgress(chatID, payload)
-
-		// Track iteration history: when iteration advances, snapshot the
-		// PREVIOUS iteration into the history list for mid-session reconnect.
-		a.recordIterationSnapshot(progressKey, func(prev *protocol.ProgressEvent) bool {
-			return s.Iteration > prev.Iteration && prev.Iteration >= 0
-		})
-		// Save current iteration snapshot
+		a.attachIterationDelta(progressKey, payload.Iteration, payload)
 		a.lastProgressSnapshot.Store(progressKey, progressSnapshotWithoutHistory(payload))
 		a.clearStreamState(progressKey)
-	}
-}
-
-// buildPluginProgressEventHandler creates the progress event handler for plugin channels
-// (e.g. TG) that implement channel.ProgressSender.
-// Returns nil if no suitable channel is available.
-func (a *Agent) buildPluginProgressEventHandler(chatID, channel string) func(*ProgressEvent) {
-	if a.channelFinder == nil {
-		return nil
-	}
-	ch, ok := a.channelFinder(channel)
-	if !ok {
-		return nil
-	}
-	ps, ok := ch.(channelpkg.ProgressSender)
-	if !ok {
-		return nil
-	}
-	progressKey := qualifyChatID(channel, chatID)
-	return func(event *ProgressEvent) {
-		if event == nil || event.Structured == nil {
-			return
+		for _, sender := range senders {
+			sender.SendProgress(chatID, cloneProgressEvent(payload))
 		}
-		s := event.Structured
-		payload := &protocol.ProgressEvent{
-			ChatID:           progressKey,
-			Phase:            string(s.Phase),
-			Seq:              s.Seq,
-			Iteration:        s.Iteration,
-			Content:          s.Content,
-			Reasoning:        s.ReasoningContent,
-			HistoryCompacted: s.HistoryCompacted,
-			CWD:              s.CWD,
-		}
-		for _, t := range s.ActiveTools {
-			payload.ActiveTools = append(payload.ActiveTools, protocol.ToolProgress{
-				Name:      t.Name,
-				Label:     t.Label,
-				Status:    string(t.Status),
-				Elapsed:   t.Elapsed.Milliseconds(),
-				Summary:   t.Summary,
-				Detail:    t.Detail,
-				Args:      t.Args,
-				Iteration: t.Iteration,
-			})
-		}
-		for _, t := range s.CompletedTools {
-			payload.CompletedTools = append(payload.CompletedTools, protocol.ToolProgress{
-				Name:      t.Name,
-				Label:     t.Label,
-				Status:    string(t.Status),
-				Elapsed:   t.Elapsed.Milliseconds(),
-				Summary:   t.Summary,
-				Detail:    t.Detail,
-				Args:      t.Args,
-				Iteration: t.Iteration,
-			})
-		}
-		if len(s.Todos) > 0 {
-			payload.Todos = make([]protocol.TodoItem, len(s.Todos))
-			for i, td := range s.Todos {
-				payload.Todos[i] = protocol.TodoItem{
-					ID:   td.ID,
-					Text: td.Text,
-					Done: td.Done,
-				}
-			}
-		}
-		if s.TokenUsage != nil {
-			payload.TokenUsage = &protocol.TokenUsage{
-				PromptTokens:     s.TokenUsage.PromptTokens,
-				CompletionTokens: s.TokenUsage.CompletionTokens,
-				TotalTokens:      s.TokenUsage.TotalTokens,
-				CacheHitTokens:   s.TokenUsage.CacheHitTokens,
-				MaxOutputTokens:  s.TokenUsage.MaxOutputTokens,
-			}
-		}
-		ps.SendProgress(chatID, payload)
 	}
 }
 

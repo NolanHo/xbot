@@ -614,14 +614,20 @@
 
 /* ── Inline typewriter cursor (Spec A §2) ─────────────────────────────────
  * The cursor follows the last character of streaming Markdown output.
- * Using ::after on the last child of .streaming-content ensures the cursor
- * appears at the end of the rendered content, not on a separate line.
+ *
+ * Selector: .streaming-content .markdown-body > :last-child::after
+ *   — .markdown-body is the MarkdownRenderer root (a <div>)
+ *   — > :last-child targets the last block element inside it (usually <p>)
+ *   — ::after on a <p> places the cursor at the END of the inline text,
+ *     NOT on a new line (which happened with the old selector that targeted
+ *     .markdown-body itself — ::after on a block-level div goes after all
+ *     its block children, creating a phantom empty line).
  */
 @keyframes streaming-cursor-blink {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0; }
 }
-.streaming-content > :last-child::after {
+.streaming-content .markdown-body > :last-child::after {
   content: '';
   display: inline-block;
   vertical-align: text-bottom;
@@ -630,6 +636,24 @@
   margin-left: 2px;
   background-color: var(--accent);
   animation: streaming-cursor-blink 1s ease-in-out infinite;
+}
+
+/* ── Typewriter fade-in effect ──────────────────────────────────────────────
+ * While the typewriter is revealing text, the trailing edge fades from
+ * semi-transparent to full opacity. This creates a smooth "text materializing"
+ * effect that the TUI can't do (TUI is character-by-character only).
+ *
+ * The mask fades the last ~1.5em of content to 35% opacity while typing,
+ * then snaps to full opacity when typing completes.
+ */
+.typewriter-fade {
+  mask-image: linear-gradient(180deg, black 0%, black calc(100% - 1.5em), rgba(0, 0, 0, 0.35) 100%);
+  -webkit-mask-image: linear-gradient(180deg, black 0%, black calc(100% - 1.5em), rgba(0, 0, 0, 0.35) 100%);
+  transition: mask-image 0.2s ease-out, -webkit-mask-image 0.2s ease-out;
+}
+.typewriter-done {
+  mask-image: none;
+  -webkit-mask-image: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

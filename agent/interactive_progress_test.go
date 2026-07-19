@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	channelpkg "xbot/channel"
 	"xbot/llm"
 	"xbot/protocol"
 )
@@ -15,6 +16,61 @@ import (
 // This is the core fix: before, only ProgressNotifier gated autoNotify,
 // so background SubAgents with only ProgressEventHandler had autoNotify=false
 // and all progress events were silently dropped.
+type recordingProgressChannel struct {
+	name   string
+	events []*protocol.ProgressEvent
+}
+
+func (c *recordingProgressChannel) Name() string { return c.name }
+func (c *recordingProgressChannel) Start() error { return nil }
+func (c *recordingProgressChannel) Stop()        {}
+func (c *recordingProgressChannel) Send(channelpkg.OutboundMsg) (string, error) {
+	return "", nil
+}
+func (c *recordingProgressChannel) SendProgress(_ string, event *protocol.ProgressEvent) {
+	c.events = append(c.events, event)
+}
+func (c *recordingProgressChannel) SendStreamContent(_, _, _ string) {}
+
+func TestBuildProgressEventHandler_BroadcastsOneSemanticLogToAllChannels(t *testing.T) {
+	a := NewTestAgent()
+	cliChannel := &recordingProgressChannel{name: "cli"}
+	webChannel := &recordingProgressChannel{name: "web"}
+	pluginChannel := &recordingProgressChannel{name: "plugin-test"}
+	channels := []channelpkg.Channel{cliChannel, webChannel, pluginChannel}
+	a.channelRange = func(fn func(name string, ch channelpkg.Channel) bool) {
+		for _, ch := range channels {
+			if !fn(ch.Name(), ch) {
+				return
+			}
+		}
+	}
+
+	handler := a.buildProgressEventHandler("chat-1", "web")
+	if handler == nil {
+		t.Fatal("buildProgressEventHandler returned nil")
+	}
+	handler(&ProgressEvent{Structured: &StructuredProgress{
+		Seq: 1, Phase: PhaseToolExec, Iteration: 1,
+		CompletedTools: []ToolProgress{{Name: "Skill", Label: "debug", Status: ToolDone, Iteration: 1}},
+	}})
+	handler(&ProgressEvent{Structured: &StructuredProgress{
+		Seq: 2, Phase: PhaseThinking, Iteration: 2,
+	}})
+
+	for _, ch := range []*recordingProgressChannel{cliChannel, webChannel, pluginChannel} {
+		if len(ch.events) != 2 {
+			t.Fatalf("%s received %d events, want 2", ch.name, len(ch.events))
+		}
+		if ch.events[0] == cliChannel.events[0] && ch != cliChannel {
+			t.Fatalf("%s received a shared mutable event pointer", ch.name)
+		}
+		if len(ch.events[1].IterationHistory) != 1 || ch.events[1].IterationHistory[0].Iteration != 1 {
+			t.Fatalf("%s delta = %#v, want iteration 1 exactly once", ch.name, ch.events[1].IterationHistory)
+		}
+	}
+}
+
 func TestAutoNotify_DerivedFromBothHandlers(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -60,12 +116,12 @@ func TestAutoNotify_DerivedFromBothHandlers(t *testing.T) {
 
 // TestBackgroundMode_AutoNotifyViaEventHandler verifies the actual bug scenario:
 // background interactive SubAgent has no ProgressNotifier but does have
-// ProgressEventHandler (set by wireSubAgentCLIProgress). autoNotify must be true.
+// ProgressEventHandler (set by wireSubAgentProgress). autoNotify must be true.
 func TestBackgroundMode_AutoNotifyViaEventHandler(t *testing.T) {
 	cfg := RunConfig{
 		// Background mode: ProgressNotifier is nil
 		ProgressNotifier: nil,
-		// wireSubAgentCLIProgress sets this for background mode
+		// wireSubAgentProgress sets this for background mode
 		ProgressEventHandler: func(event *ProgressEvent) {},
 	}
 	autoNotify := cfg.ProgressNotifier != nil || cfg.ProgressEventHandler != nil
@@ -94,7 +150,7 @@ func TestGetActiveProgress_BackgroundInteractive(t *testing.T) {
 		{Phase: "running", Iteration: 3},
 	})
 
-	result := a.GetActiveProgress("agent", interactiveKey, 0)
+	result := a.GetActiveProgress("agent", interactiveKey, protocol.FetchAll())
 	if result == nil {
 		t.Fatal("GetActiveProgress returned nil")
 		return
@@ -111,7 +167,7 @@ func TestGetActiveProgress_BackgroundInteractive_FinishedAgent(t *testing.T) {
 	a.interactiveSubAgents.Store(key, ia)
 	a.lastProgressSnapshot.Store("agent:"+key, &protocol.ProgressEvent{Phase: "done", Iteration: 5})
 
-	result := a.GetActiveProgress("agent", key, 0)
+	result := a.GetActiveProgress("agent", key, protocol.FetchAll())
 	if result == nil {
 		t.Fatal("nil")
 		return
@@ -123,7 +179,7 @@ func TestGetActiveProgress_BackgroundInteractive_FinishedAgent(t *testing.T) {
 
 func TestGetActiveProgress_BackgroundInteractive_NoSnapshot(t *testing.T) {
 	a := NewTestAgent()
-	if result := a.GetActiveProgress("agent", "cli:/cwd/r:i", 0); result != nil {
+	if result := a.GetActiveProgress("agent", "cli:/cwd/r:i", protocol.FetchAll()); result != nil {
 		t.Errorf("expected nil, got Phase=%q", result.Phase)
 	}
 }
@@ -139,7 +195,7 @@ func TestGetActiveProgress_KeyFormatConsistency(t *testing.T) {
 		ChatID: agentProgressKey, Phase: "done", Iteration: 1,
 	})
 
-	result := a.GetActiveProgress("agent", interactiveKey, 0)
+	result := a.GetActiveProgress("agent", interactiveKey, protocol.FetchAll())
 	if result == nil {
 		t.Fatal("snapshot lookup failed — key format mismatch")
 		return
@@ -252,7 +308,7 @@ func TestGetActiveProgress_WatermarkFilter(t *testing.T) {
 	})
 
 	// fromIter=2: should return only iteration 3
-	result := a.GetActiveProgress("cli", "/cwd", 2)
+	result := a.GetActiveProgress("cli", "/cwd", protocol.FetchSinceWatermark(2))
 	if result == nil {
 		t.Fatal("nil")
 	}
@@ -264,13 +320,13 @@ func TestGetActiveProgress_WatermarkFilter(t *testing.T) {
 	}
 
 	// fromIter=0: should return all 3 iterations
-	result = a.GetActiveProgress("cli", "/cwd", 0)
+	result = a.GetActiveProgress("cli", "/cwd", protocol.FetchAll())
 	if len(result.IterationHistory) != 3 {
 		t.Fatalf("expected 3 iterations with fromIter=0, got %d", len(result.IterationHistory))
 	}
 
 	// fromIter=3: should return 0 iterations
-	result = a.GetActiveProgress("cli", "/cwd", 3)
+	result = a.GetActiveProgress("cli", "/cwd", protocol.FetchSinceWatermark(3))
 	if len(result.IterationHistory) != 0 {
 		t.Fatalf("expected 0 iterations with fromIter=3, got %d", len(result.IterationHistory))
 	}

@@ -88,6 +88,7 @@ export function MessageList({
   const lastRowCountRef = useRef(0)
   const lastFollowResetTokenRef = useRef(followResetToken)
   const lastTouchYRef = useRef<number | null>(null)
+  const pointerScrollingRef = useRef(false)
 
   // React state mirrors for re-rendering UI elements (bubble, nav buttons)
   const [hasNewContent, setHasNewContent] = useState(false)
@@ -98,18 +99,51 @@ export function MessageList({
   const { t } = useI18n()
 
   // Combined row list: committed messages + optional live streaming row.
-  // Dedup: if liveMessage content matches the last committed assistant message,
-  // skip adding liveMessage (prevents one-frame overlap during finalize).
+  //
+  // ALWAYS remove intermediate assistant messages after the last user message.
+  // ConvertMessagesToHistory can split one turn into multiple assistant
+  // messages (when a Content assistant appears between ToolCalls). Without
+  // this, both assistants render the same tools — once from DB iterations
+  // and once from the progress snapshot — causing duplicates.
+  // Only the LAST assistant after the last user message is kept; all earlier
+  // ones are absorbed (their tools are in the snapshot or in the last
+  // assistant's iterations).
   const rows = useMemo<ChatMessage[]>(() => {
-    if (!liveMessage) return messages
+    // Remove intermediate assistant messages after the last user message.
+    // Only apply when the last message is an assistant (active turn) —
+    // if the last message is a user message, ALL previous assistants are
+    // from completed turns and must be preserved.
     const last = messages[messages.length - 1]
-    if (last && last.role === 'assistant' && last.content && liveMessage.content &&
-        last.content === liveMessage.content) {
-      return messages
+    const deduped = [...messages]
+    if (last && last.role === 'assistant') {
+      for (let i = deduped.length - 2; i >= 0; i--) {
+        if (deduped[i].role === 'user') break
+        if (deduped[i].role === 'assistant') deduped.splice(i, 1)
+      }
     }
-    return [...messages, liveMessage]
+
+    if (!liveMessage) return deduped
+    const lastDeduped = deduped[deduped.length - 1]
+    if (lastDeduped && lastDeduped.role === 'assistant' &&
+        lastDeduped.eventSeq != null && liveMessage.eventSeq != null &&
+        lastDeduped.eventSeq === liveMessage.eventSeq) {
+      return deduped
+    }
+    // Active turn: last persisted assistant is the in-flight streaming slot.
+    if (lastDeduped && lastDeduped.role === 'assistant' && liveMessage.isPartial) {
+      return deduped
+    }
+    return [...deduped, liveMessage]
   }, [messages, liveMessage])
-  const liveId = liveMessage?.id ?? null
+  // liveId points to the row that receives liveProgress. When the last
+  // history assistant is the active turn, it IS the streaming slot.
+  const liveId = liveMessage
+    ? (messages.length > 0 &&
+       messages[messages.length - 1].role === 'assistant' &&
+       liveMessage.isPartial
+        ? messages[messages.length - 1].id
+        : liveMessage.id)
+    : null
   const compactBoundaryIndex = useMemo(() => latestCompactBoundaryIndex(rows), [rows])
   const hasFooter = footer !== null && footer !== undefined
 
@@ -164,8 +198,10 @@ export function MessageList({
     // Only setState when values actually change to avoid unnecessary re-renders
     setAtTop((prev) => (prev === atStart ? prev : atStart))
     setAtBottom((prev) => (prev === atEnd ? prev : atEnd))
+    // A scroll event alone does not prove user intent: content/virtualizer
+    // resizing can emit scroll while the old scrollTop temporarily trails the
+    // new scrollHeight. Only explicit input handlers pause follow mode.
     if (atEnd) resumeFollowing()
-    else pauseFollowing()
     // Update visible range for nav button state — only when range changes
     const items = virtualizer.getVirtualItems()
     if (items.length > 0) {
@@ -177,7 +213,7 @@ export function MessageList({
           : { start: newStart, end: newEnd },
       )
     }
-  }, [pauseFollowing, resumeFollowing, virtualizer])
+  }, [resumeFollowing, virtualizer])
 
   // ── User scroll detection ─────────────────────────────────────────────────
   const onWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
@@ -217,16 +253,21 @@ export function MessageList({
     }
   }, [cancelPendingFollow, scheduleFollow])
 
-  // ── Chat switch: force scroll to bottom ────────────────────────────────────
+  // ── Chat switch or new messages: follow bottom when sticky ────────────────
   useLayoutEffect(() => {
     const el = scrollRef.current
     const chatChanged = lastChatKeyRef.current !== chatKey
     const initialLoad = !chatChanged && lastRowCountRef.current === 0 && rows.length > 0
     const followReset = lastFollowResetTokenRef.current !== followResetToken
+    const newMessagesAdded = !chatChanged && !initialLoad && !followReset && rows.length > lastRowCountRef.current
     lastChatKeyRef.current = chatKey
     lastRowCountRef.current = rows.length
     lastFollowResetTokenRef.current = followResetToken
-    if (!el || rows.length === 0 || (!chatChanged && !initialLoad && !followReset)) return
+    if (!el || rows.length === 0 || (!chatChanged && !initialLoad && !followReset && !newMessagesAdded)) return
+    // If new messages were added (e.g. by background reload after assistant
+    // completion), only follow if already sticky — don't yank the user down
+    // if they scrolled up.
+    if (newMessagesAdded && !stickToBottomRef.current) return
     resumeFollowing()
     scheduleFollow()
   }, [chatKey, followResetToken, rows.length, resumeFollowing, scheduleFollow])
@@ -271,6 +312,18 @@ export function MessageList({
         ref={scrollRef}
         onScroll={onScroll}
         onWheel={onWheel}
+        onPointerDown={(e) => {
+          if (e.pointerType === 'mouse') pointerScrollingRef.current = true
+        }}
+        onPointerMove={(e) => {
+          if (pointerScrollingRef.current && e.pointerType === 'mouse') pauseFollowing()
+        }}
+        onPointerUp={() => {
+          pointerScrollingRef.current = false
+        }}
+        onPointerCancel={() => {
+          pointerScrollingRef.current = false
+        }}
         onTouchMove={(e) => {
           // Only break sticky on upward touch scroll (finger moving down = content scrolling up = user reading up)
           const touch = e.touches[0]

@@ -58,6 +58,22 @@ describe('MarkdownRenderer', () => {
     expect(container.querySelector('.katex-display')).not.toBeNull()
   })
 
+  it('renders LaTeX-style inline and display delimiters', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'Inline \\(x^2\\) here.\n\n\\[\nE=mc^2\n\\]'} />,
+    )
+    expect(container.querySelectorAll('.katex').length).toBeGreaterThan(0)
+    expect(container.querySelector('.katex-display')).not.toBeNull()
+  })
+
+  it('does not convert LaTeX delimiters inside fenced code', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'```tex\n\\[not math\\]\n```'} />,
+    )
+    expect(container.querySelector('.katex')).toBeNull()
+    expect(container.querySelector('code')).toHaveTextContent('\\[not math\\]')
+  })
+
   it('renders links with safe target/rel', () => {
     const { container } = render(
       <MarkdownRenderer content={'[xbot](https://example.com)'} />,
@@ -70,6 +86,20 @@ describe('MarkdownRenderer', () => {
   it('renders strikethrough via GFM', () => {
     const { container } = render(<MarkdownRenderer content={'~~deleted~~'} />)
     expect(container.querySelector('del')).not.toBeNull()
+  })
+
+  it('clips already-rendered markdown on typewriter ticks without replacing the tree', () => {
+    const { container, rerender } = render(
+      <MarkdownRenderer content={'Hello **world**'} streaming visibleChars={5} />,
+    )
+    const paragraph = container.querySelector('p')
+    expect(container.textContent).toBe('Hello')
+
+    rerender(<MarkdownRenderer content={'Hello **world**'} streaming visibleChars={11} />)
+
+    expect(container.querySelector('p')).toBe(paragraph)
+    expect(container.textContent).toBe('Hello world')
+    expect(container.querySelector('strong')).toHaveTextContent('world')
   })
 
   it('memoizes: re-render with same content keeps the same DOM text', () => {

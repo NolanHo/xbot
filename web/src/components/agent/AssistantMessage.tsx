@@ -36,16 +36,34 @@ interface AssistantMessageProps {
 
 function AssistantMessageImpl({ message, progress, collapseLevel, mergeTools = true }: AssistantMessageProps) {
   const { t } = useI18n()
-  // Source iterations: prefer committed message.iterations, fall back to live progress.
-  const iterations = message.iterations?.length > 0
-    ? message.iterations
-    : progress?.iterationHistory ?? []
+  // ── Single source of truth ──────────────────────────────────────────
+  // When a LIVE progress snapshot exists (phase != "done"), the snapshot is
+  // the sole authority for the active turn:
+  //   - Completed iterations ← progress.iterationHistory (snapshot only,
+  //     NEVER message.iterations from DB — those overlap with completedTools)
+  //   - Current in-flight iteration ← LiveIteration (rendered by TurnBody
+  //     via liveProgress, with SweepText animation + running indicator)
+  //
+  // When no live progress exists (phase="done" or null), DB history's
+  // message.iterations is authoritative — no transformation needed.
+  const hasLiveProgress = progress != null && progress.phase !== 'done'
 
-  const isStreaming = message.isPartial
-  // During streaming, always use 'minimal' level (detailed fold).
-  // 'all' (complete fold) is only for completed messages.
+  // Completed iterations: snapshot when live, DB when not.
+  // CRITICAL: when live, use progress.iterationHistory exclusively — even
+  // if empty. message.iterations from DB contains the active turn's tools
+  // (incremental persistence), which overlap with LiveIteration's tools.
+  const iterations = hasLiveProgress
+    ? (progress.iterationHistory ?? [])
+    : (message.iterations ?? [])
+
+  // LiveIteration renders the current in-flight iteration. It has its own
+  // tool filtering (by iteration number) so it won't duplicate completed
+  // iterations. Pass the real progress when live, null when done.
+  const liveProgress: LiveProgress | null = hasLiveProgress ? progress : null
+
+  const isStreaming = message.isPartial || hasLiveProgress
   const effectiveLevel: CollapseLevel = isStreaming ? 'minimal' : collapseLevel
-  const liveProgress = isStreaming ? progress : null
+
   const hasReasoning = Boolean(progress?.reasoningStreamContent || progress?.lastReasoning)
   const hasToolInProgress = progress
     ? progress.streamingTools.some((tool) => isToolInProgress(tool.status)) ||

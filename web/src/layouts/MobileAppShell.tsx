@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Bot, Files, Info, ListChecks, Menu, Plus, Search } from 'lucide-react'
+import { Bot, Files, Info, ListChecks, Menu, Plus, Search, Settings } from 'lucide-react'
 
 import { AgentPanel } from '@/workspace/panels/AgentPanel'
 import { FileExplorer } from '@/components/sidebar/FileExplorer'
@@ -92,13 +92,16 @@ export function MobileAppShell() {
     <DockviewContext.Provider value={ctxValue}>
       <RightSidebarControlContext.Provider value={rightSidebar}>
         <div className="flex h-dvh w-full flex-col overflow-hidden bg-bg-primary text-text-primary">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-2">
+          <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-2">
             <Button type="button" variant="ghost" size="icon-sm" aria-label={t('sidebar.sessions')} onClick={() => setDrawerOpen(true)}>
               <Menu />
             </Button>
             <div className="min-w-0 flex-1 truncate text-sm font-medium">{title}</div>
             <Button type="button" variant="ghost" size="icon-sm" aria-label={t('session.newSession')} onClick={() => void createSession()}>
               <Plus />
+            </Button>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label={t('settings.appearance')} onClick={() => setSettingsOpen(true)}>
+              <Settings className="size-4" />
             </Button>
           </header>
 

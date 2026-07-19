@@ -103,6 +103,13 @@ export function AgentPanel({ params }: PanelProps) {
   })
   const reloadChat = chat.reload
   const sessionContext = useSessionContext(messageChannel, isSubAgent ? null : chatID)
+  // Track whether onAssistantComplete already triggered a reload for the
+  // current turn. Prevents the SubAgent session event handler from firing
+  // a redundant concurrent reload that causes message list jitter.
+  const reloadForTurnRef = useRef(false)
+  // Ref to hold resetProgress so the onSession effect can call it without
+  // depending on the progress object (which is defined later).
+  const resetProgressRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const wasSubscribed = wasSubscribedRef.current
@@ -118,6 +125,15 @@ export function AgentPanel({ params }: PanelProps) {
       if ((params.subAgentInstance ?? '') && ev.instance !== params.subAgentInstance) return
       const parentID = ev.parent_id || ev.chat_id
       if (!params.agentChatID && params.parentChatID && parentID && parentID !== params.parentChatID) return
+      // When the SubAgent session transitions to idle/done, reset the
+      // progress store. SubAgent panels never receive `text` or `session(idle)`
+      // events directly (those carry the parent's chatID), so the store
+      // would stay in finalizing state forever without this reset.
+      if (ev.action !== 'busy') {
+        resetProgressRef.current()
+      }
+      // Skip if onAssistantComplete already triggered a reload for this turn.
+      if (reloadForTurnRef.current) return
       void reloadChat()
     })
   }, [isSubAgent, params.agentChatID, params.parentChatID, params.subAgentInstance, params.subAgentRole, reloadChat, ws])
@@ -131,7 +147,10 @@ export function AgentPanel({ params }: PanelProps) {
       // message list. SubAgent panels previously had onAssistantComplete=undefined,
       // causing the final reply to never appear in the message list.
       chat.appendAssistant(finalText, iterations)
-      void chat.reload()
+      reloadForTurnRef.current = true
+      void chat.reload().finally(() => {
+        reloadForTurnRef.current = false
+      })
       void sessionContext.refresh()
     },
     ws,
@@ -146,6 +165,8 @@ export function AgentPanel({ params }: PanelProps) {
     },
     disabled: false, // Always enabled — SSE subscription managed by useActiveSSESubscription
   })
+  // Wire resetProgress to the ref so the onSession effect can call it.
+  resetProgressRef.current = progress.resetProgress
   const progressSnapshot = progress.progressSnapshot
   const liveMessage = progress.liveMessage
   const isStreaming = progress.isStreaming

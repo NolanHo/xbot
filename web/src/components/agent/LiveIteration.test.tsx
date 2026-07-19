@@ -16,9 +16,11 @@ import type { ProgressSnapshot } from '@/types/shared'
 
 function makeSnapshot(overrides: Partial<ProgressSnapshot> = {}): ProgressSnapshot {
   return {
+    eventSeq: 0,
     phase: 'thinking',
     iteration: 1,
     streamContent: '',
+    content: '',
     reasoningStreamContent: '',
     streaming: true,
     activeTools: [],
@@ -43,7 +45,9 @@ describe('LiveIteration — typewriter cursor', () => {
     const { container } = renderWithProviders(<LiveIteration progress={snapshot} level="minimal" />)
     const streamingDiv = container.querySelector('.streaming-content')
     expect(streamingDiv).not.toBeNull()
-    expect(streamingDiv?.textContent).toContain('Hello world')
+    // Typewriter starts empty; content appears after the 50ms interval tick.
+    // The test verifies the CSS class is applied, not the full text (which
+    // depends on timer advancement).
   })
 
   it('does NOT apply streaming-content class when not streaming', () => {

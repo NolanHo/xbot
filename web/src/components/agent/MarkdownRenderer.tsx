@@ -15,7 +15,7 @@
  * not set, but raw HTML nodes are not present from remark output), and we only
  * pass through highlight.js token spans we generated ourselves.
  */
-import { memo, useCallback, useEffect, useState, type ComponentPropsWithoutRef } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -29,20 +29,25 @@ import { cn } from '@/lib/utils'
 interface MarkdownRendererProps {
   content: string
   className?: string
+  /** True while the source is live; keeps the rendered markdown current. */
+  streaming?: boolean
+  /** Number of source characters to reveal without re-parsing markdown. */
+  visibleChars?: number
 }
 
 /**
- * Debounce a value by `delay` ms. During streaming, content arrives at ~60fps;
- * debouncing to ~150ms reduces Markdown parse frequency from 60fps → ~6fps.
- * The 150ms delay is imperceptible to users.
+ * Debounce a value by `delay` ms. During non-streaming renders, this reduces
+ * Markdown parse frequency. During streaming (typewriter), `streaming` prop
+ * bypasses the debounce so each 50ms tick renders immediately.
  */
-function useDebouncedValue<T>(value: T, delay: number): T {
+function useDebouncedValue<T>(value: T, delay: number, enabled: boolean): T {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
+    if (!enabled) return // bypass: use raw value
     const timer = setTimeout(() => setDebounced(value), delay)
     return () => clearTimeout(timer)
-  }, [value, delay])
-  return debounced
+  }, [value, delay, enabled])
+  return enabled ? debounced : value
 }
 
 /**
@@ -169,20 +174,103 @@ const COMPONENTS = {
 const REMARK_PLUGINS: PluggableList = [remarkGfm, remarkMath]
 const REHYPE_PLUGINS: PluggableList = [[rehypeKatex, { throwOnError: false }]]
 
+/**
+ * remark-math follows Markdown math syntax ($ / $$), while models commonly
+ * emit TeX delimiters (\\( / \\[). Normalize only outside fenced and inline
+ * code so both notations reach the same authoritative remark-math parser.
+ */
+function normalizeMathDelimiters(markdown: string): string {
+  const lines = markdown.split('\n')
+  let fence = ''
+  return lines.map((line) => {
+    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0]
+      if (!fence) fence = marker
+      else if (fence === marker) fence = ''
+      return line
+    }
+    if (fence) return line
+
+    const parts = line.split(/(`+[^`]*`+)/g)
+    return parts.map((part, index) => {
+      if (index % 2 === 1) return part
+      return part
+        .replace(/\\\[/g, () => '$$')
+        .replace(/\\\]/g, () => '$$')
+        .replace(/\\\(/g, () => '$')
+        .replace(/\\\)/g, () => '$')
+    }).join('')
+  }).join('\n')
+}
+
+function clipTextNodes(root: HTMLElement, visibleChars: number): void {
+  let remaining = Math.max(0, visibleChars)
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  let node: Node | null
+  while ((node = walker.nextNode())) nodes.push(node as Text)
+  for (const text of nodes) {
+    const source = text.data
+    const runes = Array.from(source)
+    if (remaining >= runes.length) {
+      remaining -= runes.length
+      continue
+    }
+    text.data = runes.slice(0, remaining).join('')
+    remaining = 0
+    for (const rest of nodes.slice(nodes.indexOf(text) + 1)) rest.data = ''
+    break
+  }
+}
+
+const ParsedMarkdown = memo(function ParsedMarkdown({ content }: { content: string }) {
+  return (
+    <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
+      {normalizeMathDelimiters(content)}
+    </Markdown>
+  )
+})
+
 export const MarkdownRenderer = memo(function MarkdownRenderer({
   content,
   className,
+  streaming = false,
+  visibleChars,
 }: MarkdownRendererProps) {
-  const debouncedContent = useDebouncedValue(content, 150)
+  const debouncedContent = useDebouncedValue(content, 150, !streaming)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const sourceRef = useRef(new Map<Text, string>())
+  const sourceContentRef = useRef<string | null>(null)
+
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root || visibleChars === undefined) return
+    // On a new parsed source, discard node identities from the previous
+    // markdown tree. On typewriter ticks, restore each node from the source
+    // captured on the previous full render before clipping it again.
+    if (sourceContentRef.current !== debouncedContent) {
+      sourceRef.current.clear()
+      sourceContentRef.current = debouncedContent
+    }
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    const nodes: Text[] = []
+    let node: Node | null
+    while ((node = walker.nextNode())) {
+      const text = node as Text
+      if (!sourceRef.current.has(text)) sourceRef.current.set(text, text.data)
+      text.data = sourceRef.current.get(text) ?? text.data
+      nodes.push(text)
+    }
+    clipTextNodes(root, visibleChars)
+  }, [visibleChars, debouncedContent])
+
   return (
-    <div className={cn('markdown-body text-sm leading-relaxed', className)}>
-      <Markdown
-        remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
-        components={COMPONENTS}
-      >
-        {debouncedContent}
-      </Markdown>
+    <div ref={rootRef} className={cn('markdown-body text-sm leading-relaxed', className)}>
+      <ParsedMarkdown content={debouncedContent} />
     </div>
   )
-})
+}, (prev, next) => (
+  prev.content === next.content && prev.className === next.className &&
+  prev.streaming === next.streaming && prev.visibleChars === next.visibleChars
+))

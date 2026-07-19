@@ -1055,6 +1055,105 @@ func (f *LLMFactory) ListAllModelEntriesForUser(senderID string) []protocol.Mode
 	return f.listModelEntriesCore(senderID, true)
 }
 
+// ListAllModelEntriesForUserID returns model entries for a canonical user_id.
+// Uses ListByUserID instead of List(senderID).
+func (f *LLMFactory) ListAllModelEntriesForUserID(userID int64) []protocol.ModelEntry {
+	return f.listModelEntriesCoreByUserID(userID, true)
+}
+
+// ListAllModelsForUserID returns model names for a canonical user_id.
+func (f *LLMFactory) ListAllModelsForUserID(userID int64) []string {
+	entries := f.listModelEntriesCoreByUserID(userID, false)
+	result := make([]string, 0, len(entries))
+	seen := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if seen[e.Model] {
+			continue
+		}
+		seen[e.Model] = true
+		result = append(result, e.Model)
+	}
+	return result
+}
+
+// listModelEntriesCoreByUserID is the canonical-user-scoped variant of
+// listModelEntriesCore. It queries subscriptions by user_id instead of
+// sender_id, so all identities linked to the same user see the same data.
+func (f *LLMFactory) listModelEntriesCoreByUserID(userID int64, includeDisabled bool) []protocol.ModelEntry {
+	seen := make(map[string]bool)
+	var result []protocol.ModelEntry
+	add := func(subID, subName, model, status string) {
+		if model == "" {
+			return
+		}
+		key := subID + "\x00" + model
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		result = append(result, protocol.ModelEntry{SubID: subID, SubName: subName, Model: model, Status: status})
+	}
+	const systemModelLabel = "system"
+	if f.subscriptionSvc == nil {
+		for _, m := range f.defaultLLM.ListModels() {
+			add("", systemModelLabel, m, "normal")
+		}
+		return result
+	}
+	subs, err := f.subscriptionSvc.ListByUserID(userID)
+	if err != nil || len(subs) == 0 {
+		return result
+	}
+
+	type subInfo struct {
+		sub   *sqlite.LLMSubscription
+		rows  []*sqlite.SubscriptionModel
+		rowEn map[string]bool
+	}
+	infos := make([]subInfo, 0, len(subs))
+	for _, sub := range subs {
+		if !sub.Enabled {
+			continue
+		}
+		rows, _ := f.subscriptionSvc.GetModels(sub.ID)
+		rowEn := make(map[string]bool, len(rows))
+		for _, r := range rows {
+			rowEn[r.Model] = r.Enabled
+		}
+		infos = append(infos, subInfo{sub: sub, rows: rows, rowEn: rowEn})
+	}
+	for _, info := range infos {
+		sub := info.sub
+		subName := sub.Name
+		if sub.IsSystem {
+			subName = systemModelLabel
+		}
+		emitted := make(map[string]bool)
+		for _, r := range info.rows {
+			status := "normal"
+			if !r.Enabled {
+				if !includeDisabled {
+					continue
+				}
+				status = "disabled"
+			}
+			add(sub.ID, subName, r.Model, status)
+			emitted[r.Model] = true
+		}
+		if sub.Model != "" && !emitted[sub.Model] {
+			status := "normal"
+			if en, ok := info.rowEn[sub.Model]; ok && !en {
+				if !includeDisabled {
+					continue
+				}
+				status = "disabled"
+			}
+			add(sub.ID, subName, sub.Model, status)
+		}
+	}
+	return result
+}
+
 // listModelEntriesCore is the shared DB-driven list builder.
 //   - includeDisabled=true: emit every (subscription, model) pair (normal/offline/disabled)
 //     for the picker — same model name served by different subscriptions is listed
@@ -1182,6 +1281,25 @@ func (f *LLMFactory) RefreshModelEntriesForUser(senderID string) []protocol.Mode
 	return entries
 }
 
+// RefreshModelEntriesForUserID refreshes models for a canonical user_id.
+func (f *LLMFactory) RefreshModelEntriesForUserID(userID int64) []protocol.ModelEntry {
+	entries, _ := f.RefreshModelEntriesForUserIDWithResults(userID)
+	return entries
+}
+
+// RefreshModelEntriesForUserIDWithResults is the canonical-user variant.
+func (f *LLMFactory) RefreshModelEntriesForUserIDWithResults(userID int64) ([]protocol.ModelEntry, []RefreshResult) {
+	if f.subscriptionSvc == nil {
+		return f.ListAllModelEntriesForUserID(userID), nil
+	}
+	subs, err := f.subscriptionSvc.ListByUserID(userID)
+	if err != nil {
+		return f.ListAllModelEntriesForUserID(userID), nil
+	}
+	results := f.refreshModelEntriesCore(subs)
+	return f.ListAllModelEntriesForUserID(userID), results
+}
+
 // RefreshModelEntriesForUserWithResults is the extended variant that also
 // returns per-subscription refresh outcomes. Used by /models so the user can
 // see which subscriptions refreshed successfully and which failed (and why),
@@ -1200,7 +1318,14 @@ func (f *LLMFactory) RefreshModelEntriesForUserWithResults(senderID string) ([]p
 	if err != nil {
 		return f.ListAllModelEntriesForUser(senderID), nil
 	}
+	results := f.refreshModelEntriesCore(subs)
+	return f.ListAllModelEntriesForUser(senderID), results
+}
 
+// refreshModelEntriesCore is the shared refresh logic for both senderID and
+// userID variants. It fetches /models for each enabled subscription, upserts
+// results into subscription_models via OnModelsLoaded, and returns per-sub results.
+func (f *LLMFactory) refreshModelEntriesCore(subs []*sqlite.LLMSubscription) []RefreshResult {
 	// Collect results keyed by sub ID so the summary is stable regardless of
 	// goroutine completion order. Preserves subscription list order.
 	results := make([]RefreshResult, 0, len(subs))
@@ -1215,7 +1340,6 @@ func (f *LLMFactory) RefreshModelEntriesForUserWithResults(senderID string) ([]p
 			r.Error = "missing base_url or api_key"
 			log.WithFields(log.Fields{"sub": sub.Name, "has_baseurl": sub.BaseURL != "", "has_apikey": sub.APIKey != ""}).Debug("[LLM] RefreshModelEntries: skipping sub (missing base_url or api_key)")
 		default:
-			// placeholder; filled in by the goroutine below.
 			r.Status = "pending"
 		}
 		results = append(results, r)
@@ -1235,7 +1359,6 @@ func (f *LLMFactory) RefreshModelEntriesForUserWithResults(senderID string) ([]p
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			r := resultByID[s.ID]
-			// /models fetch only needs credentials — model name is irrelevant.
 			client := f.createClientFromSub(s, "")
 			if client == nil {
 				r.Status = "noclient"
@@ -1245,7 +1368,6 @@ func (f *LLMFactory) RefreshModelEntriesForUserWithResults(senderID string) ([]p
 			loader, ok := client.(llm.ModelLoader)
 			if !ok {
 				r.Status = "noloader"
-				// Anthropic etc. don't expose /models; not an error, just unsupported.
 				return
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -1256,7 +1378,6 @@ func (f *LLMFactory) RefreshModelEntriesForUserWithResults(senderID string) ([]p
 				log.WithFields(log.Fields{"sub": s.Name, "base_url": s.BaseURL, "has_apikey": s.APIKey != "", "err": err.Error()}).Warn("[LLM] RefreshModelEntries: /models fetch failed")
 				return
 			}
-			// Re-read to count subscription_models rows (OnModelsLoaded upserts them).
 			r.Status = "ok"
 			if models, gerr := f.subscriptionSvc.GetModels(s.ID); gerr == nil {
 				r.ModelCount = len(models)
@@ -1264,7 +1385,7 @@ func (f *LLMFactory) RefreshModelEntriesForUserWithResults(senderID string) ([]p
 		}(sub)
 	}
 	wg.Wait()
-	return f.ListAllModelEntriesForUser(senderID), results
+	return results
 }
 
 // truncateErrMsg shortens an error message for user-facing display. Long SDK

@@ -275,6 +275,10 @@ export interface WebToolProgress {
   detail: string
   args: string
   toolHints: string
+  /** Iteration number this tool belongs to (from server). Used to filter
+   * cross-iteration tool pollution — completedTools should only contain
+   * tools from the CURRENT iteration, not all iterations. */
+  iteration?: number
 }
 
 /** Iteration snapshot — one completed iteration's reasoning + tools. */
@@ -297,10 +301,16 @@ export interface WebIteration {
  * `completedTools`) are replaced by progress_structured events.
  */
 export interface ProgressSnapshot {
+  /** Monotonic semantic progress-log ID from protocol.ProgressEvent.Seq. */
+  eventSeq: number
   phase: string
   iteration: number
   streamContent: string
   reasoningStreamContent: string
+  /** Structured content from progress_structured events — fallback for
+   * text output when streamContent is empty (server may send text via
+   * structured events instead of stream_content). */
+  content: string
   streaming: boolean
   activeTools: WebToolProgress[]
   completedTools: WebToolProgress[]
@@ -325,10 +335,12 @@ export interface TokenUsageInfo {
 
 /** Empty snapshot — the idle state. */
 export const EMPTY_PROGRESS_SNAPSHOT: ProgressSnapshot = {
+  eventSeq: 0,
   phase: '',
   iteration: 0,
   streamContent: '',
   reasoningStreamContent: '',
+  content: '',
   streaming: false,
   activeTools: [],
   completedTools: [],

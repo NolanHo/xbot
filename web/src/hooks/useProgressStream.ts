@@ -80,6 +80,8 @@ export interface UseProgressStreamResult {
   liveMessage: ChatMessage | null
   /** True while there is accumulated streaming content. */
   isStreaming: boolean
+  /** Reset the progress store (clear live message + iterations). */
+  resetProgress: () => void
 }
 
 /**
@@ -178,9 +180,17 @@ export function useProgressStream({
       }
       return
     }
+    // Don't re-hydrate after finalization — the turn is over, and the
+    // server's active_progress may be stale (not yet cleaned up). Only
+    // hydrate if we haven't started receiving live events for this turn
+    // (finalizedRef is false AND store is empty = fresh load/reconnect).
+    if (finalizedRef.current) return
+    const currentSnap = store.getSnapshot()
     const live = historyProgressToLive(initialProgress)
-    // Only hydrate if we got something meaningful (non-empty snapshot)
-    if (live.phase) {
+    // Install a newer authoritative snapshot even when a cache snapshot is
+    // already visible. Seq is the semantic watermark; older/equal snapshots
+    // cannot overwrite live state.
+    if (live.phase && live.eventSeq >= currentSnap.eventSeq) {
       if (progressCacheKey) progressSnapshotCache.set(progressCacheKey, initialProgress as ProgressEvent)
       store.replace(live)
     }
@@ -215,10 +225,13 @@ export function useProgressStream({
   const liveMessage = useMemo<ChatMessage | null>(() => {
     const snap = progressSnapshot
     if (!hasVisibleProgress(snap)) return null
+    // Phase="done" means the turn is over. Don't create a liveMessage —
+    // the committed history row should render without a stale live overlay.
+    if (snap.phase === 'done') return null
     return {
       id: `live-${chatID ?? 'unknown'}`,
       role: 'assistant',
-      content: snap.streamContent || '',
+      content: snap.streamContent || snap.content || '',
       iterations: snap.iterationHistory,
       timestamp: new Date().toISOString(),
       isPartial: true,
@@ -229,10 +242,11 @@ export function useProgressStream({
   return {
     progressSnapshot: progressSnapshot ?? EMPTY_PROGRESS_SNAPSHOT,
     liveMessage,
-    // isStreaming is false in the finalizing state — the agent is not actively
-    // streaming, just waiting for the final text event. The snapshot stays
-    // visible (via liveMessage) but the UI should not show a "busy" indicator.
-    isStreaming: hasVisibleProgress(progressSnapshot) && progressSnapshot.phase !== 'finalizing',
+    isStreaming: hasVisibleProgress(progressSnapshot),
+    resetProgress: () => {
+      finalizedRef.current = true
+      store.reset()
+    },
   }
 }
 
@@ -240,6 +254,7 @@ function hasVisibleProgress(snap: ProgressSnapshot): boolean {
   return Boolean(
     snap.streaming ||
       snap.streamContent ||
+      snap.content ||
       snap.reasoningStreamContent ||
       snap.activeTools.length ||
       snap.completedTools.length ||
@@ -291,14 +306,12 @@ function handleProgressMessage(
       const p = msg.progress
       if (!p) return
       if (p.phase === 'done') {
-        // PhaseDone: enter finalizing state instead of immediate reset.
-        // The store keeps the progress snapshot visible (tools marked done,
-        // no pulse animation) while waiting for the `text` event to arrive.
-        // A 3s timeout in the store guards against missing text events.
-        // finalizedRef is NOT reset here (Spec A fix: prevents duplicate
-        // onAssistantComplete calls). It will be reset when the next turn
-        // begins (session(busy) or a new structured event with active progress).
-        store.setStructuredTools({ phase: 'done' })
+        // PhaseDone: reset immediately. The backend guarantees a `text` event
+        // follows with the final assistant reply. No finalizing state needed.
+        store.setStructuredTools({
+          eventSeq: typeof p.seq === 'number' ? p.seq : undefined,
+          phase: 'done',
+        })
         return
       }
       // A non-done structured event indicates active work — reset the finalize
@@ -317,6 +330,7 @@ function handleProgressMessage(
       const iteration = typeof p.iteration === 'number' ? p.iteration : undefined
       const phase = typeof p.phase === 'string' ? p.phase : undefined
       const reasoning = typeof p.reasoning === 'string' ? p.reasoning : undefined
+      const content = typeof p.content === 'string' ? p.content : undefined
 
       // Iteration history (live, from the structured event)
       let iterHistory: WebIteration[] | undefined
@@ -352,8 +366,10 @@ function handleProgressMessage(
 
       // Apply structured event with carry-forward (stream-only fields preserved)
       store.setStructuredTools({
+        eventSeq: typeof p.seq === 'number' ? p.seq : undefined,
         phase,
         iteration,
+        content,
         activeTools: active.length ? active : undefined,
         completedTools: completed.length ? completed : undefined,
         reasoning,

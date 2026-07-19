@@ -125,16 +125,18 @@ export function historyProgressToLive(p: HistProgress | null): ProgressSnapshot 
     .map(normalizeWebIteration)
     .filter(Boolean) as WebIteration[]
   return {
+    eventSeq: typeof p.seq === 'number' ? p.seq : 0,
     phase: p.phase,
     iteration: typeof p.iteration === 'number' ? p.iteration : 0,
     streamContent: p.stream_content ?? '',
+    content: p.content ?? '',
     reasoningStreamContent: '',
     streaming: true,
     activeTools: active,
     completedTools: completed,
     iterationHistory: iterHistory,
     streamingTools: [],
-    lastIter: typeof p.iteration === 'number' ? p.iteration : 0,
+    lastIter: -1, // -1 = no iteration seen yet; allows iteration 0 to be accepted
     lastReasoning: '',
     todos: (p.todos ?? []) as TodoItem[],
     subAgents: normalizeWebSubAgents(p.sub_agents),

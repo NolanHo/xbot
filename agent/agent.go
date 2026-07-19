@@ -343,9 +343,9 @@ type Agent struct {
 	// key: "channel:chatID" -> bool
 	pendingCancel sync.Map
 
-	// lastProgressSnapshot stores the latest CLIProgressPayload per active chat,
-	// updated by ProgressEventHandler during processing. Used by GetActiveProgress
-	// RPC to restore progress state on mid-session reconnect.
+	// lastProgressSnapshot stores the latest channel-agnostic progress snapshot
+	// per active chat, updated before broadcasting structured progress. Used by
+	// GetActiveProgress to restore any channel after a mid-session reconnect.
 	// key: "channel:chatID" -> *protocol.ProgressEvent
 	lastProgressSnapshot sync.Map
 
@@ -437,6 +437,11 @@ type Agent struct {
 
 	// channelFinder looks up a channel instance by name (injected from main.go).
 	channelFinder func(name string) (channel.Channel, bool)
+
+	// channelRange iterates over all registered channels (injected from main.go).
+	// Used for broadcasting to ALL channels (including plugin channels) without
+	// hardcoding channel names. nil in standalone mode.
+	channelRange func(fn func(string, channel.Channel) bool)
 
 	// cliSenderID is the sender_id used for CLI channel DB operations.
 	cliSenderID string
@@ -782,21 +787,25 @@ func (a *Agent) SetChannelFinder(fn func(name string) (channel.Channel, bool)) {
 	}
 }
 
-// emitSessionState pushes a session state event to CLI and Web channels.
-// Uses channelFinder to locate channels and type-asserts to SessionStateSender.
+// SetChannelRange sets the channel range callback for broadcasting to all
+// registered channels (including plugin channels). Injected from main.go
+// via Dispatcher.RangeChannels.
+func (a *Agent) SetChannelRange(fn func(func(string, channel.Channel) bool)) {
+	a.channelRange = fn
+}
+
+// emitSessionState pushes a session state event to ALL registered channels
+// that implement SessionStateSender — including plugin channels.
 func (a *Agent) emitSessionState(ev protocol.SessionEvent) {
-	if a.channelFinder == nil {
+	if a.channelRange == nil {
 		return
 	}
-	for _, name := range []string{"cli", "web"} {
-		ch, ok := a.channelFinder(name)
-		if !ok {
-			continue
-		}
+	a.channelRange(func(name string, ch channel.Channel) bool {
 		if sender, ok := ch.(channel.SessionStateSender); ok {
 			sender.SendSessionState(ev)
 		}
-	}
+		return true
+	})
 }
 
 // renameSession renames a chat session in DB and pushes the state change.
@@ -1914,6 +1923,37 @@ func (a *Agent) GetLLMConcurrency(senderID string) int {
 // SetLLMConcurrency 设置用户个人 LLM 并发上限配置。
 func (a *Agent) SetLLMConcurrency(senderID string, personal int) error {
 	return a.userSys.llmFactory.SetLLMConcurrency(senderID, personal)
+}
+
+// GetLLMConcurrencyForUserID returns concurrency for a canonical user.
+func (a *Agent) GetLLMConcurrencyForUserID(userID int64) int {
+	if a.userSys == nil || a.userSys.settingsSvc == nil {
+		return 3 // llm.DefaultLLMConcurrencyPersonal
+	}
+	vals, err := a.userSys.settingsSvc.GetByUserID("feishu", userID)
+	if err != nil || vals == nil {
+		return 3
+	}
+	return parseConcurrencyOrDefault(vals["llm_max_concurrent_personal"])
+}
+
+// SetLLMConcurrencyForUserID sets concurrency for a canonical user.
+func (a *Agent) SetLLMConcurrencyForUserID(userID int64, personal int) error {
+	if a.userSys == nil || a.userSys.settingsSvc == nil {
+		return ErrSettingsUnavailable
+	}
+	return a.userSys.settingsSvc.SetByUserID("feishu", userID, "llm_max_concurrent_personal", fmt.Sprintf("%d", personal))
+}
+
+func parseConcurrencyOrDefault(s string) int {
+	if s == "" {
+		return 3
+	}
+	var v int
+	if _, err := fmt.Sscanf(s, "%d", &v); err != nil || v <= 0 {
+		return 3
+	}
+	return v
 }
 
 // SetDirectSend 注入同步发送函数（绕过 bus，用于消息更新跟踪）
@@ -3193,8 +3233,8 @@ func (a *Agent) ResolveTool(sessionKey string, tenantID int64, name string) (too
 }
 
 // emitBuiltinProgress sends a progress event for builtin commands (/compress, /new)
-// that bypass engine.Run. It uses the same CLI channel path as buildCLIProgressEventHandler
-// so the snapshot is stored for mid-session reconnect.
+// that bypass engine.Run. It follows the same channel-agnostic fan-out and
+// snapshot contract as buildProgressEventHandler.
 func (a *Agent) emitBuiltinProgress(chName, chatID string, phase ProgressPhase) {
 	progressKey := qualifyChatID(chName, chatID)
 
@@ -3210,15 +3250,15 @@ func (a *Agent) emitBuiltinProgress(chName, chatID string, phase ProgressPhase) 
 		Iteration: 0,
 	}
 
-	// Send via CLI channel
-	if a.channelFinder != nil {
-		if ch, ok := a.channelFinder("cli"); ok {
-			if cc, ok := ch.(*cli.CLIChannel); ok {
-				cc.SendProgress(chatID, payload)
-			} else if rc, ok := ch.(channel.ProgressSender); ok {
-				rc.SendProgress(chatID, payload)
+	// Builtin commands use the same channel-agnostic fan-out contract as
+	// engine progress. Channels are transports only.
+	if a.channelRange != nil {
+		a.channelRange(func(_ string, ch channel.Channel) bool {
+			if sender, ok := ch.(channel.ProgressSender); ok {
+				sender.SendProgress(chatID, cloneProgressEvent(payload))
 			}
-		}
+			return true
+		})
 	}
 
 	// Store snapshot for mid-session reconnect
@@ -3248,14 +3288,13 @@ func (a *Agent) emitBuiltinProgressDone(chName, chatID string, tokenUsage *proto
 		HistoryCompacted: historyCompacted,
 	}
 
-	if a.channelFinder != nil {
-		if ch, ok := a.channelFinder("cli"); ok {
-			if cc, ok := ch.(*cli.CLIChannel); ok {
-				cc.SendProgress(chatID, payload)
-			} else if rc, ok := ch.(channel.ProgressSender); ok {
-				rc.SendProgress(chatID, payload)
+	if a.channelRange != nil {
+		a.channelRange(func(_ string, ch channel.Channel) bool {
+			if sender, ok := ch.(channel.ProgressSender); ok {
+				sender.SendProgress(chatID, payload)
 			}
-		}
+			return true
+		})
 	}
 
 	a.lastProgressSnapshot.Delete(progressKey)

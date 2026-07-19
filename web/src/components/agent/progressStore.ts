@@ -13,8 +13,9 @@
  *    are preserved from the current state; structured fields (phase, iteration,
  *    activeTools, completedTools) are replaced.
  *
- * 3. **iteration snapshot** — when iteration changes (N→N+1), the previous
- *    iteration's reasoning/thinking/tools are snapshotted into iterationHistory.
+ * 3. **semantic snapshot + log** — ProgressEvent.Seq is the monotonic log ID.
+ *    IterationHistory is accepted only from the backend; the client never
+ *    synthesizes completed iterations while advancing the current snapshot.
  *
  * 4. **tool dedup** — generating-status tools are never deduped (each call shows
  *    independently). running/done/error tools are deduped by name+label.
@@ -64,6 +65,7 @@ export function normalizeWebTool(raw: unknown): WebToolProgress | null {
     detail: typeof r.detail === 'string' ? r.detail : '',
     args: typeof r.args === 'string' ? r.args : '',
     toolHints: typeof r.tool_hints === 'string' ? r.tool_hints : '',
+    iteration: typeof r.iteration === 'number' ? r.iteration : undefined,
   }
 }
 
@@ -71,32 +73,65 @@ function subAgentKey(node: WebSubAgentProgress): string {
   return `${node.role}:${node.instance ?? ''}`
 }
 
+// mergeSubAgentTrees — unified with TUI's cli_update_subagent.go mergeSubAgentTrees.
+// Agents present in both trees are updated with new data (status, desc, children).
+// Agents only in prev but NOT in next are dropped — the server stopped reporting
+// them, meaning they completed. Keeping them causes zombie nodes that persist
+// forever (the "explore card that never disappears" bug).
+//
+// Key rule: Role + ":" + Instance. Same-role different-instance agents are distinct.
 function mergeSubAgentTrees(prev: WebSubAgentProgress[], next: WebSubAgentProgress[]): WebSubAgentProgress[] {
-  if (next.length === 0) return prev
-  const prevByKey = new Map(prev.map((node) => [subAgentKey(node), node]))
-  const nextKeys = new Set(next.map(subAgentKey))
-  const merged: WebSubAgentProgress[] = []
+  if (prev.length === 0) return next
+  if (next.length === 0) return [] // server stopped reporting all agents — they completed
 
-  // Preserve prev nodes that are no longer in next but are done/error — they
-  // should remain visible (with their final status) rather than disappearing.
-  for (const old of prev) {
-    if (!nextKeys.has(subAgentKey(old)) && (old.status === 'done' || old.status === 'error')) {
-      merged.push(old)
+  const newByKey = new Map(next.map((node) => [subAgentKey(node), node]))
+  const result: WebSubAgentProgress[] = []
+
+  // Start with all prev entries, updating those that have new data.
+  // Entries NOT in new are skipped — the server stopped reporting them,
+  // meaning they completed. No zombie preservation (unlike old web code).
+  for (const p of prev) {
+    const key = subAgentKey(p)
+    const n = newByKey.get(key)
+    if (n) {
+      // Agent exists in both — merge: use new data but preserve previous
+      // Desc when new is empty.
+      const merged: WebSubAgentProgress = {
+        ...n,
+        desc: n.desc || p.desc,
+        sessionKey: n.sessionKey || p.sessionKey,
+        children: mergeSubAgentTrees(p.children ?? [], n.children ?? []),
+      }
+      // When parent is still active but its children list is empty in
+      // the new update, preserve previous children as done.
+      if ((n.children?.length ?? 0) === 0 && (p.children?.length ?? 0) > 0) {
+        merged.children = markAllDone(p.children!)
+      }
+      result.push(merged)
+      newByKey.delete(key)
     }
+    // else: agent only in prev — server stopped reporting it → skip (completed)
   }
 
-  for (const node of next) {
-    // Done/error nodes are kept — they show the final state of the SubAgent.
-    // The rendering layer (SubAgentProgressTree) applies gray/red styling.
-    const old = prevByKey.get(subAgentKey(node))
-    merged.push({
-      ...node,
-      sessionKey: node.sessionKey || old?.sessionKey,
-      desc: node.desc || old?.desc,
-      children: mergeSubAgentTrees(old?.children ?? [], node.children ?? []),
-    })
+  // Add agents only in new
+  for (const node of newByKey.values()) {
+    result.push(node)
   }
-  return merged
+
+  return result
+}
+
+function markAllDone(agents: WebSubAgentProgress[]): WebSubAgentProgress[] {
+  return agents.map((a) => markDoneIfRunning(a))
+}
+
+function markDoneIfRunning(sa: WebSubAgentProgress): WebSubAgentProgress {
+  const status = (sa.status === 'running' || sa.status === 'pending') ? 'done' : sa.status
+  return {
+    ...sa,
+    status,
+    children: (sa.children ?? []).map(markDoneIfRunning),
+  }
 }
 
 /** Normalize an array of raw tool objects, filtering nulls. */
@@ -151,42 +186,47 @@ export function dedupTools(tools: WebToolProgress[]): WebToolProgress[] {
 }
 
 /**
- * Dedup messages by (turnID, role): only the last occurrence is kept.
- * For turnID=0 messages, only dedup live-append messages (id starts with 'asst-')
- * by (role, content) — prevents duplicate committed messages from multiple
- * onAssistantComplete calls. History messages (DB id) are never deduped.
+ * Dedup messages by stable identity — no string matching.
+ *
+ * Strategy:
+ * 1. Messages with turnID > 0: dedup by turnID:role (one message per turn per role).
+ * 2. Messages with eventSeq: dedup by eventSeq (SSE sequence is globally unique).
+ * 3. Messages with neither (history messages): never deduped — they have unique DB IDs.
  */
-export function dedupMessages<T extends { turnID: number; role: string; content?: string; id?: string }>(
+export function dedupMessages<T extends { turnID: number; role: string; content?: string; id?: string; eventSeq?: number }>(
   messages: T[],
 ): T[] {
-  const seen = new Map<string, number>()
+  const turnSeen = new Map<string, number>()
+  const seqSeen = new Set<number>()
   const result: T[] = []
   for (let i = 0; i < messages.length; i++) {
     // Dedup by turnID:role for tracked turns
     if (messages[i].turnID > 0) {
       const key = `${messages[i].turnID}:${messages[i].role}`
-      const existing = seen.get(key)
+      const existing = turnSeen.get(key)
       if (existing !== undefined) {
         result[existing] = messages[i]
       } else {
-        seen.set(key, result.length)
+        turnSeen.set(key, result.length)
         result.push(messages[i])
       }
       continue
     }
-    // For turnID=0 assistant messages, only dedup live-append messages (id starts with 'asst-').
-    // History messages (DB numeric id) are never deduped — they have unique ids.
-    const content = messages[i].content ?? ''
-    const id = messages[i].id ?? ''
-    if (content && messages[i].role === 'assistant' && id.startsWith('asst-')) {
-      const contentKey = `${messages[i].role}:${content}`
-      const existingIdx = seen.get(contentKey)
-      if (existingIdx !== undefined) {
-        result[existingIdx] = messages[i]
+    // Dedup by eventSeq for live messages that have one
+    const seqVal = messages[i].eventSeq
+    if (seqVal != null) {
+      const seq = seqVal
+      if (seqSeen.has(seq)) {
+        // Replace existing with the newer version (may have updated content/iterations)
+        const existingIdx = result.findIndex((m) => m.eventSeq === seq)
+        if (existingIdx >= 0) {
+          result[existingIdx] = messages[i]
+        }
         continue
       }
-      seen.set(contentKey, result.length)
+      seqSeen.add(seq)
     }
+    // History messages (no turnID, no eventSeq) are never deduped — unique IDs.
     result.push(messages[i])
   }
   return result
@@ -201,7 +241,6 @@ export class ProgressStore {
   private rafHandle: number | null = null
   private dirty = false
   private disposed = false
-  private finalizingTimer: ReturnType<typeof setTimeout> | null = null
 
   /** Subscribe to snapshot changes; returns an unsubscribe function. */
   subscribe = (listener: Listener): (() => void) => {
@@ -228,11 +267,6 @@ export class ProgressStore {
    */
   reset(): void {
     if (this.disposed) return
-    // Clear any pending finalizing timeout — reset means we're done waiting.
-    if (this.finalizingTimer) {
-      clearTimeout(this.finalizingTimer)
-      this.finalizingTimer = null
-    }
     this.current = { ...EMPTY_PROGRESS_SNAPSHOT }
     // Synchronously update snapshot + cancel pending RAF — avoids a one-frame
     // window where liveMessage is still non-null after reset.
@@ -284,8 +318,10 @@ export class ProgressStore {
    * Structured fields (phase, iteration, activeTools, completedTools) are replaced.
    */
   setStructuredTools(opts: {
+    eventSeq?: number
     phase?: string
     iteration?: number
+    content?: string
     activeTools?: WebToolProgress[]
     completedTools?: WebToolProgress[]
     reasoning?: string
@@ -295,56 +331,39 @@ export class ProgressStore {
     subAgents?: WebSubAgentProgress[]
     tokenUsage?: TokenUsageInfo | null
   }): void {
-    // ── PhaseDone → finalizing transition ──
-    // When phase='done' arrives, enter the 'finalizing' state instead of
-    // immediately resetting. This keeps the progress snapshot visible (tools
-    // marked done, no pulse animation) while waiting for the final `text`
-    // event to arrive. A 3s timeout guards against missing text events.
+    // ── PhaseDone → immediate reset ──
+    // The backend guarantees that a `text` event (final assistant reply)
+    // arrives after PhaseDone. The progress store should clear immediately
+    // on PhaseDone — the final text is handled by onAssistantComplete.
+    // No finalizing state, no timeout hack.
     if (opts.phase === 'done') {
-      this.mutate((draft) => {
-        // Mark all active tools as completed
-        if (draft.activeTools.length > 0) {
-          draft.completedTools = [...draft.completedTools, ...draft.activeTools]
-          draft.activeTools = []
-        }
-        draft.phase = 'finalizing'
-        draft.streaming = false
-      })
-      this.startFinalizingTimeout()
+      this.reset()
       return
     }
 
-    // Cancel any pending finalizing timeout — a new structured event means
-    // the agent is active again (e.g. a new turn started after PhaseDone).
-    if (this.finalizingTimer) {
-      clearTimeout(this.finalizingTimer)
-      this.finalizingTimer = null
-    }
+    // ProgressEvent.Seq is the semantic log ID assigned before channel fan-out.
+    // Replayed/duplicate events at or below the installed snapshot watermark
+    // are no-ops. Transport envelope seq remains independent.
+    if (opts.eventSeq !== undefined && opts.eventSeq <= this.current.eventSeq) return
 
     this.mutate((draft) => {
-      // ── iteration snapshot ──
-      // When iteration advances (N→N+1), snapshot the previous iteration.
-      // lastIter starts at -1; first advance sets it without snapshotting.
+      if (opts.eventSeq !== undefined) draft.eventSeq = opts.eventSeq
+      // ── semantic log watermark ──
+      // IterationHistory from the backend is the only authoritative completed-
+      // iteration log for every channel. The client must never synthesize a
+      // second log entry while advancing the current snapshot: after reconnect,
+      // the installed snapshot and replayed delta can overlap, and local
+      // snapshotting would render the same tool group twice.
       if (opts.iteration !== undefined && opts.iteration > draft.lastIter) {
         const hadPreviousIteration = draft.lastIter >= 0
-        if (hadPreviousIteration) {
-          const snap: WebIteration = {
-            iteration: draft.lastIter,
-            thinking: draft.streamContent,
-            reasoning: draft.lastReasoning || draft.reasoningStreamContent,
-            tools: dedupTools(draft.completedTools),
-            toolCount: draft.completedTools.length,
-          }
-          draft.iterationHistory = [...draft.iterationHistory, snap]
-        }
         draft.lastIter = opts.iteration
         // Clear stream/structured fields from the previous iteration so the
-        // new iteration starts clean. Only clear when there was an actual
-        // previous iteration (lastIter was >= 0 before the update).
-        // Mirrors TUI: iteration switch = sameIter=false → no carry-forward.
+        // new iteration starts clean. The completed iteration itself arrives
+        // through opts.iterationHistory with its backend iteration watermark.
         if (hadPreviousIteration) {
           draft.streamContent = ''
           draft.reasoningStreamContent = ''
+          draft.content = ''
           draft.streamingTools = []
           draft.activeTools = []
           draft.completedTools = []
@@ -358,9 +377,25 @@ export class ProgressStore {
       // are only modified by stream_content events. streamingTools is filtered
       // below to remove stale generating tools that have transitioned to active.
 
+      // ── store structured content as fallback for streamContent ──
+      // Server may send text via structured events (Content field) instead of
+      // stream_content. Store it so LiveIteration can use it when streamContent
+      // is empty — prevents text from disappearing mid-iteration.
+      if (opts.content !== undefined) draft.content = opts.content
+
       // ── replace structured fields ──
+      // Filter completedTools by current iteration to prevent cross-iteration
+      // tool pollution. Server sends ALL completed tools across all iterations;
+      // we only want the current iteration's tools (previous iterations are
+      // already in iterationHistory).
+      const currentIter = opts.iteration ?? draft.iteration
       if (opts.activeTools) draft.activeTools = dedupTools(opts.activeTools)
-      if (opts.completedTools) draft.completedTools = dedupTools(opts.completedTools)
+      if (opts.completedTools) {
+        const filtered = currentIter > 0
+          ? opts.completedTools.filter((t) => t.iteration === undefined || t.iteration === currentIter)
+          : opts.completedTools
+        draft.completedTools = dedupTools(filtered)
+      }
       if (opts.iteration !== undefined) draft.iteration = opts.iteration
 
       // ── filter stale generating tools ──
@@ -393,9 +428,19 @@ export class ProgressStore {
         draft.streamingTools = opts.streamingTools
       }
 
-      // ── iterationHistory: update if provided (from history hydration) ──
-      if (opts.iterationHistory) {
-        draft.iterationHistory = opts.iterationHistory
+      // ── iterationHistory: Delta Push protocol — server sends only newly
+      // completed iterations (0-1 entries). Must append with dedup by
+      // iteration number, NOT replace. Replacing loses all prior iterations.
+      if (opts.iterationHistory && opts.iterationHistory.length > 0) {
+        const existing = new Set(draft.iterationHistory.map((i) => i.iteration))
+        const appended = [...draft.iterationHistory]
+        for (const iter of opts.iterationHistory) {
+          if (!existing.has(iter.iteration)) {
+            appended.push(iter)
+            existing.add(iter.iteration)
+          }
+        }
+        draft.iterationHistory = appended
       }
 
       // ── todos: carry-forward when not present (mirrors TUI cli_update_progress).
@@ -433,24 +478,11 @@ export class ProgressStore {
 
   dispose(): void {
     this.disposed = true
-    if (this.finalizingTimer) {
-      clearTimeout(this.finalizingTimer)
-      this.finalizingTimer = null
-    }
     if (this.rafHandle !== null) {
       cancelAnimationFrame(this.rafHandle)
       this.rafHandle = null
     }
     this.listeners.clear()
-  }
-
-  /** Start a 3s timeout to auto-reset if the `text` event never arrives. */
-  private startFinalizingTimeout(): void {
-    if (this.finalizingTimer) clearTimeout(this.finalizingTimer)
-    this.finalizingTimer = setTimeout(() => {
-      this.finalizingTimer = null
-      this.reset()
-    }, 3000)
   }
 
   /* ── internals ── */
@@ -468,9 +500,11 @@ export class ProgressStore {
     if (this.disposed || !this.dirty) return
     this.dirty = false
     this.snapshot = {
+      eventSeq: this.current.eventSeq,
       phase: this.current.phase,
       iteration: this.current.iteration,
       streamContent: this.current.streamContent,
+      content: this.current.content,
       reasoningStreamContent: this.current.reasoningStreamContent,
       streaming: this.current.streaming,
       activeTools: this.current.activeTools,

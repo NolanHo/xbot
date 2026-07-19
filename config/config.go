@@ -171,30 +171,30 @@ type CLIConfig struct {
 }
 
 type Config struct {
-	Server        ServerConfig         `json:"server"`
-	LLM           LLMConfig            `json:"llm"`
-	Embedding     EmbeddingConfig      `json:"embedding"`
-	Log           LogConfig            `json:"log"`
-	PProf         PProfConfig          `json:"pprof"`
-	Feishu        FeishuConfig         `json:"feishu"`
-	QQ            QQConfig             `json:"qq"`
-	NapCat        NapCatConfig         `json:"napcat"`
-	Agent         AgentConfig          `json:"agent"`
-	OAuth         OAuthConfig          `json:"oauth"`
-	Sandbox       SandboxConfig        `json:"sandbox"`
-	StartupNotify StartupNotifyConfig  `json:"startup_notify"`
-	Admin         AdminConfig          `json:"admin"`
-	Web           WebConfig            `json:"web"`
-	EventWebhook  EventWebhookConfig   `json:"event_webhook"`
-	OSS           OSSConfig            `json:"oss"`
-	TavilyAPIKey  string               `json:"tavily_api_key"`
+	Server        ServerConfig        `json:"server"`
+	LLM           LLMConfig           `json:"llm"`
+	Embedding     EmbeddingConfig     `json:"embedding"`
+	Log           LogConfig           `json:"log"`
+	PProf         PProfConfig         `json:"pprof"`
+	Feishu        FeishuConfig        `json:"feishu"`
+	QQ            QQConfig            `json:"qq"`
+	NapCat        NapCatConfig        `json:"napcat"`
+	Agent         AgentConfig         `json:"agent"`
+	OAuth         OAuthConfig         `json:"oauth"`
+	Sandbox       SandboxConfig       `json:"sandbox"`
+	StartupNotify StartupNotifyConfig `json:"startup_notify"`
+	Admin         AdminConfig         `json:"admin"`
+	Web           WebConfig           `json:"web"`
+	EventWebhook  EventWebhookConfig  `json:"event_webhook"`
+	OSS           OSSConfig           `json:"oss"`
+	TavilyAPIKey  string              `json:"tavily_api_key"`
 	// DisableWebSearch disables the built-in WebSearch tool. Set to true when
 	// using an external search skill (e.g. the "search" skill) to avoid
 	// duplicate tool definitions and wasted context tokens.
-	DisableWebSearch bool             `json:"disable_web_search,omitempty"`
-	Subscriptions []SubscriptionConfig `json:"subscriptions,omitempty"`
-	CLI           CLIConfig            `json:"cli,omitempty"`
-	Plugins       PluginConfig         `json:"plugins,omitempty"`
+	DisableWebSearch bool                 `json:"disable_web_search,omitempty"`
+	Subscriptions    []SubscriptionConfig `json:"subscriptions,omitempty"`
+	CLI              CLIConfig            `json:"cli,omitempty"`
+	Plugins          PluginConfig         `json:"plugins,omitempty"`
 
 	// Channels 存储插件 channel 的配置。key 是 channel name（如 "telegram"）。
 	// 内置 channel（feishu/qq/napcat/web）使用各自的结构体字段，

@@ -84,6 +84,11 @@ export function MessageList({
   const contentRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
   const pendingFollowRafRef = useRef<number | null>(null)
+  // Distinguishes programmatic scrollTop writes (scheduleFollow) from user
+  // scrolls. Without this, the intermediate scroll position set before the
+  // virtualizer finishes measuring triggers onScroll → pauseFollowing(),
+  // permanently disabling follow mode so the list never reaches the bottom.
+  const isProgrammaticScrollRef = useRef(false)
   const lastChatKeyRef = useRef<string | null | undefined>(chatKey)
   const lastRowCountRef = useRef(0)
   const lastFollowResetTokenRef = useRef(followResetToken)
@@ -151,7 +156,16 @@ export function MessageList({
       pendingFollowRafRef.current = null
       if (!stickToBottomRef.current) return
       const el = scrollRef.current
-      if (el) el.scrollTop = el.scrollHeight
+      if (el) {
+        isProgrammaticScrollRef.current = true
+        el.scrollTop = el.scrollHeight
+        // Browsers fire scroll events asynchronously after a scrollTop write.
+        // jsdom does not, so clear the guard via a microtask + RAF to cover
+        // both environments without relying on onScroll to reset it.
+        requestAnimationFrame(() => {
+          isProgrammaticScrollRef.current = false
+        })
+      }
     })
   }, [])
 
@@ -159,6 +173,24 @@ export function MessageList({
   const onScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
+    // Skip pause/resume for programmatic scroll writes (scheduleFollow).
+    // The intermediate positions before the virtualizer finishes measuring
+    // would otherwise permanently disable follow mode.
+    if (isProgrammaticScrollRef.current) {
+      isProgrammaticScrollRef.current = false
+      // Still update visible range for nav buttons
+      const items = virtualizer.getVirtualItems()
+      if (items.length > 0) {
+        const newStart = items[0].index
+        const newEnd = items[items.length - 1].index
+        setVisibleRange((prev) =>
+          prev && prev.start === newStart && prev.end === newEnd
+            ? prev
+            : { start: newStart, end: newEnd },
+        )
+      }
+      return
+    }
     const atEnd = isAtBottom(el)
     const atStart = el.scrollTop <= EDGE_EPSILON
     // Only setState when values actually change to avoid unnecessary re-renders

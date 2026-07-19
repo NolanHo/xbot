@@ -663,6 +663,54 @@ describe('MessageList new-content bubble (Spec A §3)', () => {
     expect(tracked.value).toBe(scroller.scrollHeight)
   })
 
+  it('does not lose follow mode after chat switch triggers programmatic scroll', async () => {
+    const { container, rerender } = renderMessageList(
+      <MessageList
+        chatKey="web:chat-A"
+        messages={makeMessages(20)}
+        liveMessage={null}
+        liveProgress={null}
+        collapseLevel="all"
+        loading={false}
+        error={null}
+      />,
+    )
+    const scroller = container.querySelector('.overflow-y-auto') as HTMLDivElement
+
+    await flushAnimationFrames()
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight)
+
+    // Simulate user reading up
+    scroller.scrollTop = 100
+    fireEvent.wheel(scroller, { deltaY: -100 })
+    fireEvent.scroll(scroller)
+
+    // Switch to chat B — chatKey changes, follow should resume and scroll to bottom
+    rerender(
+      <MessageList
+        chatKey="web:chat-B"
+        messages={makeMessages(30)}
+        liveMessage={null}
+        liveProgress={null}
+        collapseLevel="all"
+        loading={false}
+        error={null}
+      />,
+    )
+    await flushAnimationFrames()
+
+    // The intermediate onScroll from the programmatic scrollTop write must
+    // NOT pause following — the list should stay at the bottom.
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight)
+
+    // Simulate a late resize (virtualizer measuring dynamic heights after switch)
+    act(() => RO.trigger(contentElement(container)))
+    await flushAnimationFrames(1)
+
+    // Still at the bottom — follow survived the resize
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight)
+  })
+
   it('observes the shared message and footer wrapper', () => {
     const { container } = renderMessageList(
       <MessageList
